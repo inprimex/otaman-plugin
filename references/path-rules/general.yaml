@@ -1,0 +1,26 @@
+# General domain path-scoped rules (applies to all domains)
+
+rules:
+  - path: "**/api/**"
+    rules:
+      - "Input validation on all external-facing endpoints"
+      - "Authentication required unless explicitly public"
+      - "Rate limiting on public endpoints"
+
+  - path: "**/database/**"
+    rules:
+      - "Migrations must be reversible"
+      - "No raw SQL with string concatenation — use parameterized queries"
+      - "Index foreign keys and frequently queried columns"
+
+  - path: "**/auth/**"
+    rules:
+      - "Never store plaintext passwords — use bcrypt/argon2"
+      - "JWT secrets must come from environment variables"
+      - "Implement token refresh — short-lived access tokens"
+
+  - path: "**/tests/**"
+    rules:
+      - "Tests must be deterministic — no dependency on external services"
+      - "Use factories/fixtures, not production data"
+      - "Test names should describe the behavior being tested"

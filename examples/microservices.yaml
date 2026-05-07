@@ -1,0 +1,105 @@
+# Otaman Platform Configuration — Microservices Architecture
+#
+# Typical setup: multiple backend services, one frontend, API gateway,
+# shared specs repo. Each service has its own agent owner.
+
+project: saas-platform
+version: "1.0"
+
+repos:
+  - name: api-gateway
+    path: ./api-gateway
+    owner: backend-agent
+    tech: [nodejs, typescript, express]
+    description: "API gateway — routing, rate limiting, auth middleware"
+
+  - name: auth-service
+    path: ./auth-service
+    owner: backend-agent
+    tech: [nodejs, typescript]
+    description: "Authentication and authorization (JWT, OAuth2)"
+
+  - name: users-service
+    path: ./users-service
+    owner: backend-agent
+    tech: [nodejs, typescript]
+    description: "User management and profiles"
+
+  - name: billing-service
+    path: ./billing-service
+    owner: billing-agent
+    tech: [nodejs, typescript]
+    description: "Subscription management and payments (Stripe)"
+
+  - name: notifications-service
+    path: ./notifications-service
+    owner: backend-agent
+    tech: [nodejs, typescript]
+    description: "Email, SMS, and push notifications"
+
+  - name: web-app
+    path: ./web-app
+    owner: frontend-agent
+    tech: [react, typescript, nextjs]
+    description: "Customer-facing web application"
+
+  - name: admin-dashboard
+    path: ./admin-dashboard
+    owner: frontend-agent
+    tech: [react, typescript]
+    description: "Internal admin panel"
+
+  - name: specs-repo
+    path: ./specs-repo
+    owner: specs-agent
+    tech: [openspec]
+    description: "OpenSpec specifications, API contracts, shared types"
+
+  - name: infra
+    path: ./infra
+    owner: devops-agent
+    tech: [terraform, kubernetes, docker]
+    description: "Infrastructure as code, CI/CD, Helm charts"
+
+specs:
+  path: ./specs-repo
+  format: openspec
+
+contracts:
+  path: ./specs-repo/contracts
+  format: openapi
+  auto_detect: true
+
+observers:
+  - role: cto-reviewer
+    triggers: [pr, spec-change, architecture-change]
+  - role: security
+    triggers: [pr, dependency-update, auth-change]
+  - role: devops
+    triggers: [infra-change, dockerfile-change, ci-change]
+
+communication:
+  bus_path: .agents/bus
+  format: markdown
+  max_age_days: 90
+
+# Launch profiles — named groups of repos. The launcher's `-Profile <name>`
+# arg or interactive picker filters which agents spin up. `repos: all`
+# launches every active repo. Use these to scope a tab fleet to a feature
+# slice (e.g. just backend services) without launching 9 tabs every time.
+profiles:
+  backend:
+    description: "All backend microservices + specs"
+    repos: [api-gateway, auth-service, users-service, billing-service, notifications-service, specs-repo]
+
+  frontend:
+    description: "Both UIs + specs (read-only context)"
+    repos: [web-app, admin-dashboard, specs-repo]
+
+  full-stack:
+    description: "Backend services that web-app talks to + the web-app itself"
+    repos: [api-gateway, auth-service, users-service, web-app, specs-repo]
+
+  all:
+    description: "Every repo (default if no profile selected)"
+    repos: all

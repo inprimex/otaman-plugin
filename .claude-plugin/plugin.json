@@ -1,0 +1,10 @@
+{
+  "name": "otaman",
+  "version": "0.1.0",
+  "description": "Multi-repo agent orchestration with ownership enforcement, structured communication, and compliance-ready audit trails",
+  "author": {
+    "name": "Roman"
+  },
+  "license": "MIT",
+  "keywords": ["multi-repo", "orchestration", "ownership", "compliance", "agents"]
+}

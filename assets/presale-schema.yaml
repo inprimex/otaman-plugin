@@ -1,0 +1,158 @@
+# Schema for .otaman-presale/ directory structure and project-meta.yaml
+# This directory holds all pre-sale and discovery artifacts before .agents/ exists.
+# On handoff (/otaman:handoff), relevant artifacts migrate to .agents/ and OpenSpec.
+
+# --- Directory Structure ---
+# .otaman-presale/
+# ├── project-meta.yaml          # Project metadata, phase tracking, client info
+# ├── estimation/
+# │   ├── estimate-v1.md          # Gate 3 output (initial estimation)
+# │   └── estimate-v2.md          # Post-discovery re-estimation (if applicable)
+# ├── assumptions.yaml            # Assumption register from Gate 0
+# ├── risks.yaml                  # Risk register
+# ├── architecture/
+# │   ├── c4-context.md           # C4 Context diagram (Mermaid)
+# │   ├── c4-container.md         # C4 Container diagram (post-discovery)
+# │   └── tech-decisions.md       # Tech stack rationale
+# ├── knowledge-audit.yaml        # Tech stack confidence scores (from /otaman:audit-knowledge)
+# └── discovery/                  # Discovery phase artifacts (created during /otaman:discovery)
+#     ├── validated-assumptions.yaml  # Assumptions with confirmed/declined status
+#     ├── updated-risks.yaml          # Risks with mitigation plans
+#     └── decisions/                  # Key decisions made during discovery
+#         └── {NNN}-{title}.md
+
+# --- project-meta.yaml schema ---
+type: object
+required: [project_code, project_name, domain, current_phase]
+additionalProperties: false
+
+properties:
+  project_code:
+    type: string
+    pattern: "^[A-Z0-9-]{3,25}$"
+    description: >
+      Unique project reference code. Format: [TYPE]-[TECH]-[WORK]-[YYMMDD].
+      Example: TLH-WF-PB-EST-241023 (Telehealth Webflow Practice Better Estimation)
+
+  project_name:
+    type: string
+    description: "Human-readable project name"
+
+  client:
+    type: string
+    description: "Client or organization name"
+
+  domain:
+    type: string
+    enum: [healthcare, fintech, marketplace, ml-ai, saas, ecommerce, iot, general]
+    description: "Primary project domain — determines which domain expert to load"
+
+  current_phase:
+    type: string
+    enum: [presale, discovery, development, support, archived]
+    description: "Current lifecycle phase"
+
+  phase_history:
+    type: array
+    items:
+      type: object
+      required: [phase, started]
+      additionalProperties: false
+      properties:
+        phase:
+          type: string
+          enum: [presale, discovery, development, support, archived]
+        started:
+          type: string
+          format: date
+          description: "ISO date when phase started"
+        completed:
+          type: ["string", "null"]
+          format: date
+          description: "ISO date when phase completed, null if in progress"
+        estimation_tier:
+          type: string
+          enum: [A, B, C, D, E]
+          description: "Estimation tier used (presale phase only)"
+        notes:
+          type: string
+          description: "Optional notes about the phase"
+
+  estimation:
+    type: object
+    additionalProperties: false
+    properties:
+      tier:
+        type: string
+        enum: [A, B, C, D, E]
+        description: "Selected estimation tier"
+      method:
+        type: string
+        enum: [t-shirt, analogous, parametric, capacity-based, pert, bottom-up, story-points]
+        description: "Estimation method used"
+      complexity_score:
+        type: integer
+        minimum: 0
+        maximum: 25
+        description: "Complexity score from Gate 1 (0-25)"
+      confidence_percent:
+        type: integer
+        minimum: 0
+        maximum: 100
+        description: "Overall confidence from Gate 0"
+      total_range_hours:
+        type: array
+        items:
+          type: number
+        minItems: 2
+        maxItems: 2
+        description: "[min_hours, max_hours] total estimated range"
+      contingency_percent:
+        type: integer
+        minimum: 0
+        maximum: 50
+        description: "Contingency percentage applied"
+
+  team:
+    type: array
+    items:
+      type: object
+      required: [role]
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          description: "Team role (e.g., backend-developer, frontend-developer, devops)"
+        count:
+          type: integer
+          minimum: 1
+          description: "Number of people in this role"
+        phase:
+          type: string
+          description: "Which phase(s) this role is needed"
+
+  tech_stack:
+    type: array
+    items:
+      type: string
+    description: >
+      Decided tech stack items. These feed into /otaman:audit-knowledge
+      and platform.yaml standards section on handoff.
+
+  custom_phases:
+    type: array
+    items:
+      type: string
+    description: >
+      Custom lifecycle phases for this project (overrides default enum).
+      Example: [presale, discovery, mvp, phase-2, launch, support]
+
+# --- assumptions.yaml schema ---
+# type: array of objects with: id, description, confidence (low/medium/high + %),
+#   impact_if_wrong (text + hours), verification_method, status (pending/confirmed/declined/modified),
+#   validated_date, validation_notes
+
+# --- risks.yaml schema ---
+# type: array of objects with: id, description, probability (low/medium/high),
+#   impact (low/medium/high), score (1-9), mitigation, status (identified/mitigating/accepted/resolved),
+#   owner, updated_date

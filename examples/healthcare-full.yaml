@@ -1,0 +1,140 @@
+# Full healthcare platform example — demonstrates all Phase 6-8 features
+# Domain, lifecycle, standards, knowledge, and path rules
+
+project: patient-portal
+version: "1.0"
+
+domain: healthcare
+
+repos:
+  - name: api-service
+    path: ./repo-api
+    owner: backend-agent
+    tech: [nodejs, typescript, nestjs]
+    description: "Patient portal API — FHIR integration, clinical workflows"
+    specs_dir: [patient-api, clinical-workflows]
+
+  - name: web-app
+    path: ./repo-web
+    owner: frontend-agent
+    tech: [react, typescript, nextjs]
+    description: "Patient-facing web portal"
+    specs_dir: [patient-portal-ui]
+
+  - name: integrations
+    path: ./repo-integrations
+    owner: integration-agent
+    tech: [nodejs, typescript]
+    description: "EHR integration service — Epic, Cerner connectors"
+    specs_dir: [ehr-integration]
+
+specs:
+  path: ./specs-repo
+  format: openspec
+
+contracts:
+  path: ./specs-repo/contracts
+  format: openapi
+  auto_detect: true
+
+observers:
+  - role: cto-reviewer
+    triggers: [pr, spec-change, architecture-change]
+  - role: security
+    triggers: [pr, dependency-update, auth-change]
+  - role: compliance-officer
+    triggers: [pr, code-change]
+
+communication:
+  bus_path: .agents/bus
+  format: markdown
+  max_age_days: 30
+
+lifecycle:
+  phases: [presale, discovery, mvp, phase-2, hipaa-audit, launch, support]
+  gates:
+    discovery-to-mvp:
+      required:
+        - platform.yaml
+        - .otaman-presale/knowledge-audit.yaml
+        - .otaman-presale/discovery/validated-assumptions.yaml
+      checks:
+        - "otaman validate"
+    mvp-to-phase-2:
+      required:
+        - .agents/reviews/done/compliance-initial.md
+      checks:
+        - "otaman compliance --format json"
+    phase-2-to-hipaa-audit:
+      required:
+        - .agents/compliance/hipaa-checklist.md
+        - .agents/compliance/baa-tracker.md
+    hipaa-audit-to-launch:
+      required:
+        - .agents/compliance/penetration-test-report.md
+        - .agents/compliance/risk-assessment.md
+      checks:
+        - "otaman compliance --format json"
+
+standards:
+  methodology: [tdd, ddd]
+  git:
+    branching: trunk-based
+    commits: conventional
+    pr_required: true
+  api:
+    style: rest
+    spec: openapi-3.1
+    versioning: url
+    format: json-api
+  repo_standards:
+    api-service:
+      language: typescript
+      framework: nestjs
+      package_manager: pnpm
+      testing:
+        unit: jest
+        e2e: supertest
+        coverage_min: 85
+      patterns: [ddd, cqrs]
+      linting: [eslint, prettier]
+      rules:
+        - "All endpoints handling PHI must have audit logging middleware"
+        - "Use dependency injection via NestJS modules"
+        - "Repository pattern for all database access"
+    web-app:
+      language: typescript
+      framework: nextjs
+      package_manager: pnpm
+      styling: tailwind
+      testing:
+        unit: vitest
+        e2e: playwright
+        coverage_min: 70
+      linting: [eslint, prettier]
+      rules:
+        - "Server components by default, client components only when needed"
+        - "No PHI displayed without explicit user authentication check"
+    integrations:
+      language: typescript
+      framework: nestjs
+      package_manager: pnpm
+      testing:
+        unit: jest
+        coverage_min: 90
+      patterns: [adapter-pattern]
+      rules:
+        - "All EHR integrations behind adapter interface"
+        - "Circuit breaker on all external API calls"
+        - "Log integration events without PHI payloads"
+
+knowledge:
+  - pack: nestjs@10
+    status: ready
+  - pack: fhir-r4
+    status: needs_docs
+  - pack: epic-interconnect
+    path: .agents/knowledge/epic-interconnect/
+    status: needs_full_docs
+  - pack: nextjs@14
+    status: ready

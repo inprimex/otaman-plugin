@@ -1,0 +1,42 @@
+# Estimation Benchmarks — past project data for analogous estimation
+# Updated after each project retrospective via /otaman:retrospective
+# Accessed by SA agent via MCP: search_benchmarks, add_benchmark
+
+benchmarks: []
+  # Example entry (uncomment and fill with real data):
+  # - code: TLH-WF-PB-EST-241023
+  #   domain: healthcare
+  #   type: telehealth-platform
+  #   complexity_score: 14
+  #   tier_used: D
+  #   estimated_range: [1200, 1800]
+  #   actual_hours: 1650
+  #   accuracy: "+10%"
+  #   team: [2 backend, 1 frontend, 0.5 devops, 0.5 QA]
+  #   duration_months: 6
+  #   key_factors:
+  #     - "FHIR integration took 40% longer than estimated"
+  #     - "Auth was standard, no surprises"
+  #   tags: [fhir, ehr-integration, hipaa, telehealth, react, node]
+
+patterns: []
+  # Reusable patterns extracted from multiple projects:
+  # - pattern: "FHIR R4 integration per EHR vendor"
+  #   typical_hours: [120, 200]
+  #   notes: "Epic fastest, Cerner slowest. Add 40% for first-time team."
+  #   confidence: high
+
+adjustment_factors:
+  # Validated through retrospectives
+  domain_adjustments: {}
+    # healthcare: "+15-25% for compliance infrastructure"
+    # fintech: "+10-20% for regulatory + audit"
+    # marketplace: "+20-30% for trust & safety"
+  team_adjustments: {}
+    # new_domain_for_team: "+15-25%"
+    # new_tech_stack: "+10-20%"
+    # experienced_team_same_domain: "-10-15%"
+  common_underestimates: []
+    # - "Data migration: always 2-3x initial estimate"
+    # - "Third-party API integration: add 50% buffer"
+    # - "Compliance audit preparation: 80-120 hours minimum"

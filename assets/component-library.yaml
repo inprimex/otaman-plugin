@@ -1,0 +1,186 @@
+# Component Estimation Library — reusable hour ranges per component type
+# Used by SA agent during Gate 3 for bottom-up and parametric estimation.
+# Accessed via MCP: get_component_estimate
+#
+# Format: category → variant → {hours: [min, max], includes: [...], notes: "..."}
+# Hours represent effort for a mid-level developer. Adjust for team experience.
+
+components:
+  auth:
+    oauth2_social_login:
+      hours: [24, 40]
+      includes: [google, apple, facebook]
+      notes: "Add 8-16h per additional provider"
+    rbac_basic:
+      hours: [40, 60]
+      includes: [3-5 roles, static permissions, admin panel]
+      notes: "Standard role-based access. No dynamic permissions."
+    rbac_enterprise:
+      hours: [80, 140]
+      includes: [dynamic roles, org hierarchy, delegation, audit log]
+      notes: "Multi-tenant orgs with role inheritance."
+    mfa:
+      hours: [24, 40]
+      includes: [TOTP, SMS fallback, backup codes]
+      notes: "Add 16-24h for hardware key (FIDO2) support"
+    sso_saml:
+      hours: [40, 80]
+      includes: [SAML 2.0, IdP metadata, SP config]
+      notes: "Per IdP. Enterprise clients often need this."
+
+  api:
+    rest_crud_simple:
+      hours: [4, 8]
+      notes: "Per entity. Basic CRUD, no business logic."
+    rest_crud_standard:
+      hours: [8, 16]
+      notes: "Per entity. Validation, relationships, basic rules."
+    rest_crud_complex:
+      hours: [16, 32]
+      notes: "Per entity. State machines, complex rules, events."
+    graphql_schema:
+      hours: [40, 80]
+      notes: "Per domain. Includes resolvers, dataloaders, auth."
+    api_gateway:
+      hours: [24, 40]
+      includes: [routing, rate limiting, auth forwarding]
+      notes: "Kong, AWS API Gateway, or custom."
+    api_versioning:
+      hours: [16, 32]
+      notes: "URL-based or header-based. Migration tooling."
+    websocket_realtime:
+      hours: [40, 80]
+      includes: [connection management, rooms, presence, reconnection]
+      notes: "Add 24-40h for horizontal scaling (Redis pub/sub)."
+
+  integrations:
+    stripe_basic:
+      hours: [40, 60]
+      includes: [charges, subscriptions, webhook handling]
+      notes: "Standard payment flow. Well-documented API."
+    stripe_marketplace:
+      hours: [80, 140]
+      includes: [Connect, payouts, escrow, split payments]
+      notes: "Significant complexity. Account onboarding takes 3-5 business days."
+    payment_gateway_other:
+      hours: [60, 100]
+      notes: "PayPal, Braintree, Adyen. Less standardized than Stripe."
+    email_transactional:
+      hours: [8, 16]
+      includes: [SendGrid or SES, templates, tracking]
+      notes: "Standard. Add 16-24h for custom template engine."
+    email_marketing:
+      hours: [24, 40]
+      includes: [lists, campaigns, unsubscribe, analytics]
+      notes: "Usually delegate to Mailchimp/SendGrid Marketing."
+    sms_notifications:
+      hours: [16, 24]
+      includes: [Twilio, delivery tracking, opt-out]
+      notes: "Add 8-16h for two-way SMS."
+    file_storage:
+      hours: [16, 24]
+      includes: [S3/GCS upload, presigned URLs, access control]
+      notes: "Add 16-24h for image processing pipeline."
+    search_basic:
+      hours: [24, 40]
+      includes: [Elasticsearch or Algolia, indexing, basic queries]
+      notes: "Standard text search. Add 40-60h for faceted/geo search."
+    oauth2_third_party:
+      hours: [16, 32]
+      notes: "Per provider. Depends on API documentation quality."
+
+  infrastructure:
+    ci_cd_pipeline:
+      hours: [16, 32]
+      includes: [GitHub Actions or GitLab CI, build, test, deploy stages]
+      notes: "Add 8-16h per additional environment (staging, QA)."
+    docker_setup:
+      hours: [8, 16]
+      includes: [Dockerfile, docker-compose, dev environment]
+      notes: "Per service. Standard containerization."
+    kubernetes_basic:
+      hours: [40, 80]
+      includes: [deployment, service, ingress, secrets, HPA]
+      notes: "Add 40-60h for Helm charts and GitOps."
+    terraform_basic:
+      hours: [40, 60]
+      includes: [VPC, compute, DB, DNS, basic modules]
+      notes: "Per cloud provider. Add 24-40h for multi-region."
+    pulumi_basic:
+      hours: [40, 60]
+      includes: [same as terraform but in Python/TypeScript]
+      notes: "Similar effort to Terraform. Team language preference matters."
+    monitoring_basic:
+      hours: [16, 24]
+      includes: [structured logging, health checks, alerting]
+      notes: "CloudWatch, Datadog, or Grafana basics."
+    monitoring_enterprise:
+      hours: [40, 60]
+      includes: [APM, custom dashboards, SLOs, distributed tracing]
+      notes: "Full observability stack."
+
+  compliance:
+    hipaa_infrastructure:
+      hours: [160, 280]
+      includes: [audit logging, encryption at rest/transit, BAA prep, pen test prep, access controls]
+      notes: "Often underestimated. Includes documentation and process, not just code."
+    soc2_prep:
+      hours: [80, 160]
+      includes: [policy docs, access reviews, monitoring, evidence collection]
+      notes: "Type I faster than Type II. Type II requires 3-6 month observation."
+    gdpr_basic:
+      hours: [40, 80]
+      includes: [consent management, data portability, right to deletion, DPA]
+      notes: "Basic compliance. Add 40-60h for complex data flows."
+    pci_dss:
+      hours: [80, 160]
+      includes: [cardholder data isolation, encryption, access control, audit]
+      notes: "Level depends on transaction volume. Level 1 requires QSA audit."
+
+  frontend:
+    design_system:
+      hours: [40, 80]
+      includes: [component library, tokens, documentation]
+      notes: "With Storybook. Pays off at 10+ screens."
+    admin_panel:
+      hours: [60, 120]
+      includes: [CRUD views, filters, bulk actions, dashboard]
+      notes: "With Refine/AdminJS: 40-60h. Custom: 80-120h."
+    landing_pages:
+      hours: [4, 8]
+      notes: "Per page. Static content, responsive."
+    form_complex:
+      hours: [16, 32]
+      notes: "Multi-step, conditional logic, validation, file uploads."
+    data_visualization:
+      hours: [24, 48]
+      notes: "Per dashboard. Charts, tables, filters. D3 adds 50%."
+
+  data:
+    database_schema:
+      hours: [8, 16]
+      notes: "Per domain/bounded context. Design + migrations."
+    data_migration:
+      hours: [40, 120]
+      notes: "ALWAYS 2-3x initial estimate. Depends on source data quality."
+    etl_pipeline:
+      hours: [40, 80]
+      notes: "Per source. Extraction, transformation, loading, scheduling."
+    reporting_basic:
+      hours: [24, 40]
+      includes: [predefined reports, PDF export, scheduling]
+      notes: "Add 40-60h for custom report builder."
+
+  testing:
+    unit_test_setup:
+      hours: [8, 16]
+      includes: [framework config, CI integration, coverage reporting]
+      notes: "Per repo. One-time setup."
+    e2e_test_setup:
+      hours: [16, 32]
+      includes: [Playwright/Cypress setup, CI integration, fixtures]
+      notes: "Add 2-4h per critical user flow."
+    load_testing:
+      hours: [24, 40]
+      includes: [k6/Locust setup, scenarios, baseline, reporting]
+      notes: "Per service endpoint group."

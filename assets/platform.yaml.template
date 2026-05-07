@@ -1,0 +1,86 @@
+# Maestro Platform Configuration
+# This file lives inside the dedicated maestro folder (e.g., my-platform-maestro/).
+# All repo paths are relative to THIS folder.
+
+project: my-platform
+version: "1.0"
+
+repos:
+  - name: auth-service
+    path: ../auth-service             # Sibling directory (one level up from maestro folder)
+    owner: backend-agent
+    tech: [nodejs, typescript]
+    description: "Authentication and authorization service"
+    specs_dir: [auth]                 # Maps to openspec/specs/auth/ (optional, for OpenSpec projects)
+
+  - name: web-app
+    path: ../web-app                  # Repos are typically siblings of the maestro folder
+    owner: frontend-agent
+    tech: [react, typescript]
+    description: "Main web application"
+    specs_dir: [web, shared-contracts]  # Can map to multiple spec areas
+
+  # - name: api-gateway
+  #   path: ../api-gateway
+  #   owner: backend-agent
+  #   tech: [nodejs, express]
+  #   description: "API gateway and routing"
+
+specs:
+  # Option A — Separate OpenSpec repo (recommended for larger projects):
+  #   path: ../specs-repo
+  #   format: openspec
+  # Option B — OpenSpec inside this maestro folder:
+  #   path: ./openspec
+  #   format: openspec
+  # Option C — No OpenSpec, maestro manages simple proposals:
+  format: fallback
+
+# contracts:                         # Uncomment if you have API contract files
+#   path: ../specs-repo/contracts    # Or wherever your OpenAPI/swagger files live
+#   format: openapi
+#   auto_detect: true
+
+observers:
+  - role: cto-reviewer
+    triggers: [pr, spec-change, architecture-change]
+  - role: security
+    triggers: [pr, dependency-update, auth-change]
+  # - role: devops
+  #   triggers: [infra-change, dockerfile-change, ci-change]
+
+communication:
+  bus_path: .agents/bus
+  format: markdown
+  max_age_days: 30
+
+# Git standards (enforced by pre-commit hooks)
+# standards:
+#   git:
+#     branching: gitflow            # gitflow | github-flow | trunk-based
+#     commits: conventional          # conventional | freeform
+#     pr_required: true
+#     protected_branches: [main, master, develop]
+
+# Launch configuration (optional) -- used by launch-agents.ps1
+# Each repo can have a launch block with shell: wsl | powershell | ssh
+#
+# Local development (WSL):
+#   launch:
+#     shell: wsl
+#     title: "Auth"
+#     color: "#4169E1"
+#     commands:
+#       - "claude --plugin-dir /path/to/maestro-plugin '/maestro:check'"
+#
+# Remote development (SSH):
+# All repos on one remote server, developer connects via SSH from Windows.
+# Requires: ssh_host (and optionally ssh_path for remote repo location).
+#   launch:
+#     shell: ssh
+#     ssh_host: dev@my-server.com
+#     ssh_path: /home/dev/projects/my-repo    # remote path to repo
+#     title: "Auth"
+#     color: "#4169E1"
+#     commands:
+#       - "claude --plugin-dir /home/dev/maestro-plugin '/maestro:check'"

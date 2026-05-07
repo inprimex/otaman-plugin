@@ -1,0 +1,37 @@
+# Fintech domain path-scoped rules
+# Applied by /otaman:init when domain=fintech
+
+rules:
+  - path: "**/transactions/**"
+    rules:
+      - "Event sourcing mandatory — all state changes as immutable events"
+      - "No mutable state for financial records — append-only ledger"
+      - "Full audit trail: who, what, when, from where, authorization"
+      - "Idempotency keys required on all write operations"
+
+  - path: "**/calculations/**"
+    rules:
+      - "Decimal arithmetic ONLY — never use float/double for money"
+      - "Rounding rules must be explicit and documented per jurisdiction"
+      - "All financial calculations must have unit tests with edge cases"
+      - "Currency must be explicit — no implicit conversions"
+
+  - path: "**/api/**"
+    rules:
+      - "Rate limiting required on all endpoints"
+      - "Authentication required on every endpoint — no anonymous access"
+      - "Request/response validation against schema"
+      - "Audit logging for all financial operations"
+
+  - path: "**/payments/**"
+    rules:
+      - "Card numbers never stored, logged, or displayed in full"
+      - "PCI DSS: minimize cardholder data environment scope"
+      - "Use payment processor tokens — never handle raw card data"
+      - "Webhook signature verification mandatory"
+
+  - path: "**/reports/**"
+    rules:
+      - "SOX compliance: immutable audit logs"
+      - "Reconciliation reports must balance to zero"
+      - "Regulatory reports (SAR, CTR, 1099) follow exact format specifications"

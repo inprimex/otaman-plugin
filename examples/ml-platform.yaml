@@ -1,0 +1,60 @@
+# Otaman Platform Configuration — ML Platform
+#
+# Data pipeline, ML model services, REST API, and dashboard.
+# Separates data engineering, ML engineering, backend, and frontend concerns.
+
+project: ml-platform
+version: "1.0"
+
+repos:
+  - name: data-pipeline
+    path: ./data-pipeline
+    owner: data-agent
+    tech: [python, python-ml, airflow]
+    description: "ETL pipelines, data ingestion, feature engineering"
+
+  - name: ml-models
+    path: ./ml-models
+    owner: ml-agent
+    tech: [python, python-ml, pytorch]
+    description: "Model training, evaluation, and experiment tracking"
+
+  - name: model-serving
+    path: ./model-serving
+    owner: ml-agent
+    tech: [python, fastapi]
+    description: "Model inference API (FastAPI + ONNX runtime)"
+
+  - name: api-backend
+    path: ./api-backend
+    owner: backend-agent
+    tech: [python, fastapi]
+    description: "Business logic API — orchestrates model calls and data access"
+
+  - name: dashboard
+    path: ./dashboard
+    owner: frontend-agent
+    tech: [react, typescript]
+    description: "Analytics dashboard and model monitoring UI"
+
+  - name: infra
+    path: ./infra
+    owner: devops-agent
+    tech: [terraform, kubernetes, docker]
+    description: "Cloud infrastructure, GPU provisioning, CI/CD"
+
+specs:
+  format: fallback
+
+observers:
+  - role: cto-reviewer
+    triggers: [pr, spec-change, architecture-change]
+  - role: security
+    triggers: [pr, dependency-update, auth-change]
+  - role: devops
+    triggers: [infra-change, dockerfile-change, ci-change]
+
+communication:
+  bus_path: .agents/bus
+  format: markdown
+  max_age_days: 60

@@ -1,0 +1,39 @@
+# Healthcare domain path-scoped rules
+# Applied by /otaman:init when domain=healthcare
+# Injected into per-repo CLAUDE.md as path-specific coding rules
+
+rules:
+  - path: "**/api/**"
+    rules:
+      - "All endpoints handling PHI MUST have audit logging middleware"
+      - "Never include PHI in URL parameters or query strings"
+      - "All PHI endpoints require authentication — no anonymous access"
+      - "Response headers must include appropriate cache-control (no-store for PHI)"
+
+  - path: "**/database/**"
+    rules:
+      - "All tables containing PHI must use encryption at rest"
+      - "No plaintext storage of SSN, DOB, MRN, or other direct identifiers"
+      - "Audit columns required: created_by, updated_by, created_at, updated_at"
+      - "Soft delete only for PHI records — never hard delete without compliance review"
+
+  - path: "**/auth/**"
+    rules:
+      - "Session timeout: max 15 minutes idle for PHI-accessing sessions"
+      - "MFA required for admin roles and PHI bulk access"
+      - "Failed login lockout after 5 attempts"
+      - "Password policy: minimum 12 characters, complexity requirements"
+
+  - path: "**/integrations/**"
+    rules:
+      - "All EHR/FHIR integrations must validate message schemas"
+      - "HL7v2 messages must be parsed with a validated library (not regex)"
+      - "Third-party services handling PHI require BAA verification"
+      - "Log integration events without including PHI payloads"
+
+  - path: "**/logs/**"
+    rules:
+      - "NEVER log PHI (patient names, SSN, MRN, DOB, diagnoses)"
+      - "Use structured logging with correlation IDs"
+      - "Audit logs must be immutable — append-only storage"
+      - "Log retention: minimum 6 years per HIPAA"

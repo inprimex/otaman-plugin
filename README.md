@@ -1,6 +1,6 @@
 # otaman-plugin
 
-**Status**: Scaffold — populated at Step 1 (carved from legacy maestro-plugin) per [phased-roadmap.md](https://github.com/inprimex/otaman-meta/blob/main/phased-roadmap.md).
+**Status**: Scaffold — populated at Step 1 (carved from legacy otaman-plugin) per [phased-roadmap.md](https://github.com/inprimex/otaman-meta/blob/main/phased-roadmap.md).
 
 ## Scope
 

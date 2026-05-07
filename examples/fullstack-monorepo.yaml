@@ -1,0 +1,67 @@
+# Otaman Platform Configuration — Fullstack Monorepo
+#
+# A monorepo with apps/ and packages/ directories. Multiple agents own
+# different parts. Useful for turborepo/nx/pnpm workspace setups.
+#
+# Note: Even though it's a single git repo, otaman treats each app/package
+# as a separate "repo" for ownership purposes. All paths are relative to
+# the monorepo root.
+
+project: fullstack-monorepo
+version: "1.0"
+
+repos:
+  - name: web-app
+    path: ./apps/web
+    owner: frontend-agent
+    tech: [react, typescript, nextjs]
+    description: "Main web application"
+
+  - name: mobile-app
+    path: ./apps/mobile
+    owner: mobile-agent
+    tech: [react-native, typescript]
+    description: "Mobile application (iOS + Android)"
+
+  - name: api-server
+    path: ./apps/api
+    owner: backend-agent
+    tech: [nodejs, typescript, fastify]
+    description: "REST API server"
+
+  - name: shared-types
+    path: ./packages/types
+    owner: backend-agent
+    tech: [typescript]
+    description: "Shared TypeScript type definitions"
+
+  - name: ui-components
+    path: ./packages/ui
+    owner: frontend-agent
+    tech: [react, typescript]
+    description: "Shared UI component library"
+
+  - name: utils
+    path: ./packages/utils
+    owner: backend-agent
+    tech: [typescript]
+    description: "Shared utility functions"
+
+specs:
+  format: fallback
+
+contracts:
+  path: ./packages/types
+  format: jsonschema
+  auto_detect: true
+
+observers:
+  - role: cto-reviewer
+    triggers: [pr, spec-change, architecture-change]
+  - role: security
+    triggers: [pr, dependency-update, auth-change]
+
+communication:
+  bus_path: .agents/bus
+  format: markdown
+  max_age_days: 30
