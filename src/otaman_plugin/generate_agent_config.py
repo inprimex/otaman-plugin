@@ -306,7 +306,7 @@ def _build_maestro_block(
     domain = config.get("domain", "")
     if domain:
         # Try to load domain-specific path rules
-        plugin_root = Path(__file__).resolve().parent.parent
+        plugin_root = Path(__file__).resolve().parent.parent.parent  # src/otaman_plugin/X.py → otaman-plugin/
         for rule_domain in (domain, "general"):
             rules_file = plugin_root / "references" / "path-rules" / f"{rule_domain}.yaml"
             if rules_file.exists():
@@ -454,7 +454,7 @@ def install_spec_change_hook(project_root: Path, config: dict[str, Any]) -> str 
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
     hook_target = hooks_dir / "post-commit"
-    hook_source = Path(__file__).resolve().parent / "spec-change-hook.sh"
+    hook_source = Path(__file__).resolve().parent.parent.parent / "scripts" / "spec-change-hook.sh"
 
     if not hook_source.exists():
         return f"WARNING: spec-change-hook.sh not found at {hook_source}"
@@ -513,7 +513,7 @@ def install_repo_post_commit_hooks(project_root: Path, config: dict[str, Any]) -
     """
     results: list[str] = []
     specs_path = config.get("specs", {}).get("path", "")
-    hook_source = Path(__file__).resolve().parent / "post-commit-hook.sh"
+    hook_source = Path(__file__).resolve().parent.parent.parent / "scripts" / "post-commit-hook.sh"
 
     if not hook_source.exists():
         results.append(f"WARNING: post-commit-hook.sh not found at {hook_source}")
@@ -586,7 +586,7 @@ def install_pre_commit_hooks(project_root: Path, config: dict[str, Any]) -> list
     warns about non-standard branch naming.
     """
     results: list[str] = []
-    hook_source = Path(__file__).resolve().parent / "check-branch.sh"
+    hook_source = Path(__file__).resolve().parent.parent.parent / "scripts" / "check-branch.sh"
 
     if not hook_source.exists():
         results.append(f"WARNING: check-branch.sh not found at {hook_source}")
@@ -655,7 +655,7 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
     making configs portable across machines and developers.
     """
     results: list[str] = []
-    plugin_root = Path(__file__).resolve().parent.parent
+    plugin_root = Path(__file__).resolve().parent.parent.parent  # src/otaman_plugin/X.py → otaman-plugin/
     run_server = plugin_root / "servers" / "run-server.sh"
 
     # Skip if plugin is catalog-installed (CLAUDE_PLUGIN_ROOT is set by Claude Code)
