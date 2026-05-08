@@ -177,14 +177,14 @@ def generate_repo_claude_md(project_root: Path, config: dict[str, Any]) -> list[
 
         if claude_md_path.exists():
             existing = claude_md_path.read_text(encoding="utf-8")
-            if "<!-- maestro:begin -->" in existing:
-                # Replace existing maestro block
+            # Recognize both new (otaman:) and legacy (maestro:) markers so
+            # existing in-the-wild CLAUDE.md files migrate cleanly on next init.
+            if "<!-- otaman:begin -->" in existing or "<!-- maestro:begin -->" in existing:
                 import re
-                pattern = r"<!-- maestro:begin -->.*?<!-- maestro:end -->"
+                pattern = r"<!-- (?:otaman|maestro):begin -->.*?<!-- (?:otaman|maestro):end -->"
                 updated = re.sub(pattern, maestro_block, existing, flags=re.DOTALL)
                 claude_md_path.write_text(updated, encoding="utf-8")
             else:
-                # Append maestro block
                 with open(claude_md_path, "a", encoding="utf-8") as f:
                     f.write("\n\n" + maestro_block + "\n")
         else:
@@ -353,12 +353,12 @@ def _build_maestro_block(
         if lines:
             methodology_section = "\n".join(lines)
 
-    return f"""<!-- maestro:begin -->
-## Maestro Orchestration Rules
+    return f"""<!-- otaman:begin -->
+## Otaman Orchestration Rules
 
 **You are `{repo['owner']}`**. You own this repository: **{repo['name']}**.
 
-Maestro folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
+Otaman folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 
 ### First Session Checklist
 1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
@@ -377,7 +377,7 @@ Maestro folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 
 ### Communication — Bash CLI for hot path, MCP for richer ops
 
-Hot-path commands (frequent, read-mostly) — use the `maestro` Bash CLI, pre-allowed in this repo's settings:
+Hot-path commands (frequent, read-mostly) — use the `otaman` Bash CLI, pre-allowed in this repo's settings:
 - `otaman check` — list pending messages for you (auto-detects identity)
 - `otaman ack <msg-stem>` — acknowledge a message (default: resolved; `--read` keeps it visible)
 - `otaman status` — project-wide summary
@@ -416,11 +416,11 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 
 ### Task Completion Reporting (CRITICAL)
 - When you finish tasks from a `task-assignment`, you MUST report completion:
-  - `maestro complete <change-name> --tasks "2.1, 2.3"` (specific tasks)
-  - `maestro complete <change-name> --all` (all tasks for that change)
+  - `otaman complete <change-name> --tasks "2.1, 2.3"` (specific tasks)
+  - `otaman complete <change-name> --all` (all tasks for that change)
 - This updates `tasks.md` checkboxes in the specs repo and sends a `task-complete` bus message
-- **Lifecycle**: task-assignment received -> ack "read" -> implement -> `maestro complete` -> ack "resolved"
-- NEVER ack a task-assignment as "resolved" without first running `maestro complete`
+- **Lifecycle**: task-assignment received -> ack "read" -> implement -> `otaman complete` -> ack "resolved"
+- NEVER ack a task-assignment as "resolved" without first running `otaman complete`
 {specs_section}
 {standards_section}
 {methodology_section}
@@ -431,7 +431,7 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 - Work in branches: `agent/{repo['owner']}/{{feature-name}}`
 - All changes go through PRs
 - Write clear commit messages for the audit trail
-<!-- maestro:end -->"""
+<!-- otaman:end -->"""
 
 
 def install_spec_change_hook(project_root: Path, config: dict[str, Any]) -> str | None:
