@@ -10,8 +10,8 @@ import yaml
 
 # Add scripts/ to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-discover = importlib.import_module("discover_repos")
-gen_config = importlib.import_module("generate_agent_config")
+discover = importlib.import_module("otaman_plugin.discover_repos")
+gen_config = importlib.import_module("otaman_plugin.generate_agent_config")
 
 # platform-schema.yaml lives in otaman-core after the carve
 ASSETS = Path(__file__).parent.parent.parent / "otaman-core" / "src" / "otaman_core" / "schemas"

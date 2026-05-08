@@ -19,8 +19,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # The plugin distributes via Claude Code marketplace, not pip. This stub
 # exists only to satisfy `uv` workspace expectations.
-packages = ["scripts"]
+packages = ["src/otaman_plugin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["scripts", "../otaman-core/src"]
+pythonpath = ["src", "../otaman-core/src"]

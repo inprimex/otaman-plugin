@@ -23,7 +23,7 @@ import yaml
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-actualize = importlib.import_module("actualize_tasks")
+actualize = importlib.import_module("otaman_plugin.actualize_tasks")
 
 
 # ---------------------------------------------------------------------------

@@ -14,18 +14,9 @@ import pytest
 
 
 def _load_install_secrets_infra():
-    """Import install_secrets_infra from the hyphenated module filename."""
-    scripts_dir = Path(__file__).parent.parent / "scripts"
-    spec = importlib.util.spec_from_file_location(
-        "generate_agent_config",
-        scripts_dir / "generate_agent_config.py",
-    )
-    module = importlib.util.module_from_spec(spec)
-    # generate_agent_config.py imports other sibling scripts by name, so add
-    # scripts/ to sys.path just in case.
-    sys.path.insert(0, str(scripts_dir))
-    spec.loader.exec_module(module)
-    return module.install_secrets_infra
+    """install_secrets_infra is now a package symbol."""
+    from otaman_plugin.generate_agent_config import install_secrets_infra
+    return install_secrets_infra
 
 
 install_secrets_infra = _load_install_secrets_infra()

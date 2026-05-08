@@ -11,7 +11,7 @@ import yaml
 
 # Add scripts/ to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-init_presale = importlib.import_module("init_presale")
+init_presale = importlib.import_module("otaman_plugin.init_presale")
 
 ASSETS = Path(__file__).parent.parent / "assets"
 

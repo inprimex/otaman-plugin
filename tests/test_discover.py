@@ -20,14 +20,12 @@ from pathlib import Path
 import pytest
 
 # Add scripts/ to path so we can import discover-repos
-SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
-# validate_platform lives in otaman-core (sibling repo)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "otaman-core" / "src" / "otaman_core"))
+# discover_repos + validate_platform now resolved as package modules
+# (otaman_plugin via package; otaman_core via pyproject pythonpath / dep)
 
 # Import with hyphen workaround
 import importlib
-discover = importlib.import_module("discover_repos")
+discover = importlib.import_module("otaman_plugin.discover_repos")
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +393,7 @@ class TestDraftGeneration:
         assert draft_path.name == "platform.yaml.draft"
 
         # Validate with our validator
-        validate = importlib.import_module("validate_platform")
+        validate = importlib.import_module("otaman_core.validate_platform")
         import yaml
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         errors = validate.validate_builtin(config)
