@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Maestro Bus MCP Server — structured tool access to the agent message bus.
+"""Otaman Bus MCP Server — structured tool access to the agent message bus.
 
 Provides tools for checking messages, sending messages, acknowledging,
 and querying blocked tasks. Operates on the same file-based bus as the
@@ -19,11 +19,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 mcp = FastMCP(
-    name="maestro-bus",
+    name="otaman-bus",
     instructions=(
-        "Maestro bus tools for multi-repo agent orchestration. "
+        "Otaman bus tools for multi-repo agent orchestration. "
         "Use these tools to check messages, send messages, acknowledge, "
-        "and manage blocked tasks on the maestro message bus."
+        "and manage blocked tasks on the otaman message bus."
     ),
 )
 
@@ -138,7 +138,7 @@ def _timestamp_id() -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool
-def maestro_check(
+def otaman_check(
     cwd: str,
     status_filter: str = "pending",
 ) -> dict[str, Any]:
@@ -243,7 +243,7 @@ def maestro_check(
 
 
 @mcp.tool
-def maestro_send(
+def otaman_send(
     cwd: str,
     to: str,
     subject: str,
@@ -304,7 +304,7 @@ status: pending
 
 
 @mcp.tool
-def maestro_ack(
+def otaman_ack(
     cwd: str,
     message_stem: str,
     ack_status: str = "resolved",
@@ -362,9 +362,9 @@ def maestro_ack(
                     return {
                         "error": (
                             "Cannot ack task-assignment as 'resolved' without reporting completion. "
-                            "Run maestro_complete(cwd, change_name, tasks) first."
+                            "Run otaman_complete(cwd, change_name, tasks) first."
                         ),
-                        "hint": "Lifecycle: task-assignment -> ack 'read' -> implement -> maestro_complete -> ack 'resolved'",
+                        "hint": "Lifecycle: task-assignment -> ack 'read' -> implement -> otaman_complete -> ack 'resolved'",
                     }
 
     acks = _acks_dir(root)
@@ -381,7 +381,7 @@ def maestro_ack(
 
 
 @mcp.tool
-def maestro_status(cwd: str) -> dict[str, Any]:
+def otaman_status(cwd: str) -> dict[str, Any]:
     """Get a summary of the maestro project: agents, message counts, blocked tasks.
 
     Args:
@@ -439,7 +439,7 @@ def maestro_status(cwd: str) -> dict[str, Any]:
 
 
 @mcp.tool
-def maestro_blocked(
+def otaman_blocked(
     cwd: str,
     action: str = "list",
     task_name: str | None = None,
@@ -508,7 +508,7 @@ def maestro_blocked(
 
 
 @mcp.tool
-def maestro_read_message(
+def otaman_read_message(
     cwd: str,
     message_stem: str,
 ) -> dict[str, Any]:
@@ -550,7 +550,7 @@ def maestro_read_message(
 
 
 @mcp.tool
-def maestro_complete(
+def otaman_complete(
     cwd: str,
     change_name: str,
     tasks: str = "",
@@ -604,7 +604,7 @@ def maestro_complete(
 
     # Send bus notification
     task_label = "all tasks" if mark_all else f"tasks {tasks}"
-    send_result = maestro_send(
+    send_result = otaman_send(
         cwd=cwd,
         to="all",
         subject=f"Tasks complete: {change_name}",
@@ -622,7 +622,7 @@ def maestro_complete(
 
 
 @mcp.tool
-def maestro_propose(
+def otaman_propose(
     cwd: str,
     title: str,
     what_needs_to_change: str = "",
@@ -712,7 +712,7 @@ status: pending
 
 
 @mcp.tool
-def maestro_set_agent(cwd: str, agent_name: str) -> dict[str, Any]:
+def otaman_set_agent(cwd: str, agent_name: str) -> dict[str, Any]:
     """Set the current agent identity for this session.
 
     Args:
@@ -731,7 +731,7 @@ def maestro_set_agent(cwd: str, agent_name: str) -> dict[str, Any]:
 
 
 @mcp.tool
-def maestro_list_agents(cwd: str) -> dict[str, Any]:
+def otaman_list_agents(cwd: str) -> dict[str, Any]:
     """List all agents, their owned repos, and roles.
 
     Args:
@@ -791,7 +791,7 @@ def maestro_list_agents(cwd: str) -> dict[str, Any]:
 
 
 @mcp.tool
-def maestro_cleanup(cwd: str, dry_run: bool = False) -> dict[str, Any]:
+def otaman_cleanup(cwd: str, dry_run: bool = False) -> dict[str, Any]:
     """Archive old bus messages that are fully acknowledged.
 
     Args:
@@ -822,7 +822,7 @@ def maestro_cleanup(cwd: str, dry_run: bool = False) -> dict[str, Any]:
 
 
 @mcp.tool
-def maestro_read_spec(
+def otaman_read_spec(
     cwd: str,
     spec_path: str = "",
 ) -> dict[str, Any]:
@@ -888,7 +888,7 @@ def maestro_read_spec(
 
 
 @mcp.tool
-def maestro_queue(
+def otaman_queue(
     cwd: str,
     action: str = "read",
     content: str = "",

@@ -361,7 +361,7 @@ def _build_maestro_block(
 Maestro folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 
 ### First Session Checklist
-1. Run `maestro check` (Bash) — see pending bus messages and blocked tasks. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
+1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
 2. Read `{m}/.agents/queue/{repo['owner']}.md` — see your active/queued/blocked tasks
 3. Read specs relevant to your repo (specs_dir paths below)
 4. Run `git log --oneline -10` — understand recent changes
@@ -378,19 +378,21 @@ Maestro folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 ### Communication — Bash CLI for hot path, MCP for richer ops
 
 Hot-path commands (frequent, read-mostly) — use the `maestro` Bash CLI, pre-allowed in this repo's settings:
-- `maestro check` — list pending messages for you (auto-detects identity)
-- `maestro ack <msg-stem>` — acknowledge a message (default: resolved; `--read` keeps it visible)
-- `maestro status` — project-wide summary
-- `maestro queue` — your task queue
-- `maestro blocked` — your blocked tasks
+- `otaman check` — list pending messages for you (auto-detects identity)
+- `otaman ack <msg-stem>` — acknowledge a message (default: resolved; `--read` keeps it visible)
+- `otaman status` — project-wide summary
+- `otaman complete <change-name> --all` — mark OpenSpec tasks complete + broadcast task-complete
+- `otaman propose <title>` — propose a spec change (pending human approval)
+- Read `.agents/queue/<your-agent>.md` directly for your task queue (no CLI subcommand needed)
+- Read `.agents/blocked/<your-agent>.md` directly for blocked-task tracking
 
 Richer / less-frequent ops — use MCP tools (load schemas with ToolSearch first when calling directly):
-- `maestro_send(cwd, to, subject, body)` — send a message to another agent
-- `maestro_read_message(cwd, message_stem)` — read full message content programmatically
-- `maestro_propose(cwd, title, what_needs_to_change, why_needed)` — propose a spec change
-- `maestro_complete(cwd, change_name, tasks)` — report task completion
-- `maestro_read_spec(cwd, spec_path)` — read spec files
-- `maestro_list_agents(cwd)`, `maestro_set_agent(cwd, name)`, `maestro_cleanup(cwd)` — agent registry / housekeeping
+- `otaman_send(cwd, to, subject, body)` — send a message to another agent
+- `otaman_read_message(cwd, message_stem)` — read full message content programmatically
+- `otaman_propose(cwd, title, what_needs_to_change, why_needed)` — propose a spec change
+- `otaman_complete(cwd, change_name, tasks)` — report task completion
+- `otaman_read_spec(cwd, spec_path)` — read spec files
+- `otaman_list_agents(cwd)`, `otaman_set_agent(cwd, name)`, `otaman_cleanup(cwd)` — agent registry / housekeeping
 
 Why the split: bus checks happen dozens of times per session, and the MCP-via-instruction path proved unreliable across model variants (2026-04-29 incident — see plugin CLAUDE.md). The Bash CLI is deterministic. Heavier write operations stay on MCP because their structured payload is worth the schema-load overhead.
 
@@ -401,7 +403,7 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
   - When idle or waiting for anything
   - After every 3-5 tool calls during active work
 - **Never let pending messages exceed 3 without acting**
-- When you change an API or shared type: send `contract-change` via `maestro_send` BEFORE committing
+- When you change an API or shared type: send `contract-change` via `otaman_send` BEFORE committing
 - Message handling while busy: ack as `read`, add to queue, finish current task first
 - Urgent messages: pause current work, inform the human immediately
 
@@ -682,7 +684,7 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
 
         mcp_config = {
             "mcpServers": {
-                "maestro-bus": {
+                "otaman-bus": {
                     "command": "bash",
                     "args": [rel, "bus_server.py"],
                     "env": {"PYTHONUNBUFFERED": "1"},
@@ -692,7 +694,7 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
 
         mcp_path = repo_dir / ".mcp.json"
 
-        # Check if .mcp.json exists with non-maestro servers — preserve them
+        # Check if .mcp.json exists with non-otaman servers — preserve them
         existing_servers: dict[str, Any] = {}
         if mcp_path.exists():
             try:
@@ -702,9 +704,10 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # Merge: keep existing non-maestro servers, add/update maestro-bus
-        merged = dict(existing_servers)
-        merged["maestro-bus"] = mcp_config["mcpServers"]["maestro-bus"]
+        # Merge: keep existing non-otaman servers, add/update otaman-bus.
+        # Drop legacy maestro-bus key from prior pre-rebrand inits.
+        merged = {k: v for k, v in existing_servers.items() if k != "maestro-bus"}
+        merged["otaman-bus"] = mcp_config["mcpServers"]["otaman-bus"]
 
         with open(mcp_path, "w", encoding="utf-8") as f:
             json.dump({"mcpServers": merged}, f, indent=2)
@@ -737,14 +740,15 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
         "Bash(git branch:*)",
         "Bash(git checkout:*)",
         "Bash(git add:*)",
-        "Bash(maestro check:*)",
-        "Bash(maestro ack:*)",
-        "Bash(maestro status:*)",
-        "Bash(maestro queue:*)",
-        "Bash(maestro blocked:*)",
-        "Bash(maestro read:*)",
-        "Bash(maestro list-agents:*)",
-        "Bash(maestro set-agent:*)",
+        # otaman + maestro (legacy alias) — wildcards cover all subcommands
+        # without enumerating each. Both bare-name + full-path forms because
+        # Claude Code matches against literal command-prefix.
+        "Bash(otaman:*)",
+        "Bash(maestro:*)",
+        "Bash(/home/*/.local/bin/otaman:*)",
+        "Bash(/home/*/.local/bin/maestro:*)",
+        "Bash(/usr/local/bin/otaman:*)",
+        "Bash(/usr/local/bin/maestro:*)",
     ]
 
     for repo in config["repos"]:
@@ -1007,15 +1011,12 @@ def main() -> int:
     bus_path = config.get("communication", {}).get("bus_path", ".agents/bus")
     bus_dir = project_root / bus_path
     if bus_dir.is_dir():
-        import importlib.util
-        _cleanup_path = Path(__file__).resolve().parent / "cleanup-bus.py"
-        _spec = importlib.util.spec_from_file_location("cleanup_bus", _cleanup_path)
-        _cleanup_mod = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_cleanup_mod)
-        migrated = _cleanup_mod.migrate_flat_to_active(bus_dir)
+        # cleanup-bus.py was carved into otaman-cli during Stage 4E.
+        from otaman_cli.cleanup_bus import migrate_flat_to_active, cleanup as _cleanup_run
+        migrated = migrate_flat_to_active(bus_dir)
         if migrated:
             print(f"Migrated {migrated} bus message(s) to {bus_path}/active/")
-        report = _cleanup_mod.cleanup(project_root)
+        report = _cleanup_run(project_root)
         if report.get("archived"):
             print(f"Archived {len(report['archived'])} old bus message(s)")
 

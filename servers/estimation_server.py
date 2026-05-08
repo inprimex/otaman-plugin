@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Maestro Estimation MCP Server — structured access to estimation data.
+"""Otaman Estimation MCP Server — structured access to estimation data.
 
 Provides tools for querying past project benchmarks, component estimation
 library, domain expert knowledge, and project metadata. Designed as a
@@ -23,9 +23,9 @@ except ImportError:
 from fastmcp import FastMCP
 
 mcp = FastMCP(
-    name="maestro-estimation",
+    name="otaman-estimation",
     instructions=(
-        "Maestro estimation tools for pre-sale and project planning. "
+        "Otaman estimation tools for pre-sale and project planning. "
         "Use these tools to search past project benchmarks, get component "
         "estimates, load domain expert knowledge, and manage project metadata."
     ),

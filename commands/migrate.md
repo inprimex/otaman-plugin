@@ -25,9 +25,9 @@ Use this when you have an existing project where `platform.yaml`, `.agents/`, la
    ```bash
    otaman migrate [otaman-dir-name]
    ```
-   Or via the CLI:
+   If `otaman` isn't on PATH, invoke as a Python module:
    ```bash
-   py "${CLAUDE_PLUGIN_ROOT}/cli/otaman.py" migrate [otaman-dir-name]
+   python3 -m otaman_cli.main migrate [otaman-dir-name]
    ```
 
 3. **What it does**:

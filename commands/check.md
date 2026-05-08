@@ -34,10 +34,15 @@ The `<message-stem>` is the filename without `.md`, shown in the `otaman check` 
 
 ## If `otaman` isn't on PATH
 
-Fall back to running the CLI script directly:
+The `otaman` binary should be on PATH after `pip install otaman-cli` (or
+`uv sync --all-packages` in dev). If it isn't:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/cli/otaman.py check {{agent}}
+# Option 1: invoke via Python module form (requires otaman-cli installed)
+python3 -m otaman_cli.main check {{agent}}
+
+# Option 2: install otaman-cli into the active interpreter
+pip install otaman-cli   # or: uv pip install otaman-cli
 ```
 
 ## Notes

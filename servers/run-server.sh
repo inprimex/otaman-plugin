@@ -17,7 +17,18 @@ if [[ "$SERVER_SCRIPT" != /* ]]; then
     SERVER_SCRIPT="$SCRIPT_DIR/$SERVER_SCRIPT"
 fi
 
-# 1. Try venv python (cross-platform)
+# 1a. Prefer the otaman uv-workspace venv (covers dev mode where
+#     otaman-core / otaman-cli / otaman-bridge / otaman-plugin are all
+#     installed editable, so `from otaman_core._resolve import ...` works).
+#     Layout: otaman-plugin/servers/run-server.sh → ../../.venv/
+WORKSPACE_VENV="$SCRIPT_DIR/../../.venv"
+if [[ -x "$WORKSPACE_VENV/bin/python" ]]; then
+    exec "$WORKSPACE_VENV/bin/python" "$SERVER_SCRIPT"
+elif [[ -x "$WORKSPACE_VENV/Scripts/python.exe" ]]; then
+    exec "$WORKSPACE_VENV/Scripts/python.exe" "$SERVER_SCRIPT"
+fi
+
+# 1b. Try a plugin-local servers/.venv (if user set one up explicitly)
 VENV="$SCRIPT_DIR/.venv"
 if [[ -x "$VENV/Scripts/python.exe" ]]; then
     exec "$VENV/Scripts/python.exe" "$SERVER_SCRIPT"
