@@ -195,3 +195,20 @@ expand_config_dir() {
             ;;
     esac
 }
+
+# Profile resolution (formerly "account" — see otaman-core/_resolve.py docstring).
+# read_expected_profile prefers expected_profile:, falls back to expected_account:.
+read_expected_profile() {
+    local start="${1:-$PWD}"
+    local marker
+    marker="$(find_marker "$start")" || return 0
+    [[ -n "$marker" ]] || return 0
+    # Try new key first, fall back to legacy.
+    local val
+    val="$(grep -E '^expected_profile:' "$marker" 2>/dev/null | head -1 | sed 's/^expected_profile:[[:space:]]*//')"
+    if [[ -z "$val" ]]; then
+        val="$(grep -E '^expected_account:' "$marker" 2>/dev/null | head -1 | sed 's/^expected_account:[[:space:]]*//')"
+    fi
+    [[ -n "$val" ]] && echo "$val"
+}
+
