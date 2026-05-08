@@ -1,7 +1,7 @@
-"""Tests for hooks/check-profile.sh — account mismatch warning.
+"""Tests for hooks/check-routing.sh — account mismatch warning.
 
 Verifies the resolution order that mirrors bridge_approval.py's
-_derive_account (OTAMAN_ACTIVE_PROFILE → CLAUDE_CONFIG_DIR basename
+_derive_account (OTAMAN_ACTIVE_ROUTING → CLAUDE_CONFIG_DIR basename
 → silent skip for custom layouts).
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-HOOK = REPO_ROOT / "hooks" / "check-profile.sh"
+HOOK = REPO_ROOT / "hooks" / "check-routing.sh"
 
 
 def _find_bash() -> str | None:
@@ -49,18 +49,18 @@ def workspace(tmp_path):
     return {"root": tmp_path, "maestro": maestro, "repo": repo}
 
 
-def _write_marker(workspace, expected_profile: str) -> None:
+def _write_marker(workspace, expected_routing: str) -> None:
     """Write a .otaman marker with an expected_account field."""
     (workspace["repo"] / ".otaman").write_text(
         f"maestro_root: ../maestro\n"
-        f"expected_profile: {expected_profile}\n",
+        f"expected_routing: {expected_routing}\n",
         encoding="utf-8",
     )
 
 
 def _run(workspace, *, env_extra=None, unset=None):
     env = os.environ.copy()
-    for k in ("OTAMAN_ACTIVE_PROFILE", "CLAUDE_CONFIG_DIR"):
+    for k in ("OTAMAN_ACTIVE_ROUTING", "CLAUDE_CONFIG_DIR"):
         env.pop(k, None)
     if env_extra:
         env.update(env_extra)
@@ -77,13 +77,13 @@ def _run(workspace, *, env_extra=None, unset=None):
 
 
 class TestActiveAccountEnvVarWins:
-    """OTAMAN_ACTIVE_PROFILE is the first signal — it disambiguates the
+    """OTAMAN_ACTIVE_ROUTING is the first signal — it disambiguates the
     'one CLAUDE_CONFIG_DIR, many accounts' shape."""
 
     def test_env_matches_marker_no_warning(self, workspace):
         _write_marker(workspace, "greenbin")
         result = _run(workspace, env_extra={
-            "OTAMAN_ACTIVE_PROFILE": "greenbin",
+            "OTAMAN_ACTIVE_ROUTING": "greenbin",
             "CLAUDE_CONFIG_DIR": "/home/u/.claude-personal",  # shared with watchtower
         })
         assert result.returncode == 0
@@ -91,11 +91,11 @@ class TestActiveAccountEnvVarWins:
 
     def test_env_overrides_config_dir_basename(self, workspace):
         """The exact "shared config dir, separate maestro accounts" scenario:
-        CLAUDE_CONFIG_DIR says 'personal' but OTAMAN_ACTIVE_PROFILE says
+        CLAUDE_CONFIG_DIR says 'personal' but OTAMAN_ACTIVE_ROUTING says
         'greenbin' — the env var wins, marker check passes."""
         _write_marker(workspace, "greenbin")
         result = _run(workspace, env_extra={
-            "OTAMAN_ACTIVE_PROFILE": "greenbin",
+            "OTAMAN_ACTIVE_ROUTING": "greenbin",
             "CLAUDE_CONFIG_DIR": "/home/u/.claude-personal",
         })
         assert "mismatch" not in result.stderr
@@ -103,17 +103,17 @@ class TestActiveAccountEnvVarWins:
     def test_env_mismatch_warns(self, workspace):
         _write_marker(workspace, "greenbin")
         result = _run(workspace, env_extra={
-            "OTAMAN_ACTIVE_PROFILE": "someone-else",
+            "OTAMAN_ACTIVE_ROUTING": "someone-else",
         })
         assert result.returncode == 0
         assert "mismatch" in result.stderr
         assert "someone-else" in result.stderr
         assert "greenbin" in result.stderr
-        assert "OTAMAN_ACTIVE_PROFILE" in result.stderr
+        assert "OTAMAN_ACTIVE_ROUTING" in result.stderr
 
 
 class TestConfigDirFallback:
-    """When OTAMAN_ACTIVE_PROFILE isn't set, fall back to
+    """When OTAMAN_ACTIVE_ROUTING isn't set, fall back to
     CLAUDE_CONFIG_DIR basename (the legacy behavior)."""
 
     def test_matching_basename_no_warning(self, workspace):
@@ -131,7 +131,7 @@ class TestConfigDirFallback:
         assert "mismatch" in result.stderr
         # Warning attributes it to CLAUDE_CONFIG_DIR, not the env var
         assert "CLAUDE_CONFIG_DIR" in result.stderr
-        assert "OTAMAN_ACTIVE_PROFILE" not in result.stderr
+        assert "OTAMAN_ACTIVE_ROUTING" not in result.stderr
 
     def test_unset_config_dir_defaults(self, workspace):
         _write_marker(workspace, "default")
@@ -155,7 +155,7 @@ class TestNoMarker:
     def test_no_marker_silent_skip(self, workspace):
         """No .otaman marker → nothing to check against; silent exit."""
         result = _run(workspace, env_extra={
-            "OTAMAN_ACTIVE_PROFILE": "anything",
+            "OTAMAN_ACTIVE_ROUTING": "anything",
         })
         assert result.returncode == 0
         assert result.stderr == ""
@@ -167,7 +167,7 @@ class TestMessageFormat:
     def test_includes_marker_path(self, workspace):
         _write_marker(workspace, "greenbin")
         result = _run(workspace, env_extra={
-            "OTAMAN_ACTIVE_PROFILE": "wrong",
+            "OTAMAN_ACTIVE_ROUTING": "wrong",
         })
         # The fix hint mentions 'otaman accounts list'.
         assert "otaman accounts list" in result.stderr

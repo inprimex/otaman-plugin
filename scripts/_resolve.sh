@@ -196,16 +196,17 @@ expand_config_dir() {
     esac
 }
 
-# Profile resolution (formerly "account" — see otaman-core/_resolve.py docstring).
-# read_expected_profile prefers expected_profile:, falls back to expected_account:.
-read_expected_profile() {
+# Routing resolution (formerly "account", briefly "profile" — see
+# otaman-core/_resolve.py docstring for full history).
+# read_expected_routing prefers expected_routing:, falls back to expected_account:.
+read_expected_routing() {
     local start="${1:-$PWD}"
     local marker
     marker="$(find_marker "$start")" || return 0
     [[ -n "$marker" ]] || return 0
     # Try new key first, fall back to legacy.
     local val
-    val="$(grep -E '^expected_profile:' "$marker" 2>/dev/null | head -1 | sed 's/^expected_profile:[[:space:]]*//')"
+    val="$(grep -E '^expected_routing:' "$marker" 2>/dev/null | head -1 | sed 's/^expected_routing:[[:space:]]*//')"
     if [[ -z "$val" ]]; then
         val="$(grep -E '^expected_account:' "$marker" 2>/dev/null | head -1 | sed 's/^expected_account:[[:space:]]*//')"
     fi
