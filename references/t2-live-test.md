@@ -9,10 +9,11 @@ This guide walks through the first real hook → daemon → Telegram → phone �
 ## 0. Prerequisites
 
 - T1 + T2a + T2b + T2c are on the branch and tests pass (`pytest tests/ -q`).
-- Core deps + bridge deps installed on whichever machine runs the daemon:
+- otaman-cli + otaman-bridge installed on whichever machine runs the daemon:
   ```
-  pip install -r requirements.txt           # PyYAML, fastmcp, keyring
-  pip install -r requirements-bridge.txt    # python-telegram-bot
+  pip install otaman-cli otaman-bridge[telegram]
+  # or (faster, when developing in the polyrepo workspace):
+  cd /path/to/otaman/ && uv sync --all-packages
   ```
   On Linux with PEP 668 (externally-managed Python), add `--user` or use a venv.
 - `otaman accounts` already knows your account (e.g. `personal`) with a `config_dir`. Confirm: `otaman accounts list`.
