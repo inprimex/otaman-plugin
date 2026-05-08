@@ -7,6 +7,9 @@ authors = [{ name = "Otaman platform" }]
 license = { text = "UNLICENSED" }
 dependencies = [
     "otaman-core",
+    # fastmcp powers the bus_server and estimation_server MCP servers.
+    # Keep loosely pinned for now; revisit if breaking releases land.
+    "fastmcp>=2,<3",
 ]
 
 [project.optional-dependencies]
