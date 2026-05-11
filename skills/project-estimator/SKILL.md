@@ -141,6 +141,56 @@ When producing the final client-facing deliverables:
 - Business language in proposals and feature descriptions
 - Mermaid diagrams for architecture (v10+ syntax), 6-12 boxes max
 
+### Formatting rule: tables vs. prose (applies to **every gate**)
+
+Markdown tables are for **compact tabular data** — short cells (≤ ~120 chars), values that scan vertically. When a per-row rationale or explanation grows beyond ~120 chars, **do not pack it into a table cell** — split the output into two parts:
+
+1. A compact scoring/summary table with short cells only (numbers, short labels, ratings)
+2. A numbered `### Rationale` (or `### Notes`, `### Detail`) section below with one bold subheading per row and prose underneath
+
+**Why:** wide tables with paragraph-sized cells render poorly everywhere — VS Code Markdown preview, GitHub, browsers, PDF export, terminal renderers. The structure makes scanning harder, not easier. Splitting gives a scannable summary up top and depth on demand below; both render cleanly in every tool.
+
+**Example (Gate 1 dimension scores):**
+
+```markdown
+### Dimension scores
+
+| # | Dimension                | Score |
+|---|--------------------------|-------|
+| 1 | Functional scope         | 4/5   |
+| 2 | Technical                | 3/5   |
+| 3 | Integration              | 4/5   |
+| 4 | Compliance & regulatory  | 3/5   |
+| 5 | Requirements uncertainty | 2/5   |
+
+### Rationale
+
+**1. Functional scope — 4/5**
+[full justification paragraph here]
+
+**2. Technical — 3/5**
+[paragraph]
+
+...
+```
+
+**Applies to every gate output that has scored or compared rows:**
+- Gate 0 — confidence by category (six rows → table + rationale below)
+- Gate 1 — five-dimension complexity scoring
+- Gate 2 — tier selection comparison (if comparing tier options)
+- Gate 3 — risk register, assumptions list, capacity math by milestone
+
+**The same rule applies to all gate-internal working artifacts** (`.otaman-presale/` files), not only client-facing output — the user reviews these too, and they need to be legible.
+
+**Other table cases that should stay as plain tables** (cells are naturally short):
+- Reference codes, IDs, dates
+- Currency amounts
+- Yes/no / boolean grids
+- Counts and percentages
+- Short labels (≤ 80 chars)
+
+If unsure, ask: would a reader scan this table column-by-column? If yes → table. Would they need to read each row in full like a paragraph? → split into summary table + rationale section.
+
 ## Reference files
 
 **Core methodology** — read the relevant one for the current gate:
