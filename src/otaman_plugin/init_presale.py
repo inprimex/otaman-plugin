@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Initialize .maestro-presale/ directory structure for a new project.
+"""Initialize .otaman-presale/ directory structure for a new project.
 
 Usage:
     python init-presale.py <project-code> <project-name> <domain> [--client CLIENT]
 
-Creates .maestro-presale/ in the current directory with:
+Creates .otaman-presale/ in the current directory with:
 - project-meta.yaml (project metadata + phase tracking)
 - estimation/ directory
 - assumptions.yaml (empty register)
@@ -32,14 +32,23 @@ def create_presale_dir(
     domain: str,
     client: str | None = None,
 ) -> list[str]:
-    """Create .maestro-presale/ structure. Returns list of created files."""
-    presale = root / ".maestro-presale"
+    """Create .otaman-presale/ structure. Returns list of created files."""
+    presale = root / ".otaman-presale"
     created: list[str] = []
 
-    if presale.exists():
-        print(f"WARNING: .maestro-presale/ already exists at {root}", file=sys.stderr)
+    legacy = root / ".maestro-presale"
+    if presale.exists() or legacy.exists():
+        if presale.exists():
+            print(f"WARNING: .otaman-presale/ already exists at {root}", file=sys.stderr)
+        else:
+            print(
+                f"WARNING: legacy .maestro-presale/ found at {root}; new artifacts "
+                f"will write to .otaman-presale/. Migrate manually with: "
+                f"mv {root}/.maestro-presale {root}/.otaman-presale",
+                file=sys.stderr,
+            )
         print("Use --force to reinitialize (project-meta.yaml will NOT be overwritten).", file=sys.stderr)
-        # Still create missing subdirectories
+        # Still create missing subdirectories — idempotent re-run behaviour.
         for d in [presale / "estimation", presale / "architecture", presale / "discovery" / "decisions"]:
             if not d.exists():
                 d.mkdir(parents=True, exist_ok=True)
@@ -132,7 +141,7 @@ def main() -> int:
     created = create_presale_dir(root, project_code, project_name, domain, client)
 
     if created:
-        print(f"Initialized .maestro-presale/ for {project_name}")
+        print(f"Initialized .otaman-presale/ for {project_name}")
         for c in created:
             print(f"  Created: {c}")
     else:

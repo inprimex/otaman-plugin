@@ -688,7 +688,12 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
                     "command": "bash",
                     "args": [rel, "bus_server.py"],
                     "env": {"PYTHONUNBUFFERED": "1"},
-                }
+                },
+                "otaman-estimation": {
+                    "command": "bash",
+                    "args": [rel, "estimation_server.py"],
+                    "env": {"PYTHONUNBUFFERED": "1"},
+                },
             }
         }
 
@@ -704,10 +709,12 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # Merge: keep existing non-otaman servers, add/update otaman-bus.
-        # Drop legacy maestro-bus key from prior pre-rebrand inits.
-        merged = {k: v for k, v in existing_servers.items() if k != "maestro-bus"}
+        # Merge: keep existing non-otaman servers, add/update both otaman
+        # servers. Drop legacy maestro-* keys from prior pre-rebrand inits.
+        LEGACY = {"maestro-bus", "maestro-estimation"}
+        merged = {k: v for k, v in existing_servers.items() if k not in LEGACY}
         merged["otaman-bus"] = mcp_config["mcpServers"]["otaman-bus"]
+        merged["otaman-estimation"] = mcp_config["mcpServers"]["otaman-estimation"]
 
         with open(mcp_path, "w", encoding="utf-8") as f:
             json.dump({"mcpServers": merged}, f, indent=2)

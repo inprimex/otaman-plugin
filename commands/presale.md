@@ -35,10 +35,14 @@ If the user provided `<artifacts>` argument, note the path for the SA agent to r
 
 ### Step 2: Initialize presale directory
 
-Run the init-presale script:
+Run the init-presale script via the otaman_plugin package:
 ```bash
-py "${CLAUDE_PLUGIN_ROOT}/scripts/init-presale.py" "<PROJECT-CODE>" "<project-name>" "<domain>" --client "<client>"
+python3 -m otaman_plugin.init_presale "<PROJECT-CODE>" "<project-name>" "<domain>" --client "<client>"
 ```
+
+This uses the installed `otaman_plugin` Python package, so it works on
+Linux/macOS/Windows without depending on the `py` launcher or a specific
+plugin checkout path.
 
 Generate the project code automatically: take the project type (2-3 letters from domain), tech hint if known (2-3 letters), "EST" for estimation, and today's date (YYMMDD). Example: `HLT-EST-260327` for a healthcare estimation on 2026-03-27.
 

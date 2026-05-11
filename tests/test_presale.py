@@ -25,17 +25,17 @@ class TestInitPresale:
         created = init_presale.create_presale_dir(
             tmp_path, "TEST-EST-260327", "Test Project", "healthcare", client="Acme"
         )
-        assert (tmp_path / ".maestro-presale").is_dir()
-        assert (tmp_path / ".maestro-presale" / "estimation").is_dir()
-        assert (tmp_path / ".maestro-presale" / "architecture").is_dir()
-        assert (tmp_path / ".maestro-presale" / "discovery" / "decisions").is_dir()
+        assert (tmp_path / ".otaman-presale").is_dir()
+        assert (tmp_path / ".otaman-presale" / "estimation").is_dir()
+        assert (tmp_path / ".otaman-presale" / "architecture").is_dir()
+        assert (tmp_path / ".otaman-presale" / "discovery" / "decisions").is_dir()
         assert len(created) > 0
 
     def test_creates_project_meta(self, tmp_path):
         init_presale.create_presale_dir(
             tmp_path, "HLT-EST-260327", "Health App", "healthcare", client="Hospital Inc"
         )
-        meta_path = tmp_path / ".maestro-presale" / "project-meta.yaml"
+        meta_path = tmp_path / ".otaman-presale" / "project-meta.yaml"
         assert meta_path.exists()
         meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
         assert meta["project_code"] == "HLT-EST-260327"
@@ -52,11 +52,11 @@ class TestInitPresale:
             tmp_path, "TEST-EST-260327", "Test", "general"
         )
         assumptions = yaml.safe_load(
-            (tmp_path / ".maestro-presale" / "assumptions.yaml").read_text(encoding="utf-8")
+            (tmp_path / ".otaman-presale" / "assumptions.yaml").read_text(encoding="utf-8")
         )
         assert assumptions["assumptions"] == []
         risks = yaml.safe_load(
-            (tmp_path / ".maestro-presale" / "risks.yaml").read_text(encoding="utf-8")
+            (tmp_path / ".otaman-presale" / "risks.yaml").read_text(encoding="utf-8")
         )
         assert risks["risks"] == []
 
@@ -65,7 +65,7 @@ class TestInitPresale:
             tmp_path, "TEST-EST-260327", "Test", "general"
         )
         # Modify meta
-        meta_path = tmp_path / ".maestro-presale" / "project-meta.yaml"
+        meta_path = tmp_path / ".otaman-presale" / "project-meta.yaml"
         meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
         meta["custom_field"] = "should survive"
         with open(meta_path, "w") as f:
@@ -84,7 +84,7 @@ class TestInitPresale:
             tmp_path, "TEST-EST-260327", "Test", "general"
         )
         meta = yaml.safe_load(
-            (tmp_path / ".maestro-presale" / "project-meta.yaml").read_text(encoding="utf-8")
+            (tmp_path / ".otaman-presale" / "project-meta.yaml").read_text(encoding="utf-8")
         )
         assert "client" not in meta
 

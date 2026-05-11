@@ -53,11 +53,15 @@ def _find_plugin_root() -> Path | None:
 
 
 def _find_presale_dir(cwd: str) -> Path | None:
-    """Find .maestro-presale/ by walking up from cwd."""
+    """Find presale dir by walking up from cwd. Prefers .otaman-presale/, falls back to legacy .maestro-presale/."""
     d = Path(cwd).resolve()
     for _ in range(10):
-        if (d / ".maestro-presale").is_dir():
-            return d / ".maestro-presale"
+        new = d / ".otaman-presale"
+        if new.is_dir():
+            return new
+        legacy = d / ".maestro-presale"
+        if legacy.is_dir():
+            return legacy
         parent = d.parent
         if parent == d:
             break
@@ -315,17 +319,17 @@ def get_domain_expert(
 
 @mcp.tool
 def get_project_meta(cwd: str) -> dict[str, Any]:
-    """Read project metadata from .maestro-presale/project-meta.yaml.
+    """Read project metadata from .otaman-presale/project-meta.yaml (or legacy .maestro-presale/).
 
     Args:
-        cwd: Current working directory (used to find .maestro-presale/)
+        cwd: Current working directory (used to find .otaman-presale/)
 
     Returns:
         Dict with project metadata including phase, domain, estimation info.
     """
     presale = _find_presale_dir(cwd)
     if not presale:
-        return {"error": "No .maestro-presale/ directory found"}
+        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/) directory found"}
 
     meta = _load_yaml(presale / "project-meta.yaml")
     if not meta:
@@ -351,7 +355,7 @@ def update_project_phase(
 
     presale = _find_presale_dir(cwd)
     if not presale:
-        return {"error": "No .maestro-presale/ directory found"}
+        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/) directory found"}
 
     meta_path = presale / "project-meta.yaml"
     meta = _load_yaml(meta_path)
@@ -396,14 +400,14 @@ def save_knowledge_item(
         content: The knowledge item text
         confidence: Confidence level: high, medium, low
         source: Where this was extracted from (e.g., "meeting notes 2026-03-25", "client email")
-        destination: Where to store: project (in .maestro-presale/), benchmarks, component-library, domain-knowledge
+        destination: Where to store: project (in .otaman-presale/), benchmarks, component-library, domain-knowledge
     """
     from datetime import datetime, timezone
 
     if destination == "project":
         presale = _find_presale_dir(cwd)
         if not presale:
-            return {"error": "No .maestro-presale/ directory found"}
+            return {"error": "No .otaman-presale/ (or legacy .maestro-presale/) directory found"}
 
         knowledge_file = presale / "captured-knowledge.yaml"
         data = _load_yaml(knowledge_file) or {"items": []}
