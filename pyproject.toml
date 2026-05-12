@@ -10,7 +10,7 @@ dependencies = [
     "otaman-core",
     # fastmcp powers the bus_server and estimation_server MCP servers.
     # Keep loosely pinned for now; revisit if breaking releases land.
-    "fastmcp>=2,<3",
+    "fastmcp>=2,<4",
 ]
 
 [project.optional-dependencies]
