@@ -1,0 +1,73 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Force Node 24 runtime now (deprecated Node 20 removed Sep 16 2026).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.11']
+
+    steps:
+      - name: Checkout otaman-plugin
+        uses: actions/checkout@v5
+        with:
+          path: workspace/otaman-plugin
+
+      - name: Checkout otaman-core (sibling path-dep)
+        uses: actions/checkout@v5
+        with:
+          repository: inprimex/otaman-core
+          token: ${{ secrets.INPRIMEX_RO_TOKEN }}
+          path: workspace/otaman-core
+
+      - name: Generate workspace pyproject.toml
+        shell: bash
+        working-directory: workspace
+        run: |
+          cat > pyproject.toml <<'EOF'
+          [project]
+          name = "otaman-ci-workspace"
+          version = "0.0.0"
+          description = "Ephemeral workspace pyproject used by CI to wire up sibling path-deps"
+          requires-python = ">=3.10"
+
+          [tool.uv.workspace]
+          members = ["otaman-core","otaman-plugin"]
+
+          [tool.uv.sources]
+          otaman-core = { workspace = true }
+          otaman-plugin = { workspace = true }
+          EOF
+          echo "Workspace pyproject written:"
+          cat pyproject.toml
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "workspace/otaman-plugin/pyproject.toml"
+
+      - name: Install dependencies
+        working-directory: workspace/otaman-plugin
+        run: uv sync --extra test --no-dev
+
+      - name: Run tests
+        working-directory: workspace/otaman-plugin
+        run: uv run pytest tests/ -v
