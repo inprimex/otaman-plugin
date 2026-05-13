@@ -51,6 +51,14 @@ def _backup_existing(path: Path) -> Path | None:
     return bak
 
 
+def _phase(label: str, count: int | None = None) -> None:
+    """Print a phase header. 2B.2-C: temporal feedback during long inits."""
+    if count is not None:
+        print(f"\n[*] {label} ({count} repos)...")
+    else:
+        print(f"\n[*] {label}...")
+
+
 def load_config(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -988,6 +996,7 @@ def main() -> int:
     if created_dirs:
         print(f"Created directories: {', '.join(created_dirs)}")
 
+    _phase("Initializing .agents state")
     # Generate ownership.json
     ownership_path = generate_ownership_json(project_root, config)
     print(f"Generated: {ownership_path.relative_to(project_root)}")
@@ -1001,11 +1010,13 @@ def main() -> int:
     for q in queue_created:
         print(f"Created: {q}")
 
+    _phase("Writing per-repo CLAUDE.md", count=len(config["repos"]))
     # Generate per-repo CLAUDE.md
     warnings = generate_repo_claude_md(project_root, config)
     for w in warnings:
         print(f"WARNING: {w}")
 
+    _phase("Writing per-repo .otaman markers", count=len(config["repos"]))
     # Write .maestro marker files in each repo (pointing back to maestro folder)
     marker_results = install_maestro_markers(project_root, config)
     for r in marker_results:
@@ -1016,12 +1027,13 @@ def main() -> int:
     for r in secrets_results:
         print(r)
 
-    # Generate per-repo .claude/settings.local.json with safe permissions
+    _phase("Installing per-repo .mcp.json (MCP server config)", count=len(config["repos"]))
     # Install .mcp.json in each repo (enables MCP tools without bash)
     mcp_results = install_mcp_config(project_root, config)
     for r in mcp_results:
         print(r)
 
+    _phase("Updating per-repo .claude/settings.local.json (permissions)", count=len(config["repos"]))
     settings_results = generate_repo_settings(project_root, config)
     for r in settings_results:
         print(r)
@@ -1031,6 +1043,7 @@ def main() -> int:
     if hook_result:
         print(hook_result)
 
+    _phase("Installing per-repo post-commit hooks", count=len(config["repos"]))
     # Install post-commit hooks in all non-specs repos
     repo_hook_results = install_repo_post_commit_hooks(project_root, config)
     for r in repo_hook_results:
