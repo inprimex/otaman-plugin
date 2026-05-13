@@ -489,9 +489,13 @@ def scan_directory(root: Path) -> dict[str, Any]:
     for i, entry in enumerate(entries, 1):
         _progress(f"  [{i}/{len(entries)}] {entry.name}")
 
-        # Skip maestro folders (contain platform.yaml + .agents/)
-        if (entry / "platform.yaml").exists() and (entry / ".agents").is_dir():
-            _progress(f"    (skipped — maestro folder)")
+        # Skip maestro/otaman folders. Three signals:
+        #   1. Has platform.yaml + .agents/ (fully-init project — original heuristic)
+        #   2. Name ends with -maestro or -otaman (just-created shell, no platform.yaml yet)
+        is_maestro_folder = (entry / "platform.yaml").exists() and (entry / ".agents").is_dir()
+        is_otaman_named = entry.name.endswith("-maestro") or entry.name.endswith("-otaman")
+        if is_maestro_folder or is_otaman_named:
+            _progress(f"    (skipped — maestro/otaman folder)")
             continue
 
         git_dir = entry / ".git"
@@ -780,8 +784,27 @@ def update_existing_config(root: Path, report: dict[str, Any], *, dry_run: bool 
     - Updates specs/contracts paths if OpenSpec newly detected
     """
     config_path = root / "platform.yaml"
-    with open(config_path, encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+    except yaml.YAMLError as _e:
+        # Malformed YAML — preserve users file as .bak, surface a clear error
+        import shutil
+        bak = config_path.with_suffix(config_path.suffix + ".bak")
+        shutil.copy2(config_path, bak)
+        print(
+            f"ERROR: Failed to parse {config_path}: {_e}",
+            file=sys.stderr,
+        )
+        print(
+            f"Your file was backed up to {bak}.",
+            file=sys.stderr,
+        )
+        print(
+            "Hint: Restore from .bak, fix the syntax, then re-run otaman scan --update.",
+            file=sys.stderr,
+        )
+        raise
 
     changes: dict[str, Any] = {"added": [], "updated": [], "removed": [], "unchanged": []}
 
