@@ -1,0 +1,12 @@
+{
+  "name": "example-frontend",
+  "version": "0.1.0",
+  "description": "Frontend stub for otaman example platform",
+  "scripts": {
+    "dev": "echo 'real frontend would: vite dev'",
+    "build": "echo 'real frontend would: vite build'"
+  },
+  "dependencies": {
+    "react": "^18.2.0"
+  }
+}

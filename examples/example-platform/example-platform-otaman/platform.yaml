@@ -1,0 +1,73 @@
+# otaman-example platform configuration
+# Three-repo demo project with observers, OpenSpec, and git_host stub.
+#
+# Paths are RELATIVE to this maestro folder. Do not use absolute paths
+# (breaks cross-machine portability).
+
+project: example-platform
+version: "1.0"
+
+repos:
+  - name: frontend
+    path: ../frontend
+    owner: frontend-agent
+    tech: [typescript, react]
+    description: "Customer-facing React app"
+
+  - name: backend
+    path: ../backend
+    owner: backend-agent
+    tech: [python]
+    description: "REST API + background workers"
+
+  - name: specs
+    path: ../specs
+    owner: spec-agent
+    tech: [docs]
+    description: "OpenSpec source of truth for features"
+
+# Spec format. The example ships OpenSpec; alternative is `format: fallback`
+# which uses simple markdown proposals under .agents/proposals/
+specs:
+  path: ../specs
+  format: openspec
+
+# Cross-agent communication via file-based bus
+communication:
+  bus_path: .agents/bus
+  format: markdown
+  max_age_days: 30
+
+# Observer roles trigger on events (PRs, spec changes, etc.)
+# See: /otaman:review command and references/agent-roles.md
+observers:
+  - role: cto-reviewer
+    triggers: [pr, spec-change, architecture-change]
+  - role: security
+    triggers: [pr, dependency-update, auth-change]
+
+# Launcher profiles for selective tab launches
+profiles:
+  fullstack:
+    description: "Frontend + backend (typical feature work)"
+    repos: [frontend, backend, specs]
+  backend-only:
+    description: "Backend iteration (API + workers)"
+    repos: [backend, specs]
+  frontend-only:
+    description: "Frontend iteration"
+    repos: [frontend, specs]
+  full:
+    description: "All three repos"
+    repos: all
+
+# Uncomment to enable PR/MR features. See references/git-host-setup.md
+# for PAT creation steps per provider.
+#
+# git_host:
+#   provider: github                # github | gitlab | bitbucket | azure-devops
+#   token:
+#     sources:
+#       - { type: env,     name: OTAMAN_GH_PAT_EXAMPLE }
+#       - { type: dotenv,  name: OTAMAN_GH_PAT_EXAMPLE }
+#       - { type: keyring, service: otaman, account: gh-pat-example }

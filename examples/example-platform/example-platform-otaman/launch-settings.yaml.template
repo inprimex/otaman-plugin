@@ -1,0 +1,43 @@
+# Launcher settings template — copy to launch-settings.yaml and edit.
+#
+# This template ships in the example but NOT a working launch-settings.yaml
+# (which is per-developer, per-machine). Each developer cloning the example
+# fills this in once for their environment.
+#
+# See references/launcher-walkthrough.md for the full how-to.
+
+# Which connection to use by default. Override at runtime with -Connection.
+active_connection: "local"
+
+connections:
+  local:
+    type: "local"
+    # Path to YOUR clone of this example (or your real project's maestro folder)
+    local_root: "~/my-otaman-trial/example-platform-otaman"
+    local_shell: "wsl"          # wsl | powershell (Windows) — leave 'bash' for *nix
+    wsl_distro: "Ubuntu"
+    account: "personal"
+
+  # Uncomment + fill in if your project lives on a remote server
+  # lan:
+  #   type: "ssh"
+  #   reliability: tmux
+  #   ssh_client: "ssh"
+  #   ssh_default_host: "user@192.168.1.100"
+  #   ssh_key: "~/.ssh/id_ed25519"
+  #   ssh_remote_root: "/home/user/my-otaman-trial/example-platform-otaman"
+  #   ssh_plugin_path: "/home/user/otaman/otaman-plugin"
+  #   account: "personal"
+
+accounts:
+  personal:
+    config_dir: "~/.claude"     # your Claude Code OAuth config dir
+    label: "Personal"
+    # Telegram routing — see references/telegram-setup.md
+    # transport: telegram
+    # transport_config:
+    #   group_id: 0                          # your Telegram group ID
+    #   allowed_user_ids: [0]                # your Telegram user ID(s)
+    #   bot_token:
+    #     sources:
+    #       - { type: keyring, service: otaman, account: tg-bot-example }

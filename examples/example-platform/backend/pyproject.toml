@@ -1,0 +1,10 @@
+[project]
+name = "example-backend"
+version = "0.1.0"
+description = "Backend stub for otaman example platform"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
