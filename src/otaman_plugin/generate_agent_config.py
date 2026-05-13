@@ -938,6 +938,15 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
 
 
 def main() -> int:
+    # 2B.2-A: dry-run early return. Full per-write gating in 2B.2-B.
+    import sys as _sys
+    if "--dry-run" in _sys.argv:
+        print("  [dry-run] generate-agent-config: skipping all writes")
+        print("  [dry-run] would generate: .agents/, ownership.json, queue files,")
+        print("  [dry-run]                 per-repo CLAUDE.md, .mcp.json, .claude/,")
+        print("  [dry-run]                 .otaman marker, hooks, .gitignore")
+        print("  [dry-run] re-run without --dry-run to apply")
+        return 0
     if len(sys.argv) < 2:
         print("Usage: generate-agent-config.py <path-to-platform.yaml>", file=sys.stderr)
         return 2
