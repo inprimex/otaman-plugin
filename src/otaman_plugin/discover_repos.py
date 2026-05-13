@@ -766,7 +766,7 @@ def generate_draft_yaml(root: Path, report: dict[str, Any], maestro_dir: Path | 
     return draft_path
 
 
-def update_existing_config(root: Path, report: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+def update_existing_config(root: Path, report: dict[str, Any], *, dry_run: bool = False) -> tuple[Path, dict[str, Any]]:
     """Merge discovery results into an existing platform.yaml.
 
     Preserves:
@@ -857,6 +857,8 @@ def update_existing_config(root: Path, report: dict[str, Any]) -> tuple[Path, di
         changes["updated"].append({"name": "(contracts)", "fields": ["added"]})
 
     out_path = root / "platform.yaml.updated"
+    if dry_run:
+        return out_path, changes
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("# Maestro Platform Configuration (UPDATED)\n")
         f.write("# Re-scanned by /otaman:scan --update\n")
@@ -868,6 +870,7 @@ def update_existing_config(root: Path, report: dict[str, Any]) -> tuple[Path, di
 
 def main() -> int:
     update_mode = "--update" in sys.argv
+    dry_run = "--dry-run" in sys.argv
 
     # Parse --maestro-dir option
     maestro_dir: Path | None = None
@@ -902,19 +905,34 @@ def main() -> int:
         if not config_path.exists():
             print(f"ERROR: --update requires existing platform.yaml at {config_path}", file=sys.stderr)
             return 2
-        out_path, changes = update_existing_config(root, report)
-        report["update_path"] = str(out_path)
-        report["changes"] = changes
+        if dry_run:
+            # Don't mutate; report what would change
+            from copy import deepcopy
+            _, changes = update_existing_config(root, deepcopy(report), dry_run=True)
+            report["update_path"] = str(root / "platform.yaml.updated")
+            report["changes"] = changes
+            report["dry_run"] = True
+        else:
+            out_path, changes = update_existing_config(root, report)
+            report["update_path"] = str(out_path)
+            report["changes"] = changes
         print(json.dumps(report, indent=2))
         return 0
 
     # Create maestro dir if specified and doesn't exist
     if maestro_dir:
-        maestro_dir.mkdir(parents=True, exist_ok=True)
+        if not dry_run:
+            maestro_dir.mkdir(parents=True, exist_ok=True)
         report["maestro_dir"] = str(maestro_dir)
 
-    draft_path = generate_draft_yaml(root, report, maestro_dir=maestro_dir)
-    report["draft_path"] = str(draft_path)
+    if dry_run:
+        # Skip writing draft; report the path it WOULD land at
+        target_dir = maestro_dir if maestro_dir else root
+        report["draft_path"] = str(target_dir / "platform.yaml.draft")
+        report["dry_run"] = True
+    else:
+        draft_path = generate_draft_yaml(root, report, maestro_dir=maestro_dir)
+        report["draft_path"] = str(draft_path)
 
     print(json.dumps(report, indent=2))
     return 0
