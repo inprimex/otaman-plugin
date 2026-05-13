@@ -1,0 +1,242 @@
+# Getting started with otaman (15 minutes)
+
+This guide takes you from "never heard of otaman" to a running 3-repo
+project with multi-agent coordination in **about 15 minutes**. It
+intentionally skips advanced features (Telegram approvals, AFK mode,
+git host integration) — those have their own walkthroughs you can
+adopt later.
+
+**What you'll have when you're done:**
+- A new otaman project with 3 example repos
+- One claude code session per repo, each with its own agent identity
+- Working inter-agent bus (send / read / ack messages between agents)
+- Otaman-branded `CLAUDE.md` + permissions + MCP tools in each repo
+
+**Prerequisites:**
+- Claude Code installed and authenticated (`claude --version` works)
+- Python 3.10+
+- `git`, `tmux` (optional but recommended)
+- 15 minutes
+
+---
+
+## Step 1: Install otaman (2 min)
+
+```bash
+# Once otaman is published to PyPI (current state: pre-public release):
+pip install otaman-cli
+
+# Pre-release dev install — clone the 4 repos as siblings:
+git clone https://github.com/inprimex/otaman-core
+git clone https://github.com/inprimex/otaman-cli
+git clone https://github.com/inprimex/otaman-bridge
+git clone https://github.com/inprimex/otaman-plugin
+cd otaman-core/..  # parent of the 4 sibling checkouts
+uv sync --all-packages
+```
+
+Verify:
+```bash
+otaman --version
+otaman doctor
+```
+
+Doctor should report a few warnings (no project yet, no git remote)
+but no failures. If it crashes, something's wrong with the install.
+
+---
+
+## Step 2: Create a sample project (1 min)
+
+For this walkthrough we'll make a synthetic 3-repo project. In real life
+you'd point otaman at your existing repos.
+
+```bash
+mkdir -p ~/otaman-quickstart/{web,api,specs}
+for r in web api specs; do
+  cd ~/otaman-quickstart/$r
+  git init -q
+  git config user.email "you@example.com"
+  git config user.name "you"
+  echo "# $r" > README.md
+  git add . && git commit -q -m "initial"
+done
+cd ~/otaman-quickstart
+```
+
+You now have a parent dir with 3 git-initialised sibling repos.
+
+---
+
+## Step 3: Scan + draft config (1 min)
+
+```bash
+otaman scan .
+```
+
+Otaman walks the directory, detects the 3 repos, suggests owner agents
+based on filename hints (REAMDE-only → docs-agent), and creates a
+`platform.yaml.draft` inside a new `otaman-quickstart-otaman/` folder
+(your maestro folder).
+
+Try the dry-run first if you want to preview without committing:
+
+```bash
+otaman scan . --dry-run
+```
+
+Review the draft:
+
+```bash
+cat otaman-quickstart-otaman/platform.yaml.draft
+```
+
+Adjust owner assignments if needed (e.g., `frontend-agent` for `web`,
+`backend-agent` for `api`, `spec-agent` for `specs`), then rename to
+the active config:
+
+```bash
+cd otaman-quickstart-otaman
+mv platform.yaml.draft platform.yaml
+```
+
+---
+
+## Step 4: Initialize (2 min)
+
+```bash
+otaman init
+```
+
+This generates:
+- `.agents/` — bus directory, ownership map, agent registry, blocked-tasks
+- Per-repo `CLAUDE.md` with the agent's role + ownership boundaries
+- Per-repo `.mcp.json` registering the otaman MCP servers (bus + estimation)
+- Per-repo `.claude/settings.local.json` with pre-approved Bash hot-path
+  permissions
+- Per-repo `.otaman` marker file pointing back to the maestro folder
+- Git hooks for post-commit observer triggers
+
+Output should end with `11 checks passed — environment ready` (or a
+similar doctor summary).
+
+Want to see what would happen first?
+
+```bash
+otaman init --dry-run
+```
+
+---
+
+## Step 5: Launch one agent (3 min)
+
+Open a new terminal tab and `cd` into the `web` repo:
+
+```bash
+cd ~/otaman-quickstart/web
+claude --plugin-dir ~/otaman/otaman-plugin '/otaman:check'
+```
+
+(The plugin path is wherever you cloned `otaman-plugin` in Step 1.)
+
+Claude code starts, loads the otaman plugin, runs `/otaman:check`. You
+should see:
+
+```
+Messages for: <agent-name-from-platform-yaml>
+No pending messages on the bus.
+```
+
+Confirm the agent identity:
+
+```
+otaman whoami
+```
+
+The header should report the right agent + project root + bus state.
+
+---
+
+## Step 6: Send a bus message (2 min)
+
+Still in the `web` repo terminal, ask the agent to send a message to
+another agent:
+
+```
+Send a task-assignment message to <other-agent-name> with subject
+"Test from web repo" and a short body. Use otaman send.
+```
+
+The agent runs:
+```bash
+otaman send <other-agent> --subject "Test" --body "..." --type task-assignment
+```
+
+Now open a tab in the `api` repo (or wherever the recipient agent
+lives) and run claude code there. Its first prompt should auto-surface:
+
+```
+[otaman] 1 pending message(s). Run /otaman:check for details.
+```
+
+That's the **bus-status-hook** in action — a UserPromptSubmit hook
+that surfaces unread messages on every prompt.
+
+Ack the message:
+
+```
+otaman check
+otaman ack <stem>      # marks as resolved
+```
+
+---
+
+## Step 7: What's next? (1 min)
+
+You have a working otaman setup. Common next steps:
+
+| Goal | Read |
+|---|---|
+| Run agents from your phone via Telegram approvals | `references/telegram-setup.md` |
+| Open all 3 tabs with one command | `references/launcher-walkthrough.md` |
+| Wire up PR comments / observer reviews to GitHub/GitLab | `references/git-host-setup.md` |
+| Understand the bus message schema | `references/communication-protocol.md` |
+| Run a pre-sale estimation workflow | `/otaman:presale` command, then `references/skills/project-estimator.md` |
+| Add observer reviews (CTO + security) | `/otaman:review` command |
+
+---
+
+## Common first-run snags
+
+| Symptom | Fix |
+|---|---|
+| `otaman: command not found` | Activate the venv: `source ~/otaman/.venv/bin/activate` or `pip install -e .` |
+| `MCP Dependencies: FAIL — fastmcp not installed` | `uv sync` in the otaman workspace root, or `pip install fastmcp` |
+| Doctor shows `Git Host PAT: skipped` | Expected if you haven't configured `git_host:` in `platform.yaml` — optional feature |
+| MCP servers don't connect inside claude code | `/mcp` slash command in claude shows status. If `otaman-bus: ✘ failed`, check `~/otaman/.venv/bin/python` has `fastmcp` |
+| Per-repo CLAUDE.md gets overwritten on re-init | The `<!-- otaman:begin -->` / `<!-- otaman:end -->` markers preserve your custom content outside the block — verify your edits sit outside the markers |
+
+---
+
+## What this guide skipped
+
+For tighter time-to-first-success, this guide skipped:
+- Telegram bridge setup (you'll want this when you start working away
+  from your desk)
+- Launcher folder (one command to spawn all 3 tabs vs. opening manually)
+- Git host integration (PR comments, observer reviews posted as MR
+  comments)
+- Profile filtering (e.g., "only launch frontend + backend, skip specs")
+- AFK mode + idle-auto-AFK (auto-route to Telegram when you step away)
+- Pre-sale estimation workflow + lifecycle gates
+- Multi-account setup (corporate + personal Claude logins coexisting)
+
+Each is a 5–15 minute walkthrough in `references/` once you're ready.
+
+---
+
+## Where to ask
+
+- **Issues / bugs**: https://github.com/inprimex/otaman-plugin/issues
+- **Security**: see SECURITY.md (GitHub Security Advisory)
+- **Discussions**: GitHub Discussions (enabled at public-launch time)
