@@ -35,6 +35,22 @@ except ImportError:
     sys.exit(2)
 
 
+def _backup_existing(path: Path) -> Path | None:
+    """Snapshot an existing file to <path>.bak before overwrite. Returns the
+    .bak path if a backup was made, else None.
+
+    Pattern: only one .bak per file (latest pre-overwrite snapshot wins).
+    Cheap insurance for .mcp.json / settings.local.json merge logic + the
+    malformed-JSON silent-recovery path in the readers above this.
+    """
+    if not path.exists() or not path.is_file():
+        return None
+    import shutil
+    bak = path.with_suffix(path.suffix + ".bak")
+    shutil.copy2(path, bak)
+    return bak
+
+
 def load_config(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -716,6 +732,7 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
         merged["otaman-bus"] = mcp_config["mcpServers"]["otaman-bus"]
         merged["otaman-estimation"] = mcp_config["mcpServers"]["otaman-estimation"]
 
+        _backup_existing(mcp_path)
         with open(mcp_path, "w", encoding="utf-8") as f:
             json.dump({"mcpServers": merged}, f, indent=2)
             f.write("\n")
@@ -788,6 +805,7 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
         if added > 0:
             perms["allow"] = allow_list
             existing["permissions"] = perms
+            _backup_existing(settings_path)
             with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, indent=2)
                 f.write("\n")
