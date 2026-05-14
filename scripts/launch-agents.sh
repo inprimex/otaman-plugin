@@ -12,6 +12,9 @@
 #       --repo NAME         For tmux: launch claude in that repo's directory
 #       --list-repos        Print repo names and exit
 #   -d, --dry-run           Print resolved state and commands, don't execute
+#       --via-runner        Use otaman-runner's HTTP API to spawn (per ADR-009).
+#                           Requires the runner daemon running locally; falls
+#                           back to in-script spawn if endpoint file is missing.
 #   -h, --help              Show this help
 #
 # EXAMPLES
@@ -27,6 +30,68 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_resolve.sh"
 
 # ------------------------------------------------------------------
+# Optional: dispatch to otaman-runner via HTTP API (per ADR-009).
+# Opt in with --via-runner. Falls back silently if the runner endpoint
+# file is missing — preserves Mode 1 (no daemon) operation.
+#
+# Implements just enough of the runner client protocol to spawn one
+# session per repo in interactive (tmux) mode. Each /spawn returns an
+# AttachInfo; we exec the first one (or print all if --dry-run).
+
+read_runner_endpoint() {
+    local path="${HOME}/.otaman/runner.endpoint"
+    [[ -f "$path" ]] || return 1
+    local host port token
+    while IFS='=' read -r key val; do
+        case "$key" in
+            host) host="$val" ;;
+            port) port="$val" ;;
+            token) token="$val" ;;
+        esac
+    done < "$path"
+    [[ -n "$host" && -n "$port" && -n "$token" ]] || return 1
+    printf '%s\n%s\n%s\n' "$host" "$port" "$token"
+    return 0
+}
+
+# Spawn one repo via runner HTTP API. Echoes the attach_command on
+# success, returns non-zero on any error. Builds and parses JSON via
+# small Python helpers (avoids a jq dependency).
+runner_spawn_one() {
+    local host="$1" port="$2" token="$3"
+    local agent="$4" repo="$5" project_root="$6" account="${7:-}"
+    local body
+    body=$(${PYTHON} -c '
+import json, sys
+agent, repo, project_root, account = sys.argv[1:5]
+print(json.dumps({
+    "agent": agent,
+    "repo": repo,
+    "project_root": project_root,
+    "mode": "interactive",
+    "account": account or None,
+}))
+' "$agent" "$repo" "$project_root" "$account")
+    local resp
+    resp=$(curl -sS --max-time 30 \
+        -X POST "http://${host}:${port}/spawn" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        -d "$body" 2>&1) || {
+        echo "runner_spawn_one: HTTP error: $resp" >&2
+        return 1
+    }
+    ${PYTHON} -c '
+import json, sys
+data = json.loads(sys.argv[1])
+attach = data.get("attach")
+if not attach:
+    sys.exit("runner_spawn_one: no attach info in response: " + repr(data))
+print(attach["attach_command"])
+' "$resp"
+}
+
+# ------------------------------------------------------------------
 # CLI parsing
 
 CONNECTION=""
@@ -34,6 +99,7 @@ SHELL_MODE="bash"   # bash | tmux | print
 REPO_FILTER=""
 LIST_REPOS=0
 DRY_RUN=0
+VIA_RUNNER=0
 EXTRA_ARGS=()
 
 usage() {
@@ -60,6 +126,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -d|--dry-run)
             DRY_RUN=1
+            shift
+            ;;
+        --via-runner)
+            VIA_RUNNER=1
             shift
             ;;
         -h|--help)
@@ -214,6 +284,56 @@ case "$SHELL_MODE" in
         ;;
 
     tmux)
+        # --via-runner: dispatch each repo through otaman-runner's HTTP API.
+        # Falls back to the local tmux path if the runner is unreachable.
+        if [[ "$VIA_RUNNER" -eq 1 ]]; then
+            if mapfile -t _endpoint < <(read_runner_endpoint); then
+                _host="${_endpoint[0]}"
+                _port="${_endpoint[1]}"
+                _token="${_endpoint[2]}"
+                echo "via-runner: spawning via http://${_host}:${_port}" >&2
+                # Build the repo list using same Python parse as the local path
+                mapfile -t _repo_rows < <(
+                    ${PYTHON} - <<EOF
+import yaml, pathlib
+root = pathlib.Path("$MAESTRO_ROOT")
+with open(root / "platform.yaml", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f) or {}
+for r in cfg.get("repos", []) or []:
+    if not isinstance(r, dict) or r.get("disabled"):
+        continue
+    name = r.get("name", "")
+    owner = r.get("owner", name)
+    print(f"{name}|{owner}")
+EOF
+                )
+                _attach_first=""
+                for _row in "${_repo_rows[@]}"; do
+                    _repo_name="${_row%%|*}"
+                    _agent_name="${_row#*|}"
+                    if [[ -n "$REPO_FILTER" && "$_repo_name" != "$REPO_FILTER" ]]; then
+                        continue
+                    fi
+                    _attach=$(runner_spawn_one "$_host" "$_port" "$_token" \
+                        "$_agent_name" "$_repo_name" "$MAESTRO_ROOT" \
+                        "${MAESTRO_ACTIVE_ACCOUNT:-}") || {
+                        echo "via-runner: spawn failed for $_repo_name; will fall back to local" >&2
+                        VIA_RUNNER=0
+                        break
+                    }
+                    echo "  spawned $_agent_name@$_repo_name → $_attach" >&2
+                    [[ -z "$_attach_first" ]] && _attach_first="$_attach"
+                done
+                if [[ "$VIA_RUNNER" -eq 1 && -n "$_attach_first" ]]; then
+                    echo "" >&2
+                    echo "attaching to first session: $_attach_first" >&2
+                    eval "exec $_attach_first"
+                fi
+            else
+                echo "via-runner: no endpoint file at ~/.otaman/runner.endpoint; falling back to local spawn" >&2
+                VIA_RUNNER=0
+            fi
+        fi
         if ! command -v tmux >/dev/null 2>&1; then
             echo "error: tmux not installed" >&2
             exit 1
