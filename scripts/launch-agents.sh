@@ -246,6 +246,12 @@ EOF
             fi
         fi
 
+        # Respawn loop: if claude exits (/exit, Ctrl-D, crash), prompt the
+        # user to press Enter for a fresh attach instead of stranding the
+        # tmux window at a bare bash prompt. Ctrl-C at the prompt drops
+        # to the shell as before. (Backlog M-13a.)
+        claude_loop="while :; do claude -c /otaman:check; printf '\\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
+
         if tmux has-session -t "$session" 2>/dev/null; then
             echo "tmux: attaching to existing session '$session'" >&2
         else
@@ -253,7 +259,7 @@ EOF
             first_name="${first%%|*}"
             first_path="${first#*|}"
             tmux new-session -d -s "$session" -n "$first_name" -c "$first_path"
-            tmux send-keys -t "$session:$first_name" "claude -c /otaman:check" C-m
+            tmux send-keys -t "$session:$first_name" "$claude_loop" C-m
             filtered=("${filtered[@]:1}")
         fi
 
@@ -261,7 +267,7 @@ EOF
             name="${row%%|*}"
             path="${row#*|}"
             tmux new-window -t "$session" -n "$name" -c "$path"
-            tmux send-keys -t "$session:$name" "claude -c /otaman:check" C-m
+            tmux send-keys -t "$session:$name" "$claude_loop" C-m
         done
 
         if [[ -n "${TMUX:-}" ]]; then

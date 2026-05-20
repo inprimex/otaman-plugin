@@ -1414,9 +1414,9 @@ while ($true) {
                 if ($r.launch_shell -in @('wsl','powershell')) {
                     $r.launch_shell = 'ssh'
                     if ($pluginDir) {
-                        $r.launch_commands = @("source ~/.nvm/nvm.sh && claude -c --plugin-dir $pluginDir /otaman:check")
+                        $r.launch_commands = @("source ~/.nvm/nvm.sh && while :; do claude -c --plugin-dir $pluginDir /otaman:check; printf '\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                     } else {
-                        $r.launch_commands = @("source ~/.nvm/nvm.sh && claude -c /otaman:check")
+                        $r.launch_commands = @("source ~/.nvm/nvm.sh && while :; do claude -c /otaman:check; printf '\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                     }
                 }
             }
@@ -1432,9 +1432,9 @@ while ($true) {
             if ($Shell -eq 'ssh') {
                 # For SSH: always rebuild commands with remote plugin path (no single quotes)
                 if ($pluginDir) {
-                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude -c --plugin-dir $pluginDir /otaman:check")
+                    $r.launch_commands = @("source ~/.nvm/nvm.sh && while :; do claude -c --plugin-dir $pluginDir /otaman:check; printf '\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                 } else {
-                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude -c /otaman:check")
+                    $r.launch_commands = @("source ~/.nvm/nvm.sh && while :; do claude -c /otaman:check; printf '\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                 }
             } elseif (-not $r.launch_commands -or $r.launch_commands.Count -eq 0) {
                 $r.launch_commands = @("claude -c '/otaman:check'")
