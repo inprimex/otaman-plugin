@@ -1,13 +1,27 @@
-"""Tests for scripts/_log.sh — bash size-based log rotation helper."""
+"""Tests for scripts/_log.sh — bash size-based log rotation helper.
+
+Skipped on Windows: the GitHub-Actions Windows runner maps ``bash`` to
+``wsl.exe bash``, and the runner image has no WSL distro installed, so
+every subprocess call fails with "Windows Subsystem for Linux has no
+installed distributions." The helper itself is only ever sourced by
+Linux/macOS hooks on the server side — there's no production path that
+runs ``_log.sh`` on Windows, so skipping the matrix entry is correct.
+"""
 
 from __future__ import annotations
 
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="bash helper not exercised on Windows; see module docstring",
+)
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 LOG_SH = PLUGIN_ROOT / "scripts" / "_log.sh"
@@ -16,9 +30,6 @@ LOG_SH = PLUGIN_ROOT / "scripts" / "_log.sh"
 def _run_rotate(log_file: Path, *extra_args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     """Source _log.sh and call rotate_log; returns the completed process."""
     args = " ".join(f"'{a}'" for a in extra_args)
-    # Convert paths to POSIX form. On Windows ``Path()`` produces native
-    # backslashes which break inside bash double-quoted strings; Git Bash
-    # on Windows happily accepts forward-slash paths.
     log_posix = Path(log_file).as_posix()
     helper_posix = LOG_SH.as_posix()
     script = f'set -e; source "{helper_posix}"; rotate_log "{log_posix}" {args}'
