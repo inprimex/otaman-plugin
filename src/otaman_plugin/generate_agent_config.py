@@ -699,6 +699,15 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
         if not repo_dir.is_dir():
             continue
 
+        # Skip the plugin's own repo: it ships its own canonical .mcp.json with
+        # ${CLAUDE_PLUGIN_ROOT} paths (loaded when Claude Code reads it as a
+        # plugin config via --plugin-dir / catalog). Overwriting it with bare
+        # relative paths breaks the plugin-context load — "2 MCP servers failed"
+        # in every tab. (Backlog M-2.)
+        if repo_dir == plugin_root.resolve():
+            results.append(f"{repo['name']}: skipped (plugin repo ships its own .mcp.json)")
+            continue
+
         # Compute relative path from repo to run-server.sh
         try:
             rel = Path(os.path.relpath(run_server.resolve(), repo_dir)).as_posix()
