@@ -151,10 +151,10 @@ fi
 # Display resolved state (stderr — doesn't pollute exports for piping)
 
 {
-    echo "maestro launcher"
-    echo "  maestro root:    $MAESTRO_ROOT"
-    echo "  connection:      ${MAESTRO_ACTIVE_CONNECTION:-<none>}"
-    echo "  account:         ${MAESTRO_ACTIVE_ACCOUNT:-<none>}"
+    echo "otaman launcher"
+    echo "  otaman root:     $MAESTRO_ROOT"
+    echo "  connection:      ${OTAMAN_ACTIVE_CONNECTION:-${MAESTRO_ACTIVE_CONNECTION:-<none>}}"
+    echo "  routing:         ${OTAMAN_ACTIVE_ROUTING:-${OTAMAN_ACTIVE_ACCOUNT:-${MAESTRO_ACTIVE_ACCOUNT:-<none>}}}"
     echo "  CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-<unset>}"
     echo "  mode:            $SHELL_MODE"
 } >&2
@@ -166,7 +166,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "" >&2
     case "$SHELL_MODE" in
         bash)
-            echo "would exec: claude ${EXTRA_ARGS[*]:-/maestro:check}" >&2
+            echo "would exec: claude -c ${EXTRA_ARGS[*]:-/otaman:check} || claude ${EXTRA_ARGS[*]:-/otaman:check}" >&2
             ;;
         tmux)
             echo "would spawn tmux windows for repos: $REPOS_CSV" >&2
@@ -181,9 +181,16 @@ fi
 # ------------------------------------------------------------------
 # Dispatch
 
-claude_cmd_default=("claude" "/maestro:check")
+# `-c` (continue) resumes the prior session in this cwd. On a fresh cwd
+# it exits non-zero with "No conversation found to continue", so we fall
+# back to a no-flag launch — that makes the launcher idempotent across
+# SSH reconnects (the second-and-later launches keep context) without
+# breaking the first launch. (Backlog M-3 + first-run fix.)
+claude_cmd_continue=("claude" "-c" "/otaman:check")
+claude_cmd_fresh=("claude" "/otaman:check")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-    claude_cmd_default=("claude" "${EXTRA_ARGS[@]}")
+    claude_cmd_continue=("claude" "-c" "${EXTRA_ARGS[@]}")
+    claude_cmd_fresh=("claude" "${EXTRA_ARGS[@]}")
 fi
 
 case "$SHELL_MODE" in
@@ -192,14 +199,18 @@ case "$SHELL_MODE" in
             echo "error: 'claude' not on PATH" >&2
             exit 1
         fi
-        exec "${claude_cmd_default[@]}"
+        # Try continue; fall back to fresh launch on non-zero (no prior
+        # session in this cwd). `exec` is on the fresh path so the parent
+        # shell still gets replaced — same behavior as before for the
+        # common case.
+        "${claude_cmd_continue[@]}" || exec "${claude_cmd_fresh[@]}"
         ;;
 
     print)
         # Emit a shell snippet the user can `source` or copy. stdout only —
         # stderr already has the status banner.
         printf '%s\n' "$EXPORTS"
-        printf 'exec %s\n' "${claude_cmd_default[*]}"
+        printf '%s || exec %s\n' "${claude_cmd_continue[*]}" "${claude_cmd_fresh[*]}"
         ;;
 
     tmux)
@@ -211,7 +222,7 @@ case "$SHELL_MODE" in
             echo "error: no repos in platform.yaml; tmux mode needs at least one" >&2
             exit 1
         fi
-        session="maestro-${MAESTRO_ACTIVE_CONNECTION:-default}"
+        session="otaman-${OTAMAN_ACTIVE_CONNECTION:-${MAESTRO_ACTIVE_CONNECTION:-default}}"
         # Resolve per-repo paths using platform.yaml via Python (keeps bash
         # free of YAML parsing). Paths are relative to MAESTRO_ROOT.
         mapfile -t repo_paths < <(
@@ -243,6 +254,13 @@ EOF
             fi
         fi
 
+        # Respawn loop: if claude exits (/exit, Ctrl-D, crash), prompt the
+        # user to press Enter for a fresh attach instead of stranding the
+        # tmux window at a bare bash prompt. Ctrl-C at the prompt drops
+        # to the shell as before. `-c` falls back to a no-flag launch
+        # when there's no prior session in that cwd. (Backlog M-13a.)
+        claude_loop="while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
+
         if tmux has-session -t "$session" 2>/dev/null; then
             echo "tmux: attaching to existing session '$session'" >&2
         else
@@ -250,7 +268,7 @@ EOF
             first_name="${first%%|*}"
             first_path="${first#*|}"
             tmux new-session -d -s "$session" -n "$first_name" -c "$first_path"
-            tmux send-keys -t "$session:$first_name" "claude /maestro:check" C-m
+            tmux send-keys -t "$session:$first_name" "$claude_loop" C-m
             filtered=("${filtered[@]:1}")
         fi
 
@@ -258,7 +276,7 @@ EOF
             name="${row%%|*}"
             path="${row#*|}"
             tmux new-window -t "$session" -n "$name" -c "$path"
-            tmux send-keys -t "$session:$name" "claude /maestro:check" C-m
+            tmux send-keys -t "$session:$name" "$claude_loop" C-m
         done
 
         if [[ -n "${TMUX:-}" ]]; then

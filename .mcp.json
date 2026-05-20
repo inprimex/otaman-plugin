@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "otaman-bus": {
+      "command": "bash",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/servers/run-server.sh",
+        "bus_server.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    "otaman-estimation": {
+      "command": "bash",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/servers/run-server.sh",
+        "estimation_server.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
