@@ -16,7 +16,12 @@ LOG_SH = PLUGIN_ROOT / "scripts" / "_log.sh"
 def _run_rotate(log_file: Path, *extra_args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     """Source _log.sh and call rotate_log; returns the completed process."""
     args = " ".join(f"'{a}'" for a in extra_args)
-    script = f'set -e; source "{LOG_SH}"; rotate_log "{log_file}" {args}'
+    # Convert paths to POSIX form. On Windows ``Path()`` produces native
+    # backslashes which break inside bash double-quoted strings; Git Bash
+    # on Windows happily accepts forward-slash paths.
+    log_posix = Path(log_file).as_posix()
+    helper_posix = LOG_SH.as_posix()
+    script = f'set -e; source "{helper_posix}"; rotate_log "{log_posix}" {args}'
     return subprocess.run(
         ["bash", "-c", script],
         capture_output=True,
