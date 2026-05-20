@@ -259,7 +259,7 @@ EOF
         # tmux window at a bare bash prompt. Ctrl-C at the prompt drops
         # to the shell as before. `-c` falls back to a no-flag launch
         # when there's no prior session in that cwd. (Backlog M-13a.)
-        claude_loop="while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
+        claude_loop="while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
 
         if tmux has-session -t "$session" 2>/dev/null; then
             echo "tmux: attaching to existing session '$session'" >&2
