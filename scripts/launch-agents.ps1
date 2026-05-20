@@ -304,9 +304,14 @@ function Get-AccountForConnection {
     return $result
 }
 
-# Read .maestro/secrets.env from the maestro folder. Returns an ordered
-# hashtable of KEY=VALUE pairs (empty if absent). Comments / blank lines
-# ignored; matching surrounding quotes stripped.
+# Read secrets.env from the maestro folder. Returns an ordered hashtable
+# of KEY=VALUE pairs (empty if absent). Comments / blank lines ignored;
+# matching surrounding quotes stripped.
+#
+# Path resolution (M-1 migration): prefer .otaman/secrets.env; fall back
+# to legacy .maestro/secrets.env if the new path doesn't exist. This lets
+# already-migrated projects use the modern layout without breaking older
+# deployments that still write to .maestro/.
 # Resolve the session model/effort tier for a given repo by shelling out
 # to scripts/launch-resolve.py. Walks platform.yaml's `models:` chain
 # (by_repo → by_agent → default). Returns @{Model=<alias>; Effort=<level>}
@@ -352,8 +357,12 @@ function Get-MaestroSecretsEnv {
     param([string]$MaestroRoot)
     $result = [ordered]@{}
     if (-not $MaestroRoot) { return $result }
-    $path = Join-Path $MaestroRoot ".maestro/secrets.env"
-    if (-not (Test-Path $path)) { return $result }
+    # M-1: prefer .otaman/secrets.env, fall back to legacy .maestro/secrets.env.
+    $path = Join-Path $MaestroRoot ".otaman/secrets.env"
+    if (-not (Test-Path $path)) {
+        $legacy = Join-Path $MaestroRoot ".maestro/secrets.env"
+        if (Test-Path $legacy) { $path = $legacy } else { return $result }
+    }
     foreach ($line in (Get-Content $path -Encoding UTF8 -ErrorAction SilentlyContinue)) {
         $trimmed = $line.Trim()
         if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
@@ -373,7 +382,8 @@ function Get-MaestroSecretsEnv {
 }
 
 # Build a shell-appropriate env-prefix that sets CLAUDE_CONFIG_DIR and any
-# .maestro/secrets.env vars BEFORE the claude command runs.
+# secrets.env vars (from .otaman/ or legacy .maestro/) BEFORE the claude
+# command runs.
 #
 # Returns a string that can be prepended (with the shell's chain operator)
 # to the session's command list. Empty string if no env to inject.
@@ -1435,7 +1445,7 @@ if ($activeAccountName) {
     }
 }
 if ($maestroSecrets.Count -gt 0) {
-    Write-Ok "Secrets: $($maestroSecrets.Count) var(s) from .maestro/secrets.env"
+    Write-Ok "Secrets: $($maestroSecrets.Count) var(s) from secrets.env"
 }
 
 # SSH client info
@@ -1689,11 +1699,21 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
         }
 
         # Trace file: append the SSH args (and decoded base64 payload when
-        # reliability=tmux/mosh) to <maestro>/.maestro/launcher.log so a
+        # reliability=tmux/mosh) to <maestro>/.otaman/launcher.log so a
         # silent-drop failure leaves something to grep. Append-only, with
         # size-based rotation (1 MiB threshold, keeps 3 backups).
+        #
+        # M-1 migration: new installs write to .otaman/. If a legacy
+        # .maestro/ directory exists and .otaman/ does not, we keep writing
+        # to .maestro/ — avoids splitting one project's log history across
+        # two directories until someone migrates explicitly (mv .maestro
+        # .otaman, or `otaman migrate`).
         try {
-            $logDir = Join-Path $cfgParent ".maestro"
+            $logDir = Join-Path $cfgParent ".otaman"
+            $legacyDir = Join-Path $cfgParent ".maestro"
+            if ((Test-Path $legacyDir) -and -not (Test-Path $logDir)) {
+                $logDir = $legacyDir
+            }
             if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
             $logFile = Join-Path $logDir "launcher.log"
             Rotate-Log -Path $logFile
