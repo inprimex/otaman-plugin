@@ -166,7 +166,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "" >&2
     case "$SHELL_MODE" in
         bash)
-            echo "would exec: claude ${EXTRA_ARGS[*]:-/otaman:check}" >&2
+            echo "would exec: claude -c ${EXTRA_ARGS[*]:-/otaman:check}" >&2
             ;;
         tmux)
             echo "would spawn tmux windows for repos: $REPOS_CSV" >&2
@@ -181,9 +181,12 @@ fi
 # ------------------------------------------------------------------
 # Dispatch
 
-claude_cmd_default=("claude" "/otaman:check")
+# `-c` (continue): resume the prior session in this cwd if one exists,
+# otherwise start fresh. Idempotent across SSH reconnects so a dropped
+# session doesn't lose its transcript. (Backlog M-3.)
+claude_cmd_default=("claude" "-c" "/otaman:check")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-    claude_cmd_default=("claude" "${EXTRA_ARGS[@]}")
+    claude_cmd_default=("claude" "-c" "${EXTRA_ARGS[@]}")
 fi
 
 case "$SHELL_MODE" in
@@ -250,7 +253,7 @@ EOF
             first_name="${first%%|*}"
             first_path="${first#*|}"
             tmux new-session -d -s "$session" -n "$first_name" -c "$first_path"
-            tmux send-keys -t "$session:$first_name" "claude /otaman:check" C-m
+            tmux send-keys -t "$session:$first_name" "claude -c /otaman:check" C-m
             filtered=("${filtered[@]:1}")
         fi
 
@@ -258,7 +261,7 @@ EOF
             name="${row%%|*}"
             path="${row#*|}"
             tmux new-window -t "$session" -n "$name" -c "$path"
-            tmux send-keys -t "$session:$name" "claude /otaman:check" C-m
+            tmux send-keys -t "$session:$name" "claude -c /otaman:check" C-m
         done
 
         if [[ -n "${TMUX:-}" ]]; then
