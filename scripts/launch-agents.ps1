@@ -363,20 +363,30 @@ function Build-EnvPrefix {
     )
     $pairs = [ordered]@{}
     if ($ConfigDirExpanded) { $pairs['CLAUDE_CONFIG_DIR'] = $ConfigDirExpanded }
-    # Maestro account: exported so PreToolUse hook + check-account.sh pick
+    # Routing identity: exported so PreToolUse hook + check-routing.sh pick
     # the right daemon/group even when multiple accounts share a single
     # CLAUDE_CONFIG_DIR (the "one login per subscription, many Telegram
-    # groups" shape). bridge_approval.py checks this env var *before*
-    # CLAUDE_CONFIG_DIR basename, so it disambiguates cleanly.
-    if ($Account)           { $pairs['MAESTRO_ACTIVE_ACCOUNT'] = $Account }
+    # groups" shape). bridge_approval.py + otaman_core._resolve check
+    # OTAMAN_ACTIVE_ROUTING first, falling back through OTAMAN_ACTIVE_ACCOUNT
+    # and MAESTRO_ACTIVE_ACCOUNT. We export all three so any consumer
+    # (current or legacy, on this server or a colleague's) finds what it
+    # expects. MAESTRO_ACTIVE_ACCOUNT will be removed once nothing reads it.
+    if ($Account) {
+        $pairs['OTAMAN_ACTIVE_ROUTING'] = $Account   # preferred
+        $pairs['OTAMAN_ACTIVE_ACCOUNT'] = $Account   # otaman-era legacy
+        $pairs['MAESTRO_ACTIVE_ACCOUNT'] = $Account  # pre-rebrand legacy
+    }
     if ($Model)             { $pairs['ANTHROPIC_MODEL'] = $Model }
     if ($Effort)            { $pairs['CLAUDE_CODE_EFFORT_LEVEL'] = $Effort }
     # Launcher-side SSH signal: the SessionStart hook (hooks/ssh-auto-afk.sh)
     # no longer triggers on SSH presence alone (that misfired when the human
-    # was actively launching tabs), but we still export MAESTRO_LAUNCHER_SSH=1
+    # was actively launching tabs), but we still export OTAMAN_LAUNCHER_SSH=1
     # for diagnostics — it shows up in ssh-auto-afk.log so "why didn't my
-    # hook fire?" is easy to debug.
-    if ($Shell -eq 'ssh')   { $pairs['MAESTRO_LAUNCHER_SSH'] = '1' }
+    # hook fire?" is easy to debug. MAESTRO_LAUNCHER_SSH kept as legacy alias.
+    if ($Shell -eq 'ssh') {
+        $pairs['OTAMAN_LAUNCHER_SSH'] = '1'
+        $pairs['MAESTRO_LAUNCHER_SSH'] = '1'   # legacy
+    }
     # Explicit "this session is unattended" signal — only set when the user
     # opts in via ``unattended: true`` on the connection in launch-settings.yaml.
     # This is the ONLY thing the SessionStart hook listens to for auto-AFK now.
@@ -1000,7 +1010,7 @@ function Get-ProjectName {
 # the recovery path after an SSH drop.
 #
 # Base64 sidesteps the multi-layer quoting hell. The original command may
-# contain single quotes (`source ~/.nvm/nvm.sh && claude '/maestro:check'`),
+# contain single quotes (`source ~/.nvm/nvm.sh && claude '/otaman:check'`),
 # and the wrapper has to ride through:
 #
 #   1. PowerShell string interpolation
@@ -1090,7 +1100,10 @@ function Build-SshCommand {
     $chainedCmd = $allCmds -join ' && '
 
     if ($useTmux) {
-        $session = "maestro"
+        # Tmux session naming: "otaman" prefix going forward. Existing
+        # "maestro-<project>-<repo>" sessions on the server keep running
+        # until they're explicitly killed/migrated per project.
+        $session = "otaman"
         if ($ProjectName) { $session += "-$(ConvertTo-TmuxSessionName $ProjectName)" }
         if ($RepoName)    { $session += "-$(ConvertTo-TmuxSessionName $RepoName)" }
         $chainedCmd = Wrap-WithTmux -SessionName $session -InnerCommand $chainedCmd
@@ -1330,7 +1343,7 @@ if (-not $Shell) {
                 # If the ssh command used `source ~/.nvm/nvm.sh` (bash-only) and local shell is PowerShell, simplify
                 $hasNvm = ($r.launch_commands | Where-Object { $_ -match 'nvm\.sh' }).Count -gt 0
                 if ($hasNvm -and $localShell -eq 'powershell') {
-                    $r.launch_commands = @("claude '/maestro:check'")
+                    $r.launch_commands = @("claude '/otaman:check'")
                 }
                 # For wsl we keep commands as-is (they're bash-compatible inside WSL)
             }
@@ -1345,9 +1358,9 @@ if (-not $Shell) {
             if ($r.launch_shell -in @('wsl','powershell')) {
                 $r.launch_shell = 'ssh'
                 if ($pluginDir) {
-                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir /maestro:check")
+                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir /otaman:check")
                 } else {
-                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude /maestro:check")
+                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude /otaman:check")
                 }
             }
         }
@@ -1363,12 +1376,12 @@ if ($Shell) {
         if ($Shell -eq 'ssh') {
             # For SSH: always rebuild commands with remote plugin path (no single quotes)
             if ($pluginDir) {
-                $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir /maestro:check")
+                $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir /otaman:check")
             } else {
-                $r.launch_commands = @("source ~/.nvm/nvm.sh && claude /maestro:check")
+                $r.launch_commands = @("source ~/.nvm/nvm.sh && claude /otaman:check")
             }
         } elseif (-not $r.launch_commands -or $r.launch_commands.Count -eq 0) {
-            $r.launch_commands = @("claude '/maestro:check'")
+            $r.launch_commands = @("claude '/otaman:check'")
         }
     }
 

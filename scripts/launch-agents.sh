@@ -151,10 +151,10 @@ fi
 # Display resolved state (stderr — doesn't pollute exports for piping)
 
 {
-    echo "maestro launcher"
-    echo "  maestro root:    $MAESTRO_ROOT"
-    echo "  connection:      ${MAESTRO_ACTIVE_CONNECTION:-<none>}"
-    echo "  account:         ${MAESTRO_ACTIVE_ACCOUNT:-<none>}"
+    echo "otaman launcher"
+    echo "  otaman root:     $MAESTRO_ROOT"
+    echo "  connection:      ${OTAMAN_ACTIVE_CONNECTION:-${MAESTRO_ACTIVE_CONNECTION:-<none>}}"
+    echo "  routing:         ${OTAMAN_ACTIVE_ROUTING:-${OTAMAN_ACTIVE_ACCOUNT:-${MAESTRO_ACTIVE_ACCOUNT:-<none>}}}"
     echo "  CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-<unset>}"
     echo "  mode:            $SHELL_MODE"
 } >&2
@@ -166,7 +166,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "" >&2
     case "$SHELL_MODE" in
         bash)
-            echo "would exec: claude ${EXTRA_ARGS[*]:-/maestro:check}" >&2
+            echo "would exec: claude ${EXTRA_ARGS[*]:-/otaman:check}" >&2
             ;;
         tmux)
             echo "would spawn tmux windows for repos: $REPOS_CSV" >&2
@@ -181,7 +181,7 @@ fi
 # ------------------------------------------------------------------
 # Dispatch
 
-claude_cmd_default=("claude" "/maestro:check")
+claude_cmd_default=("claude" "/otaman:check")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
     claude_cmd_default=("claude" "${EXTRA_ARGS[@]}")
 fi
@@ -211,7 +211,7 @@ case "$SHELL_MODE" in
             echo "error: no repos in platform.yaml; tmux mode needs at least one" >&2
             exit 1
         fi
-        session="maestro-${MAESTRO_ACTIVE_CONNECTION:-default}"
+        session="otaman-${OTAMAN_ACTIVE_CONNECTION:-${MAESTRO_ACTIVE_CONNECTION:-default}}"
         # Resolve per-repo paths using platform.yaml via Python (keeps bash
         # free of YAML parsing). Paths are relative to MAESTRO_ROOT.
         mapfile -t repo_paths < <(
@@ -250,7 +250,7 @@ EOF
             first_name="${first%%|*}"
             first_path="${first#*|}"
             tmux new-session -d -s "$session" -n "$first_name" -c "$first_path"
-            tmux send-keys -t "$session:$first_name" "claude /maestro:check" C-m
+            tmux send-keys -t "$session:$first_name" "claude /otaman:check" C-m
             filtered=("${filtered[@]:1}")
         fi
 
@@ -258,7 +258,7 @@ EOF
             name="${row%%|*}"
             path="${row#*|}"
             tmux new-window -t "$session" -n "$name" -c "$path"
-            tmux send-keys -t "$session:$name" "claude /maestro:check" C-m
+            tmux send-keys -t "$session:$name" "claude /otaman:check" C-m
         done
 
         if [[ -n "${TMUX:-}" ]]; then
