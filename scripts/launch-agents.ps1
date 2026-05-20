@@ -63,6 +63,7 @@ $SettingsFile = Join-Path $cfgParent "launch-settings.yaml"
 #
 # New format:
 #   active_connection: lan
+#   default_type: ssh                # optional — filters interactive picker
 #   connections:
 #     local:
 #       type: local
@@ -176,7 +177,7 @@ function Read-SettingsFile {
 function Save-SettingsFile {
     param($Top, $Connections)
     $lines = @()
-    $lines += "# Otaman launch settings (auto-generated, edit freely)"
+    $lines += "# Maestro launch settings (auto-generated, edit freely)"
     $lines += "# Re-run setup: .\launch-agents.ps1 -Setup"
     $lines += ""
     if ($Top['active_connection']) {
@@ -366,9 +367,9 @@ function Build-EnvPrefix {
     # Routing identity: exported so PreToolUse hook + check-routing.sh pick
     # the right daemon/group even when multiple accounts share a single
     # CLAUDE_CONFIG_DIR (the "one login per subscription, many Telegram
-    # groups" shape). bridge_approval.py + otaman_core._resolve check
-    # OTAMAN_ACTIVE_ROUTING first, falling back through OTAMAN_ACTIVE_ACCOUNT
-    # and MAESTRO_ACTIVE_ACCOUNT. We export all three so any consumer
+    # groups" shape). otaman_core/_resolve checks OTAMAN_ACTIVE_ROUTING
+    # first, falling back through OTAMAN_ACTIVE_ACCOUNT and
+    # MAESTRO_ACTIVE_ACCOUNT. We export all three so any consumer
     # (current or legacy, on this server or a colleague's) finds what it
     # expects. MAESTRO_ACTIVE_ACCOUNT will be removed once nothing reads it.
     if ($Account) {
@@ -390,7 +391,10 @@ function Build-EnvPrefix {
     # Explicit "this session is unattended" signal — only set when the user
     # opts in via ``unattended: true`` on the connection in launch-settings.yaml.
     # This is the ONLY thing the SessionStart hook listens to for auto-AFK now.
-    if ($Unattended)        { $pairs['MAESTRO_UNATTENDED'] = '1' }
+    if ($Unattended) {
+        $pairs['OTAMAN_UNATTENDED'] = '1'
+        $pairs['MAESTRO_UNATTENDED'] = '1'   # legacy
+    }
     if ($SecretsEnv) {
         foreach ($k in $SecretsEnv.Keys) {
             # Don't override pairs already set (CLAUDE_CONFIG_DIR / model / effort win).
@@ -711,11 +715,28 @@ if ($settings) {
 
     if ($connections.Count -gt 0) {
         if (-not $target -or -not $connections.Contains($target)) {
-            if ($connections.Count -eq 1) {
-                $target = @($connections.Keys)[0]
+            # default_type: when set, restrict the interactive picker to one
+            # connection type ('local' / 'ssh' / 'mesh'). Falls back to the
+            # full list if no connection matches the filter.
+            $defaultType = $top['default_type']
+            $menuConns = $connections
+            if ($defaultType) {
+                $filtered = [ordered]@{}
+                foreach ($n in $connections.Keys) {
+                    $t = if ($connections[$n]['type']) { $connections[$n]['type'] } else { 'ssh' }
+                    if ($t -eq $defaultType) { $filtered[$n] = $connections[$n] }
+                }
+                if ($filtered.Count -gt 0) {
+                    $menuConns = $filtered
+                } else {
+                    Write-Warn "default_type='$defaultType' matched no connections; showing all."
+                }
+            }
+            if ($menuConns.Count -eq 1) {
+                $target = @($menuConns.Keys)[0]
             } elseif (-not $Shell) {
                 # Only prompt if user didn't pass -Shell override
-                $target = Show-ConnectionMenu -Connections $connections -Default $top['active_connection']
+                $target = Show-ConnectionMenu -Connections $menuConns -Default $top['active_connection']
                 if (-not $target) { exit 1 }
             }
         }
@@ -877,7 +898,12 @@ function Resolve-ProfileRepos {
 }
 
 function Show-ProfileMenu {
-    param($Profiles, $AllRepos)
+    param($Profiles, $AllRepos, [string]$ConnectionLabel = "")
+    if ($ConnectionLabel) {
+        Write-Host "`n  Connection: " -NoNewline -ForegroundColor DarkGray
+        Write-Host $ConnectionLabel -NoNewline -ForegroundColor Cyan
+        Write-Host "  (press 'c' to change)" -ForegroundColor DarkGray
+    }
     Write-Host "`n  Available profiles:" -ForegroundColor White; Write-Host ""
     $names = @($Profiles.Keys | Sort-Object)
     for ($i = 0; $i -lt $names.Count; $i++) {
@@ -914,7 +940,9 @@ function Show-ProfileMenu {
     Write-Host "pick" -NoNewline -ForegroundColor Cyan
     Write-Host " (choose individual repos)" -ForegroundColor DarkGray
 
-    Write-Host ""; $choice = Read-Host "  Select profile (1-$pickIdx) or name"
+    $promptSuffix = if ($ConnectionLabel) { " (or 'c' to change connection)" } else { "" }
+    Write-Host ""; $choice = Read-Host "  Select profile (1-$pickIdx) or name$promptSuffix"
+    if ($ConnectionLabel -and $choice -in @('c','C')) { $script:ChangeConnection = $true; return $null }
     if ($choice -match '^\d+$') {
         $idx = [int]$choice - 1
         if ($idx -eq $names.Count) { return "__pick__" }  # custom pick
@@ -926,7 +954,12 @@ function Show-ProfileMenu {
 }
 
 function Show-RepoPicker {
-    param($Repos)
+    param($Repos, [string]$ConnectionLabel = "")
+    if ($ConnectionLabel) {
+        Write-Host "`n  Connection: " -NoNewline -ForegroundColor DarkGray
+        Write-Host $ConnectionLabel -NoNewline -ForegroundColor Cyan
+        Write-Host "  (press 'c' to change)" -ForegroundColor DarkGray
+    }
     Write-Host "`n  Select repos to launch (comma-separated numbers):" -ForegroundColor White; Write-Host ""
     for ($i = 0; $i -lt $Repos.Count; $i++) {
         $r = $Repos[$i]
@@ -936,7 +969,9 @@ function Show-RepoPicker {
         Write-Host " ($title)" -ForegroundColor DarkGray
     }
     Write-Host ""
-    $input_ = Read-Host "  Enter numbers (e.g., 1,3,5 or 1-5 or all)"
+    $promptSuffix = if ($ConnectionLabel) { " (or 'c' to change connection)" } else { "" }
+    $input_ = Read-Host "  Enter numbers (e.g., 1,3,5 or 1-5 or all)$promptSuffix"
+    if ($ConnectionLabel -and $input_ -in @('c','C')) { $script:ChangeConnection = $true; return @() }
     if ($input_ -eq 'all') { return $Repos }
 
     $selected = @()
@@ -1100,9 +1135,9 @@ function Build-SshCommand {
     $chainedCmd = $allCmds -join ' && '
 
     if ($useTmux) {
-        # Tmux session naming: "otaman" prefix going forward. Existing
-        # "maestro-<project>-<repo>" sessions on the server keep running
-        # until they're explicitly killed/migrated per project.
+        # Tmux session prefix: "otaman-<project>-<repo>". Existing legacy
+        # "maestro-*" sessions on roman-ml keep running until each project
+        # is explicitly migrated.
         $session = "otaman"
         if ($ProjectName) { $session += "-$(ConvertTo-TmuxSessionName $ProjectName)" }
         if ($RepoName)    { $session += "-$(ConvertTo-TmuxSessionName $RepoName)" }
@@ -1327,141 +1362,192 @@ if ($disabledRepos.Count -gt 0) {
 
 # Apply disabled filter unless user explicitly opts in
 $reposForLaunch = if ($IncludeDisabled) { $allRepos } else { $activeRepos }
-$launchable = @($reposForLaunch | Where-Object { $_.launch_shell -and $_.launch_commands.Count -gt 0 })
 
-# Apply active connection: rewrite per-repo shell/commands for this connection's type.
-# `platform.yaml` may be configured with any baseline shell (ssh, wsl, powershell);
-# the active connection overrides it so one platform.yaml serves all scenarios.
-if (-not $Shell) {
-    if ($connType -eq 'local') {
-        # ssh -> local_shell (wsl|powershell)
-        $localShell = $activeConn['local_shell']
-        if (-not $localShell) { $localShell = 'wsl' }
-        foreach ($r in $launchable) {
-            if ($r.launch_shell -eq 'ssh') {
-                $r.launch_shell = $localShell
-                # If the ssh command used `source ~/.nvm/nvm.sh` (bash-only) and local shell is PowerShell, simplify
-                $hasNvm = ($r.launch_commands | Where-Object { $_ -match 'nvm\.sh' }).Count -gt 0
-                if ($hasNvm -and $localShell -eq 'powershell') {
-                    $r.launch_commands = @("claude '/otaman:check'")
+# Snapshot original launch_shell + launch_commands so a connection swap
+# (via the picker's 'c' hotkey) can restore them before re-applying the
+# new connection's rewrite. Done once before the loop; loop iterations
+# re-read these to start fresh.
+foreach ($r in $allRepos) {
+    Add-Member -InputObject $r -NotePropertyName '_origShell' -NotePropertyValue $r.launch_shell -Force
+    Add-Member -InputObject $r -NotePropertyName '_origCommands' -NotePropertyValue $r.launch_commands -Force
+}
+
+# Loop: connection-effect + account/secrets banner + profile pick.
+# 'c' in the profile/repo picker sets $script:ChangeConnection — we then
+# show the full connection menu and restart the loop with the new choice.
+while ($true) {
+    $script:ChangeConnection = $false
+
+    # Restore originals so connection-effect re-applies cleanly each iteration.
+    foreach ($r in $reposForLaunch) {
+        $r.launch_shell    = $r._origShell
+        $r.launch_commands = $r._origCommands
+    }
+    $launchable = @($reposForLaunch | Where-Object { $_.launch_shell -and $_.launch_commands.Count -gt 0 })
+
+    # Apply active connection: rewrite per-repo shell/commands for this connection's type.
+    # `platform.yaml` may be configured with any baseline shell (ssh, wsl, powershell);
+    # the active connection overrides it so one platform.yaml serves all scenarios.
+    if (-not $Shell) {
+        if ($connType -eq 'local') {
+            # ssh -> local_shell (wsl|powershell)
+            $localShell = $activeConn['local_shell']
+            if (-not $localShell) { $localShell = 'wsl' }
+            foreach ($r in $launchable) {
+                if ($r.launch_shell -eq 'ssh') {
+                    $r.launch_shell = $localShell
+                    # If the ssh command used `source ~/.nvm/nvm.sh` (bash-only) and local shell is PowerShell, simplify
+                    $hasNvm = ($r.launch_commands | Where-Object { $_ -match 'nvm\.sh' }).Count -gt 0
+                    if ($hasNvm -and $localShell -eq 'powershell') {
+                        $r.launch_commands = @("claude '/otaman:check'")
+                    }
+                    # For wsl we keep commands as-is (they're bash-compatible inside WSL)
                 }
-                # For wsl we keep commands as-is (they're bash-compatible inside WSL)
+            }
+        } elseif ($connType -eq 'ssh' -or $connType -eq 'mesh') {
+            # wsl/powershell -> ssh (rebuild commands with remote plugin path).
+            # Both `ssh` and `mesh` connection types take this branch — they use
+            # the same SSH wire underneath; `mesh` is just a user-facing label
+            # for "this connection rides over a VPN tunnel."
+            $pluginDir = $activeConn["ssh_plugin_path"]
+            foreach ($r in $launchable) {
+                if ($r.launch_shell -in @('wsl','powershell')) {
+                    $r.launch_shell = 'ssh'
+                    if ($pluginDir) {
+                        $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir /otaman:check")
+                    } else {
+                        $r.launch_commands = @("source ~/.nvm/nvm.sh && claude /otaman:check")
+                    }
+                }
             }
         }
-    } elseif ($connType -eq 'ssh' -or $connType -eq 'mesh') {
-        # wsl/powershell -> ssh (rebuild commands with remote plugin path).
-        # Both `ssh` and `mesh` connection types take this branch — they use
-        # the same SSH wire underneath; `mesh` is just a user-facing label
-        # for "this connection rides over a VPN tunnel."
+    }
+
+    # Shell override (CLI -Shell param): make all repos launchable with that shell
+    if ($Shell) {
+        $launchable = @($reposForLaunch | Where-Object { $_.path })
         $pluginDir = $activeConn["ssh_plugin_path"]
         foreach ($r in $launchable) {
-            if ($r.launch_shell -in @('wsl','powershell')) {
-                $r.launch_shell = 'ssh'
+            $r.launch_shell = $Shell
+            if ($Shell -eq 'ssh') {
+                # For SSH: always rebuild commands with remote plugin path (no single quotes)
                 if ($pluginDir) {
                     $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir /otaman:check")
                 } else {
                     $r.launch_commands = @("source ~/.nvm/nvm.sh && claude /otaman:check")
                 }
+            } elseif (-not $r.launch_commands -or $r.launch_commands.Count -eq 0) {
+                $r.launch_commands = @("claude '/otaman:check'")
+            }
+        }
+
+        # Prompt setup if SSH requested but no connection configured
+        if ($Shell -eq 'ssh' -and -not $activeConn['ssh_client']) {
+            $settings = Run-Setup
+            if ($settings) {
+                $top = $settings.Top
+                $activeName = $top['active_connection']
+                if ($activeName -and $settings.Connections.Contains($activeName)) {
+                    $activeConn = Resolve-Connection -Connections $settings.Connections -Name $activeName
+                }
             }
         }
     }
-}
 
-# Shell override (CLI -Shell param): make all repos launchable with that shell
-if ($Shell) {
-    $launchable = @($reposForLaunch | Where-Object { $_.path })
-    $pluginDir = $activeConn["ssh_plugin_path"]
-    foreach ($r in $launchable) {
-        $r.launch_shell = $Shell
-        if ($Shell -eq 'ssh') {
-            # For SSH: always rebuild commands with remote plugin path (no single quotes)
-            if ($pluginDir) {
-                $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir /otaman:check")
-            } else {
-                $r.launch_commands = @("source ~/.nvm/nvm.sh && claude /otaman:check")
-            }
-        } elseif (-not $r.launch_commands -or $r.launch_commands.Count -eq 0) {
-            $r.launch_commands = @("claude '/otaman:check'")
+    Write-Ok "$($launchable.Count) launchable"
+    if ($launchable.Count -eq 0) { Write-Warn "No launchable repos."; exit 0 }
+
+    # ============================================================
+    # Resolve account for this connection, load secrets.env.
+    # These are shared across all sessions launched in this run.
+    # ============================================================
+
+    $accounts = if ($settings) { $settings.Accounts } else { [ordered]@{} }
+    $activeAccount = Get-AccountForConnection -Accounts $accounts -Connection $activeConn
+    $activeAccountName = $activeAccount['name']
+    $maestroSecrets = Get-MaestroSecretsEnv -MaestroRoot $cfgParent
+
+    if ($activeAccountName) {
+        $cfgDirRaw = $activeAccount['config_dir']
+        if ($cfgDirRaw) {
+            Write-Ok "Account: $activeAccountName ($cfgDirRaw)"
+        } else {
+            Write-Warn "Account '$activeAccountName' has no config_dir; CLAUDE_CONFIG_DIR will not be set"
         }
     }
+    if ($maestroSecrets.Count -gt 0) {
+        Write-Ok "Secrets: $($maestroSecrets.Count) var(s) from .maestro/secrets.env"
+    }
 
-    # Prompt setup if SSH requested but no connection configured
-    if ($Shell -eq 'ssh' -and -not $activeConn['ssh_client']) {
-        $settings = Run-Setup
-        if ($settings) {
-            $top = $settings.Top
-            $activeName = $top['active_connection']
-            if ($activeName -and $settings.Connections.Contains($activeName)) {
-                $activeConn = Resolve-Connection -Connections $settings.Connections -Name $activeName
-            }
+    # SSH client info
+    if ($launchable | Where-Object { $_.launch_shell -eq 'ssh' }) {
+        $clientName = $activeConn["ssh_client"]
+        if ($clientName) { Write-Ok "SSH client: $clientName" }
+    }
+
+    # Connection label for the picker — only meaningful when we actually
+    # have multiple connections to swap between AND no -Shell override.
+    $connLabel = ""
+    if ($activeName -and -not $Shell -and $settings -and $settings.Connections.Count -gt 1) {
+        $connLabel = "$activeName ($connType)"
+    }
+
+    # Profile selection
+    if (-not $Profile -and $Filter.Count -eq 0 -and $profiles.Count -gt 0) {
+        $Profile = Show-ProfileMenu -Profiles $profiles -AllRepos $launchable -ConnectionLabel $connLabel
+        if ($script:ChangeConnection) {
+            # Re-pick from the FULL connections list (the user is asking to
+            # swap, so don't re-apply default_type filter here).
+            $sel = Show-ConnectionMenu -Connections $settings.Connections -Default $activeName
+            if (-not $sel) { exit 1 }
+            $activeConn = Resolve-Connection -Connections $settings.Connections -Name $sel
+            $activeName = $sel
+            $connType = if ($activeConn['type']) { $activeConn['type'] } else { 'ssh' }
+            $Profile = ""  # reset so the next iteration shows the profile menu again
+            continue
         }
+        if (-not $Profile) { exit 1 }
     }
-}
+    if ($Profile -eq '__pick__') {
+        # Custom repo picker
+        $launchable = @(Show-RepoPicker -Repos $launchable -ConnectionLabel $connLabel)
+        if ($script:ChangeConnection) {
+            $sel = Show-ConnectionMenu -Connections $settings.Connections -Default $activeName
+            if (-not $sel) { exit 1 }
+            $activeConn = Resolve-Connection -Connections $settings.Connections -Name $sel
+            $activeName = $sel
+            $connType = if ($activeConn['type']) { $activeConn['type'] } else { 'ssh' }
+            $Profile = ""
+            continue
+        }
+        if ($launchable.Count -eq 0) { Write-Err "No repos selected"; exit 1 }
+        Write-Ok "Custom: $($launchable.Count) agents"
+    } elseif ($Profile -and $profiles.ContainsKey($Profile)) {
+        $p = $profiles[$Profile]
+        # Show which repos this profile will actually launch (post disabled-filter).
+        $resolved = Resolve-ProfileRepos -Profile $p -AllRepos $allRepos
+        if ($resolved.Active.Count -gt 0) {
+            Write-Host "  Launching: " -NoNewline -ForegroundColor DarkGray
+            Write-Host ($resolved.Active -join ", ") -ForegroundColor Gray
+        }
+        if ($resolved.Disabled.Count -gt 0) {
+            Write-Host "  Skipped (disabled): " -NoNewline -ForegroundColor DarkGray
+            Write-Host ($resolved.Disabled -join ", ") -ForegroundColor DarkGray
+        }
+        if (-not (Is-AllRepos $p.repos)) {
+            $profileRepos = $p.repos
+            $launchable = @($launchable | Where-Object { $profileRepos -contains $_.name })
+        }
+        Write-Ok "Profile '$Profile': $($launchable.Count) agents"
+    } elseif ($Profile) { Write-Err "Unknown profile: $Profile"; exit 1 }
 
-Write-Ok "$($launchable.Count) launchable"
-if ($launchable.Count -eq 0) { Write-Warn "No launchable repos."; exit 0 }
-
-# ============================================================
-# Resolve account for this connection, load secrets.env.
-# These are shared across all sessions launched in this run.
-# ============================================================
-
-$accounts = if ($settings) { $settings.Accounts } else { [ordered]@{} }
-$activeAccount = Get-AccountForConnection -Accounts $accounts -Connection $activeConn
-$activeAccountName = $activeAccount['name']
-$maestroSecrets = Get-MaestroSecretsEnv -MaestroRoot $cfgParent
-
-if ($activeAccountName) {
-    $cfgDirRaw = $activeAccount['config_dir']
-    if ($cfgDirRaw) {
-        Write-Ok "Account: $activeAccountName ($cfgDirRaw)"
-    } else {
-        Write-Warn "Account '$activeAccountName' has no config_dir; CLAUDE_CONFIG_DIR will not be set"
+    # Name filter
+    if ($Filter.Count -gt 0) {
+        $launchable = @($launchable | Where-Object { $n = $_.name; ($Filter | Where-Object { $n -like "*$_*" }).Count -gt 0 })
+        if ($launchable.Count -eq 0) { Write-Err "No repos matched filter"; exit 1 }
     }
-}
-if ($maestroSecrets.Count -gt 0) {
-    Write-Ok "Secrets: $($maestroSecrets.Count) var(s) from .maestro/secrets.env"
-}
 
-# SSH client info
-if ($launchable | Where-Object { $_.launch_shell -eq 'ssh' }) {
-    $clientName = $activeConn["ssh_client"]
-    if ($clientName) { Write-Ok "SSH client: $clientName" }
-}
-
-# Profile selection
-if (-not $Profile -and $Filter.Count -eq 0 -and $profiles.Count -gt 0) {
-    $Profile = Show-ProfileMenu -Profiles $profiles -AllRepos $launchable
-    if (-not $Profile) { exit 1 }
-}
-if ($Profile -eq '__pick__') {
-    # Custom repo picker
-    $launchable = @(Show-RepoPicker -Repos $launchable)
-    if ($launchable.Count -eq 0) { Write-Err "No repos selected"; exit 1 }
-    Write-Ok "Custom: $($launchable.Count) agents"
-} elseif ($Profile -and $profiles.ContainsKey($Profile)) {
-    $p = $profiles[$Profile]
-    # Show which repos this profile will actually launch (post disabled-filter).
-    $resolved = Resolve-ProfileRepos -Profile $p -AllRepos $allRepos
-    if ($resolved.Active.Count -gt 0) {
-        Write-Host "  Launching: " -NoNewline -ForegroundColor DarkGray
-        Write-Host ($resolved.Active -join ", ") -ForegroundColor Gray
-    }
-    if ($resolved.Disabled.Count -gt 0) {
-        Write-Host "  Skipped (disabled): " -NoNewline -ForegroundColor DarkGray
-        Write-Host ($resolved.Disabled -join ", ") -ForegroundColor DarkGray
-    }
-    if (-not (Is-AllRepos $p.repos)) {
-        $profileRepos = $p.repos
-        $launchable = @($launchable | Where-Object { $profileRepos -contains $_.name })
-    }
-    Write-Ok "Profile '$Profile': $($launchable.Count) agents"
-} elseif ($Profile) { Write-Err "Unknown profile: $Profile"; exit 1 }
-
-# Name filter
-if ($Filter.Count -gt 0) {
-    $launchable = @($launchable | Where-Object { $n = $_.name; ($Filter | Where-Object { $n -like "*$_*" }).Count -gt 0 })
-    if ($launchable.Count -eq 0) { Write-Err "No repos matched filter"; exit 1 }
+    break
 }
 
 # Validate targets
