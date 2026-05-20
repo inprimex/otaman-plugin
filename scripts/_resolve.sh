@@ -13,10 +13,43 @@
 find_maestro_root() {
     local dir="${1:-$PWD}"
 
-    # 1. .maestro marker file — walk up looking for it
+    # First try resolving from the cwd directly.
+    local result
+    if result="$(_find_maestro_root_from "$dir")"; then
+        echo "$result"
+        return 0
+    fi
+
+    # If cwd is inside a linked git worktree, the worktree directory likely
+    # has no .otaman/.maestro marker (worktrees are created after init).
+    # Try again from the main repo's working tree, where the marker lives.
+    local worktree_main
+    worktree_main="$(resolve_worktree_main "$dir")"
+    if [[ -n "$worktree_main" ]]; then
+        if result="$(_find_maestro_root_from "$worktree_main")"; then
+            echo "$result"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Internal: run the three-step resolution chain (marker → env → walk-up)
+# starting from a given directory. Echoes the resolved maestro root on
+# stdout and returns 0 on success; returns 1 with no output on failure.
+#
+# The `prev != check` fixed-point guard on each walk loop is the Windows-
+# native-path safety: bash's `dirname C:` returns `C:` forever, so the
+# unguarded while-loop hangs on `C:/...` cwd inputs. Ported from the
+# legacy 2026-05-05 fix.
+_find_maestro_root_from() {
+    local dir="$1"
+
+    # 1. .otaman (preferred) or .maestro (legacy) marker file — walk up
     local check="$dir"
-    while [[ "$check" != "/" && "$check" != "." ]]; do
-        # Check both .otaman (preferred) and .maestro (legacy) markers
+    local prev=""
+    while [[ "$check" != "/" && "$check" != "." && "$check" != "$prev" ]]; do
         local marker=""
         if [[ -f "$check/.otaman" ]]; then
             marker="$check/.otaman"
@@ -35,6 +68,7 @@ find_maestro_root() {
                 fi
             fi
         fi
+        prev="$check"
         check="$(dirname "$check")"
     done
 
@@ -49,15 +83,78 @@ find_maestro_root() {
 
     # 3. Walk-up fallback (legacy layout)
     check="$dir"
-    while [[ "$check" != "/" && "$check" != "." ]]; do
+    prev=""
+    while [[ "$check" != "/" && "$check" != "." && "$check" != "$prev" ]]; do
         if [[ -f "$check/.agents/ownership.json" ]] || [[ -f "$check/platform.yaml" ]]; then
             echo "$check"
             return 0
         fi
+        prev="$check"
         check="$(dirname "$check")"
     done
 
     return 1
+}
+
+# Resolve a git worktree path to the main repo's working tree.
+#
+# Walks up from the given path looking for a .git entry:
+# - .git is a regular file → worktree marker, parse gitdir:, return main
+# - .git is a directory     → ordinary repo (not a worktree); empty result
+# - no .git found           → not in any repo; empty result
+#
+# A linked worktree has `.git` as a *file* containing a single line:
+#   gitdir: <main_repo>/.git/worktrees/<name>
+# The main repo's working tree is the great-grandparent of that gitdir.
+#
+# Usage:
+#   MAIN="$(resolve_worktree_main "$CWD")"
+#
+# Echoes the absolute path to the main repo on success, empty on no
+# match or any parse failure. Never fails (returns 0).
+resolve_worktree_main() {
+    local dir="${1:-$PWD}"
+    local check="$dir"
+    local prev=""
+    while [[ "$check" != "/" && "$check" != "." && "$check" != "$prev" ]]; do
+        if [[ -f "$check/.git" ]]; then
+            local gitdir line
+            gitdir=""
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                line="${line#"${line%%[![:space:]]*}"}"
+                if [[ "$line" == gitdir:* ]]; then
+                    gitdir="${line#gitdir:}"
+                    gitdir="${gitdir#"${gitdir%%[![:space:]]*}"}"
+                    gitdir="${gitdir%"${gitdir##*[![:space:]]}"}"
+                    break
+                fi
+            done < "$check/.git"
+            [[ -z "$gitdir" ]] && { echo ""; return 0; }
+            if [[ "$gitdir" != /* && "$gitdir" != [a-zA-Z]:* ]]; then
+                gitdir="$(cd "$check" 2>/dev/null && cd "$gitdir" 2>/dev/null && pwd)" || gitdir=""
+            fi
+            [[ -z "$gitdir" ]] && { echo ""; return 0; }
+            local parent grandparent
+            parent="$(dirname "$gitdir")"
+            grandparent="$(dirname "$parent")"
+            if [[ "$(basename "$parent")" == "worktrees" && "$(basename "$grandparent")" == ".git" ]]; then
+                local main
+                main="$(cd "$(dirname "$grandparent")" 2>/dev/null && pwd)" || main=""
+                echo "$main"
+                return 0
+            fi
+            echo ""
+            return 0
+        fi
+        if [[ -d "$check/.git" ]]; then
+            echo ""
+            return 0
+        fi
+        prev="$check"
+        check="$(dirname "$check")"
+    done
+    echo ""
+    return 0
 }
 
 # Parse a .maestro marker file and echo the value of a known field.
