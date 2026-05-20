@@ -166,7 +166,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "" >&2
     case "$SHELL_MODE" in
         bash)
-            echo "would exec: claude -c ${EXTRA_ARGS[*]:-/otaman:check}" >&2
+            echo "would exec: claude -c ${EXTRA_ARGS[*]:-/otaman:check} || claude ${EXTRA_ARGS[*]:-/otaman:check}" >&2
             ;;
         tmux)
             echo "would spawn tmux windows for repos: $REPOS_CSV" >&2
@@ -181,12 +181,16 @@ fi
 # ------------------------------------------------------------------
 # Dispatch
 
-# `-c` (continue): resume the prior session in this cwd if one exists,
-# otherwise start fresh. Idempotent across SSH reconnects so a dropped
-# session doesn't lose its transcript. (Backlog M-3.)
-claude_cmd_default=("claude" "-c" "/otaman:check")
+# `-c` (continue) resumes the prior session in this cwd. On a fresh cwd
+# it exits non-zero with "No conversation found to continue", so we fall
+# back to a no-flag launch — that makes the launcher idempotent across
+# SSH reconnects (the second-and-later launches keep context) without
+# breaking the first launch. (Backlog M-3 + first-run fix.)
+claude_cmd_continue=("claude" "-c" "/otaman:check")
+claude_cmd_fresh=("claude" "/otaman:check")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-    claude_cmd_default=("claude" "-c" "${EXTRA_ARGS[@]}")
+    claude_cmd_continue=("claude" "-c" "${EXTRA_ARGS[@]}")
+    claude_cmd_fresh=("claude" "${EXTRA_ARGS[@]}")
 fi
 
 case "$SHELL_MODE" in
@@ -195,14 +199,18 @@ case "$SHELL_MODE" in
             echo "error: 'claude' not on PATH" >&2
             exit 1
         fi
-        exec "${claude_cmd_default[@]}"
+        # Try continue; fall back to fresh launch on non-zero (no prior
+        # session in this cwd). `exec` is on the fresh path so the parent
+        # shell still gets replaced — same behavior as before for the
+        # common case.
+        "${claude_cmd_continue[@]}" || exec "${claude_cmd_fresh[@]}"
         ;;
 
     print)
         # Emit a shell snippet the user can `source` or copy. stdout only —
         # stderr already has the status banner.
         printf '%s\n' "$EXPORTS"
-        printf 'exec %s\n' "${claude_cmd_default[*]}"
+        printf '%s || exec %s\n' "${claude_cmd_continue[*]}" "${claude_cmd_fresh[*]}"
         ;;
 
     tmux)
@@ -249,8 +257,9 @@ EOF
         # Respawn loop: if claude exits (/exit, Ctrl-D, crash), prompt the
         # user to press Enter for a fresh attach instead of stranding the
         # tmux window at a bare bash prompt. Ctrl-C at the prompt drops
-        # to the shell as before. (Backlog M-13a.)
-        claude_loop="while :; do claude -c /otaman:check; printf '\\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
+        # to the shell as before. `-c` falls back to a no-flag launch
+        # when there's no prior session in that cwd. (Backlog M-13a.)
+        claude_loop="while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited — Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
 
         if tmux has-session -t "$session" 2>/dev/null; then
             echo "tmux: attaching to existing session '$session'" >&2
