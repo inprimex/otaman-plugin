@@ -48,6 +48,34 @@ function Write-Ok   { param($m) Write-Host "  [OK] $m" -ForegroundColor Green }
 function Write-Warn { param($m) Write-Host "  [!]  $m" -ForegroundColor Yellow }
 function Write-Err  { param($m) Write-Host "  [X]  $m" -ForegroundColor Red }
 
+# Size-based log rotation. Called before append-only writes so launcher.log
+# (and any other trace logs we add later) stays bounded. No-op if the file
+# doesn't exist or is under the threshold. Defaults: 1 MiB max, 3 backups.
+# All ops are best-effort — rotation failures never break a launch.
+function Rotate-Log {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [int]$MaxBytes = 1048576,
+        [int]$Keep = 3
+    )
+    if (-not (Test-Path $Path)) { return }
+    try {
+        $size = (Get-Item $Path).Length
+        if ($size -lt $MaxBytes) { return }
+        # Drop the oldest, then shift each .N to .N+1, then base -> .1.
+        $oldest = "$Path.$Keep"
+        if (Test-Path $oldest) { Remove-Item -Force $oldest -ErrorAction SilentlyContinue }
+        for ($i = $Keep - 1; $i -ge 1; $i--) {
+            $src = "$Path.$i"
+            $dst = "$Path.$($i + 1)"
+            if (Test-Path $src) { Move-Item -Force $src $dst -ErrorAction SilentlyContinue }
+        }
+        Move-Item -Force $Path "$Path.1" -ErrorAction SilentlyContinue
+    } catch {
+        # Best-effort.
+    }
+}
+
 # WorkDir isolates settings per project (each project gets its own folder)
 if ($WorkDir) {
     if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
@@ -1662,11 +1690,13 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
 
         # Trace file: append the SSH args (and decoded base64 payload when
         # reliability=tmux/mosh) to <maestro>/.maestro/launcher.log so a
-        # silent-drop failure leaves something to grep. Append-only.
+        # silent-drop failure leaves something to grep. Append-only, with
+        # size-based rotation (1 MiB threshold, keeps 3 backups).
         try {
             $logDir = Join-Path $cfgParent ".maestro"
             if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
             $logFile = Join-Path $logDir "launcher.log"
+            Rotate-Log -Path $logFile
             $stamp = Get-Date -Format "yyyy-MM-ddTHH:mm:sszzz"
             $logLines = @(
                 "[$stamp] $($repo.name) ($shell) -> $($repo.launch_ssh_host)"

@@ -24,11 +24,14 @@ set -u
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../scripts/_resolve.sh
 source "$HOOK_DIR/../scripts/_resolve.sh"
+# shellcheck source=../scripts/_log.sh
+source "$HOOK_DIR/../scripts/_log.sh"
 
 PROJECT_ROOT="$(find_maestro_root 2>/dev/null)" || exit 0
 LOG_DIR="$PROJECT_ROOT/.otaman"
 LOG_FILE="$LOG_DIR/session-start-clear-afk.log"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
+rotate_log "$LOG_FILE"
 
 NOW="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 
