@@ -9,7 +9,7 @@ All YAML parsing stays on the Python side where ``accounts.py``,
 Usage::
 
     launch-resolve.py --connection <name> [--shell bash|ssh|zsh|fish]
-                      [--maestro-root PATH]
+                      [--otaman-root PATH]      # legacy alias: --maestro-root
 
 Outputs (on stdout) shell-safe export statements:
 
@@ -250,9 +250,17 @@ def main(argv: list[str] | None = None) -> int:
         choices=["bash", "zsh", "fish", "powershell", "pwsh", "wsl", "ssh", "cmd"],
         help="Target shell for path expansion (default: bash)",
     )
+    # Otaman folder path. `--otaman-root` is the preferred name;
+    # `--maestro-root` is retained as a legacy alias for back-compat with
+    # callers that haven't migrated yet (e.g. wrapper scripts vendored
+    # outside this repo). Both write to the same argparse dest so the
+    # downstream code reads one value.
     parser.add_argument(
+        "--otaman-root",
         "--maestro-root",
-        help="Maestro folder path (default: auto-resolve from cwd)",
+        dest="maestro_root",
+        metavar="PATH",
+        help="Otaman folder path (default: auto-resolve from cwd)",
     )
     # Model/effort resolution inputs — lets the launcher pass per-repo /
     # per-agent context so resolve_tier picks the right rule.
@@ -280,8 +288,9 @@ def main(argv: list[str] | None = None) -> int:
         root = find_maestro_root()
         if root is None:
             print(
-                "ERROR: no maestro folder found (run from inside a managed repo, "
-                "pass --maestro-root, or set MAESTRO_ROOT)",
+                "ERROR: no otaman folder found (run from inside a managed repo, "
+                "pass --otaman-root, or set OTAMAN_ROOT). "
+                "Legacy: --maestro-root / MAESTRO_ROOT still honored.",
                 file=sys.stderr,
             )
             return 1
