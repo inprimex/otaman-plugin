@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Launch Claude Code agents for a maestro project (bash parity with
+# Launch Claude Code agents for an otaman project (bash parity with
 # launch-agents.ps1). Set CLAUDE_CONFIG_DIR from the active connection's
-# account, load .maestro/secrets.env, then exec claude or spawn tmux.
+# account, load secrets.env (preferred: .otaman/secrets.env; legacy:
+# .maestro/secrets.env), then exec claude or spawn tmux.
 #
 # USAGE
 #   launch-agents.sh [options] [-- <extra args to claude>]
@@ -158,12 +159,13 @@ case "$SHELL_MODE" in
 esac
 
 # ------------------------------------------------------------------
-# Resolve maestro root + determine python interpreter
+# Resolve otaman root + determine python interpreter
 
 MAESTRO_ROOT="$(find_maestro_root "$PWD" 2>/dev/null || true)"
 if [[ -z "$MAESTRO_ROOT" ]]; then
-    echo "error: no maestro folder found from $PWD" >&2
-    echo "hint: run from inside a managed repo, set MAESTRO_ROOT, or create a .maestro marker" >&2
+    echo "error: no otaman folder found from $PWD" >&2
+    echo "hint: run from inside a managed repo, set OTAMAN_ROOT, or create a .otaman marker" >&2
+    echo "      (legacy: MAESTRO_ROOT / .maestro marker still honored)" >&2
     exit 1
 fi
 
@@ -184,7 +186,7 @@ fi
 # Invoke resolver, eval its exports
 
 RESOLVE_OUT="$(${PYTHON} "$SCRIPT_DIR/launch-resolve.py" \
-    --maestro-root "$MAESTRO_ROOT" \
+    --otaman-root "$MAESTRO_ROOT" \
     ${CONNECTION:+--connection "$CONNECTION"} \
     ${REPO_FILTER:+--repo "$REPO_FILTER"} \
     --shell bash)"
@@ -197,12 +199,17 @@ EXPORTS="$(printf '%s\n' "$RESOLVE_OUT" | grep -v '^# repos:')"
 # Eval in current shell so CLAUDE_CONFIG_DIR + secrets propagate.
 eval "$EXPORTS"
 
-# Auto-register this maestro folder so `maestro upgrade` knows about it.
+# Auto-register this otaman folder so `otaman upgrade` knows about it.
 # Best-effort and silent — never block the launch on registration failure.
 # Only when launch-settings.yaml exists (otherwise there's nothing for
 # upgrade to walk later).
+#
+# Calls the `otaman` CLI on PATH; the polyrepo split moved the launcher-
+# register subcommand out of the plugin tree, so the legacy `cli/maestro.py`
+# reference here is dead. If `otaman` isn't on PATH, the redirect + `|| true`
+# keep the launch silent.
 if [[ "$DRY_RUN" -ne 1 && -f "$MAESTRO_ROOT/launch-settings.yaml" ]]; then
-    ${PYTHON} "$SCRIPT_DIR/../cli/maestro.py" launcher register "$MAESTRO_ROOT" >/dev/null 2>&1 || true
+    otaman launcher register "$MAESTRO_ROOT" >/dev/null 2>&1 || true
 fi
 
 # ------------------------------------------------------------------

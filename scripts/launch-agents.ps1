@@ -3,7 +3,7 @@
 .SYNOPSIS
     Launch Claude Code agents for repos defined in platform.yaml
 .DESCRIPTION
-    Reads platform.yaml from the maestro folder, shows profile menu (or accepts
+    Reads platform.yaml from the otaman folder, shows profile menu (or accepts
     -Profile param), opens Windows Terminal tabs (or PuTTY windows) for each repo.
 
     Supports multiple named connections (local / LAN / mesh) via launch-settings.yaml
@@ -95,15 +95,15 @@ $SettingsFile = Join-Path $cfgParent "launch-settings.yaml"
 #   connections:
 #     local:
 #       type: local
-#       local_root: C:/work/myproj/myproj-maestro
+#       local_root: C:/work/myproj/myproj-otaman
 #       local_shell: wsl            # wsl | powershell
 #     lan:
 #       type: ssh
 #       ssh_client: ssh
 #       ssh_default_host: user@1.2.3.4
 #       ssh_key: C:/path/to/key
-#       ssh_remote_root: /home/user/proj/proj-maestro
-#       ssh_plugin_path: /home/user/maestro-plugin
+#       ssh_remote_root: /home/user/proj/proj-otaman
+#       ssh_plugin_path: /home/user/otaman/otaman-plugin
 #     mesh:
 #       type: ssh
 #       extends: lan
@@ -205,7 +205,7 @@ function Read-SettingsFile {
 function Save-SettingsFile {
     param($Top, $Connections)
     $lines = @()
-    $lines += "# Maestro launch settings (auto-generated, edit freely)"
+    $lines += "# Otaman launch settings (auto-generated, edit freely)"
     $lines += "# Re-run setup: .\launch-agents.ps1 -Setup"
     $lines += ""
     if ($Top['active_connection']) {
@@ -305,7 +305,7 @@ function Get-AccountForConnection {
     return $result
 }
 
-# Read secrets.env from the maestro folder. Returns an ordered hashtable
+# Read secrets.env from the otaman folder. Returns an ordered hashtable
 # of KEY=VALUE pairs (empty if absent). Comments / blank lines ignored;
 # matching surrounding quotes stripped.
 #
@@ -334,7 +334,7 @@ function Get-ResolvedTierForRepo {
     }
     if (-not $py) { return $result }
 
-    $pyArgs = @($resolverPy, "--maestro-root", $MaestroRoot, "--shell", "bash")
+    $pyArgs = @($resolverPy, "--otaman-root", $MaestroRoot, "--shell", "bash")
     if ($Repo) { $pyArgs += @("--repo", $Repo) }
 
     try {
@@ -560,7 +560,7 @@ function Prompt-ConnectionFields {
         $defShell = if ($Existing -and $Existing['local_shell']) { $Existing['local_shell'] } else { 'wsl' }
         $defDistro = if ($Existing -and $Existing['wsl_distro']) { $Existing['wsl_distro'] } else { 'Ubuntu' }
 
-        $root = Read-Host "  Local maestro folder (absolute path, e.g., C:/work/myproj/myproj-maestro)$(if ($defRoot) { " [$defRoot]" })"
+        $root = Read-Host "  Local otaman folder (absolute path, e.g., C:/work/myproj/myproj-otaman)$(if ($defRoot) { " [$defRoot]" })"
         if (-not $root -and $defRoot) { $root = $defRoot }
         $fields['local_root'] = $root
 
@@ -597,11 +597,11 @@ function Prompt-ConnectionFields {
         if (-not $key -and $defKey) { $key = $defKey }
         if ($key) { $fields['ssh_key'] = $key }
 
-        $rroot = Read-Host "  Remote maestro folder (e.g., /home/user/proj/proj-maestro)$(if ($defRoot) { " [$defRoot]" })"
+        $rroot = Read-Host "  Remote otaman folder (e.g., /home/user/proj/proj-otaman)$(if ($defRoot) { " [$defRoot]" })"
         if (-not $rroot -and $defRoot) { $rroot = $defRoot }
         if ($rroot) { $fields['ssh_remote_root'] = $rroot }
 
-        $plugin = Read-Host "  Remote maestro-plugin path (e.g., /home/user/maestro-plugin)$(if ($defPlugin) { " [$defPlugin]" })"
+        $plugin = Read-Host "  Remote otaman-plugin path (e.g., /home/user/otaman/otaman-plugin)$(if ($defPlugin) { " [$defPlugin]" })"
         if (-not $plugin -and $defPlugin) { $plugin = $defPlugin }
         if ($plugin) { $fields['ssh_plugin_path'] = $plugin }
 
@@ -1707,22 +1707,18 @@ if ($Close -or $Restart) {
     }
 }
 
-# Auto-register this launcher folder so `maestro upgrade` knows about it.
+# Auto-register this launcher folder so `otaman upgrade` knows about it.
 # Best-effort and silent — never block a launch on registration failure.
 # Skipped in dry-run because dry-run shouldn't mutate user state.
 if (-not $DryRun) {
     try {
-        $pyForRegister = $null
-        foreach ($candidate in @('py','python3','python')) {
-            $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-            if ($cmd) { $pyForRegister = $cmd.Source; break }
-        }
-        if ($pyForRegister) {
-            $cliMaestro = Join-Path (Split-Path -Parent $PSCommandPath) "../cli/maestro.py"
-            $cliMaestro = (Resolve-Path $cliMaestro -ErrorAction SilentlyContinue).Path
-            if ($cliMaestro) {
-                & $pyForRegister $cliMaestro launcher register $cfgParent 2>&1 | Out-Null
-            }
+        # Polyrepo split moved the launcher-register subcommand to otaman-cli;
+        # the legacy `cli/maestro.py` path inside this repo is dead. Call the
+        # `otaman` binary on PATH instead. If absent, the redirect keeps the
+        # launch silent.
+        $otamanCli = Get-Command otaman -ErrorAction SilentlyContinue
+        if ($otamanCli) {
+            & $otamanCli.Source launcher register $cfgParent 2>&1 | Out-Null
         }
     } catch {
         # Silent on any failure — registration is a side-channel, not load-bearing.
@@ -1798,7 +1794,7 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
         }
 
         # Trace file: append the SSH args (and decoded base64 payload when
-        # reliability=tmux/mosh) to <maestro>/.otaman/launcher.log so a
+        # reliability=tmux/mosh) to <otaman-root>/.otaman/launcher.log so a
         # silent-drop failure leaves something to grep. Append-only, with
         # size-based rotation (1 MiB threshold, keeps 3 backups).
         #
