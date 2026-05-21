@@ -269,6 +269,11 @@ case "$SHELL_MODE" in
             echo "error: 'claude' not on PATH" >&2
             exit 1
         fi
+        # Readiness probe (M-15): cold first launch can race the slash-command
+        # resolver before plugin slash commands finish registering, surfacing
+        # as a one-off "Unknown command" flicker. `claude --version` forces
+        # the runtime to initialize without consuming the prompt arg.
+        claude --version >/dev/null 2>&1 || true
         # Try continue; fall back to fresh launch on non-zero (no prior
         # session in this cwd). `exec` is on the fresh path so the parent
         # shell still gets replaced — same behavior as before for the
@@ -280,6 +285,7 @@ case "$SHELL_MODE" in
         # Emit a shell snippet the user can `source` or copy. stdout only —
         # stderr already has the status banner.
         printf '%s\n' "$EXPORTS"
+        printf 'claude --version >/dev/null 2>&1 || true\n'
         printf '%s || exec %s\n' "${claude_cmd_continue[*]}" "${claude_cmd_fresh[*]}"
         ;;
 
@@ -379,7 +385,13 @@ EOF
         # tmux window at a bare bash prompt. Ctrl-C at the prompt drops
         # to the shell as before. `-c` falls back to a no-flag launch
         # when there's no prior session in that cwd. (Backlog M-13a.)
-        claude_loop="while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
+        #
+        # The leading `claude --version` is M-15's readiness probe — forces
+        # the runtime to initialize so plugin slash commands are registered
+        # before the first `/otaman:check` reaches the prompt parser. Cheap
+        # (~50ms) and silent. Subsequent loop iterations rely on the
+        # already-warm process state.
+        claude_loop="claude --version >/dev/null 2>&1 || true; while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
 
         if tmux has-session -t "$session" 2>/dev/null; then
             echo "tmux: attaching to existing session '$session'" >&2
