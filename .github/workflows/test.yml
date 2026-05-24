@@ -68,6 +68,11 @@ jobs:
         working-directory: workspace/otaman-plugin
         run: uv sync --extra test --no-dev
 
+      - name: Audit maestro references
+        if: runner.os != 'Windows'
+        working-directory: workspace/otaman-plugin
+        run: bash ../otaman-core/scripts/audit-maestro-refs.sh src/
+
       - name: Run tests
         working-directory: workspace/otaman-plugin
         run: uv run pytest tests/ -v

@@ -36,15 +36,15 @@ def create_presale_dir(
     presale = root / ".otaman-presale"
     created: list[str] = []
 
-    legacy = root / ".maestro-presale"
+    legacy = root / ".maestro-presale"  # legacy: pre-rebrand presale dir name
     if presale.exists() or legacy.exists():
         if presale.exists():
             print(f"WARNING: .otaman-presale/ already exists at {root}", file=sys.stderr)
         else:
             print(
-                f"WARNING: legacy .maestro-presale/ found at {root}; new artifacts "
+                f"WARNING: legacy .maestro-presale/ found at {root}; new artifacts "  # legacy: pre-rebrand dir
                 f"will write to .otaman-presale/. Migrate manually with: "
-                f"mv {root}/.maestro-presale {root}/.otaman-presale",
+                f"mv {root}/.maestro-presale {root}/.otaman-presale",  # legacy: migration command
                 file=sys.stderr,
             )
         print("Use --force to reinitialize (project-meta.yaml will NOT be overwritten).", file=sys.stderr)

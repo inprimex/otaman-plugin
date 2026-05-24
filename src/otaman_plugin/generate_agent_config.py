@@ -201,11 +201,11 @@ def generate_repo_claude_md(project_root: Path, config: dict[str, Any]) -> list[
 
         if claude_md_path.exists():
             existing = claude_md_path.read_text(encoding="utf-8")
-            # Recognize both new (otaman:) and legacy (maestro:) markers so
+            # Recognize both new (otaman:) and legacy (maestro:) markers so  # legacy: pre-rebrand reference
             # existing in-the-wild CLAUDE.md files migrate cleanly on next init.
-            if "<!-- otaman:begin -->" in existing or "<!-- maestro:begin -->" in existing:
+            if "<!-- otaman:begin -->" in existing or "<!-- maestro:begin -->" in existing:  # legacy: pre-rebrand reference
                 import re
-                pattern = r"<!-- (?:otaman|maestro):begin -->.*?<!-- (?:otaman|maestro):end -->"
+                pattern = r"<!-- (?:otaman|maestro):begin -->.*?<!-- (?:otaman|maestro):end -->"  # legacy: pre-rebrand reference
                 updated = re.sub(pattern, maestro_block, existing, flags=re.DOTALL)
                 claude_md_path.write_text(updated, encoding="utf-8")
             else:
@@ -230,8 +230,8 @@ def _build_maestro_block(
         for r in other_repos
     )
 
-    # Compute relative path from repo to maestro folder for .agents/ references.
-    # M = relative path from repo to maestro folder (e.g., "../lmachine-maestro")
+    # Compute relative path from repo to maestro folder for .agents/ references.  # legacy: pre-rebrand reference
+    # M = relative path from repo to maestro folder (e.g., "../lmachine-maestro")  # legacy: pre-rebrand reference
     m = ".."  # fallback: assume parent dir
     if project_root:
         repo_dir = (project_root / repo["path"]).resolve()
@@ -488,7 +488,7 @@ def install_spec_change_hook(project_root: Path, config: dict[str, Any]) -> str 
     # If there's an existing post-commit hook, chain ours after it
     if hook_target.exists():
         existing = hook_target.read_text(encoding="utf-8")
-        marker = "# maestro:spec-change-hook"
+        marker = "# maestro:spec-change-hook"  # legacy: pre-rebrand reference
         if marker in existing:
             # Already installed, update in place
             import re
@@ -508,7 +508,7 @@ def install_spec_change_hook(project_root: Path, config: dict[str, Any]) -> str 
             return f"Appended spec-change hook to existing {specs_path_str}/.git/hooks/post-commit"
     else:
         # Create new post-commit hook
-        marker = "# maestro:spec-change-hook"
+        marker = "# maestro:spec-change-hook"  # legacy: pre-rebrand reference
         hook_call = _spec_hook_call_block(hook_source, marker)
         content = f"#!/usr/bin/env bash\nset -euo pipefail\n\n{hook_call}\n"
         hook_target.write_text(content, encoding="utf-8")
@@ -525,7 +525,7 @@ def _spec_hook_call_block(hook_source: Path, marker: str) -> str:
     # Use portable path: resolve relative to the hook location at runtime
     source_posix = hook_source.as_posix()
     return f"""{marker}:begin
-# Maestro: notify agents when specs change
+# Maestro: notify agents when specs change  # legacy: pre-rebrand reference
 if [ -f "{source_posix}" ]; then
     bash "{source_posix}" || true
 fi
@@ -563,7 +563,7 @@ def install_repo_post_commit_hooks(project_root: Path, config: dict[str, Any]) -
         hooks_dir.mkdir(parents=True, exist_ok=True)
 
         hook_target = hooks_dir / "post-commit"
-        marker = "# maestro:post-commit-hook"
+        marker = "# maestro:post-commit-hook"  # legacy: pre-rebrand reference
         hook_call = _repo_hook_call_block(hook_source, marker)
 
         if hook_target.exists():
@@ -598,7 +598,7 @@ def _repo_hook_call_block(hook_source: Path, marker: str) -> str:
     """Build the bash block that calls the repo post-commit hook."""
     source_posix = hook_source.as_posix()
     return f"""{marker}:begin
-# Maestro: notify bus on commits (triggers observer reviews)
+# Maestro: notify bus on commits (triggers observer reviews)  # legacy: pre-rebrand reference
 if [ -f "{source_posix}" ]; then
     bash "{source_posix}" || true
 fi
@@ -619,10 +619,10 @@ def install_pre_commit_hooks(project_root: Path, config: dict[str, Any]) -> list
         return results
 
     source_posix = hook_source.as_posix()
-    marker = "# maestro:pre-commit-hook"
+    marker = "# maestro:pre-commit-hook"  # legacy: pre-rebrand reference
     # Critical: exit $? propagates failure (blocks commit), unlike post-commit which uses || true
     hook_call = f"""{marker}:begin
-# Maestro: enforce branch naming and protected branches
+# Maestro: enforce branch naming and protected branches  # legacy: pre-rebrand reference
 if [ -f "{source_posix}" ]; then
     bash "{source_posix}"
     _maestro_rc=$?
@@ -743,8 +743,8 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
                 pass
 
         # Merge: keep existing non-otaman servers, add/update both otaman
-        # servers. Drop legacy maestro-* keys from prior pre-rebrand inits.
-        LEGACY = {"maestro-bus", "maestro-estimation"}
+        # servers. Drop legacy maestro-* keys from prior pre-rebrand inits.  # legacy: pre-rebrand reference
+        LEGACY = {"maestro-bus", "maestro-estimation"}  # legacy: pre-rebrand reference
         merged = {k: v for k, v in existing_servers.items() if k not in LEGACY}
         merged["otaman-bus"] = mcp_config["mcpServers"]["otaman-bus"]
         merged["otaman-estimation"] = mcp_config["mcpServers"]["otaman-estimation"]
@@ -763,7 +763,7 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
 
 
 def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[str]:
-    """Create or update .claude/settings.local.json with maestro permissions.
+    """Create or update .claude/settings.local.json with maestro permissions.  # legacy: pre-rebrand reference
 
     Adds safe read-only permissions so agents aren't prompted for common bus ops.
     Preserves any existing permissions the user has already configured.
@@ -771,8 +771,8 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
     results: list[str] = []
     bus_path_rel = config.get("communication", {}).get("bus_path", ".agents/bus")
 
-    # Common safe permission patterns (read-only bus ops + git + maestro CLI).
-    # The maestro CLI entries are what /otaman:check and friends rely on after
+    # Common safe permission patterns (read-only bus ops + git + maestro CLI).  # legacy: pre-rebrand reference
+    # The maestro CLI entries are what /otaman:check and friends rely on after  # legacy: pre-rebrand reference
     # the 2026-04-29 shift to bash-driven hot-path commands (see CLAUDE.md).
     maestro_permissions = [
         "Bash(git log:*)",
@@ -781,15 +781,15 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
         "Bash(git branch:*)",
         "Bash(git checkout:*)",
         "Bash(git add:*)",
-        # otaman + maestro (legacy alias) — wildcards cover all subcommands
+        # otaman + maestro (legacy alias) — wildcards cover all subcommands  # legacy: pre-rebrand reference
         # without enumerating each. Both bare-name + full-path forms because
         # Claude Code matches against literal command-prefix.
         "Bash(otaman:*)",
-        "Bash(maestro:*)",
+        "Bash(maestro:*)",  # legacy: pre-rebrand reference
         "Bash(/home/*/.local/bin/otaman:*)",
-        "Bash(/home/*/.local/bin/maestro:*)",
+        "Bash(/home/*/.local/bin/maestro:*)",  # legacy: pre-rebrand reference
         "Bash(/usr/local/bin/otaman:*)",
-        "Bash(/usr/local/bin/maestro:*)",
+        "Bash(/usr/local/bin/maestro:*)",  # legacy: pre-rebrand reference
     ]
 
     for repo in config["repos"]:
@@ -832,7 +832,7 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
 
 
 def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[str]:
-    """Write .maestro marker files in each managed repo pointing back to the maestro folder.
+    """Write .maestro marker files in each managed repo pointing back to the maestro folder.  # legacy: pre-rebrand reference
 
     Also appends .otaman to each repo's .gitignore if not already present.
     Returns list of status messages.
@@ -842,21 +842,21 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
     for repo in config["repos"]:
         repo_dir = (project_root / repo["path"]).resolve()
         if not repo_dir.is_dir():
-            results.append(f"WARNING: Repo not found: {repo['path']}, skipping .maestro marker")
+            results.append(f"WARNING: Repo not found: {repo['path']}, skipping .maestro marker")  # legacy: pre-rebrand reference
             continue
 
-        # Compute relative path from repo to maestro folder
+        # Compute relative path from repo to maestro folder  # legacy: pre-rebrand reference
         try:
             rel = os.path.relpath(project_root.resolve(), repo_dir)
             rel_posix = Path(rel).as_posix()
         except ValueError:
             rel_posix = project_root.resolve().as_posix()
 
-        # Write .maestro marker
+        # Write .maestro marker  # legacy: pre-rebrand reference
         marker = repo_dir / ".otaman"
         lines = [
-            "# Path to maestro folder (relative to this repo root)",
-            "# Written by maestro init — do not edit manually",
+            "# Path to maestro folder (relative to this repo root)",  # legacy: pre-rebrand reference
+            "# Written by maestro init — do not edit manually",  # legacy: pre-rebrand reference
             rel_posix,
         ]
         if expected_account:
@@ -879,12 +879,12 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
                 with open(gitignore, "a", encoding="utf-8") as f:
                     if not content.endswith("\n"):
                         f.write("\n")
-                    f.write(f"\n# Maestro marker file (local pointer to maestro folder)\n")
+                    f.write(f"\n# Maestro marker file (local pointer to maestro folder)\n")  # legacy: pre-rebrand reference
                     f.write(f"{marker_entry}\n")
                 results.append(f"Updated: {repo['name']}/.gitignore (added .otaman)")
         else:
             gitignore.write_text(
-                f"# Maestro marker file (local pointer to maestro folder)\n"
+                f"# Maestro marker file (local pointer to maestro folder)\n"  # legacy: pre-rebrand reference
                 f"{marker_entry}\n",
                 encoding="utf-8",
             )
@@ -896,7 +896,7 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
 def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[str]:
     """Ensure .otaman/ runtime dir, secrets.env.example stub, and gitignore entry.
 
-    The maestro folder houses ``.otaman/secrets.env`` for local secret storage
+    The maestro folder houses ``.otaman/secrets.env`` for local secret storage  # legacy: pre-rebrand reference
     (gitignored, mode 0600). The ``.example`` stub is committed and documents
     the expected keys.
     """
@@ -909,7 +909,7 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
     example_path = runtime_dir / "secrets.env.example"
     if not example_path.exists():
         example_path.write_text(
-            "# .otaman/secrets.env.example — template for maestro secrets\n"
+            "# .otaman/secrets.env.example — template for maestro secrets\n"  # legacy: pre-rebrand reference
             "#\n"
             "# Copy to .otaman/secrets.env and fill in real values.\n"
             "# The real file is gitignored — NEVER commit populated secrets.\n"
@@ -936,7 +936,7 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
         except OSError:
             pass
 
-    # Ensure maestro folder's .gitignore covers .otaman/secrets.env.
+    # Ensure maestro folder's .gitignore covers .otaman/secrets.env.  # legacy: pre-rebrand reference
     # Also include .otaman/bridge-*.endpoint and .otaman/afk which show up
     # in later phases — cheap to preempt now.
     entries_needed = [
@@ -955,7 +955,7 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
                 existing = gitignore.read_text(encoding="utf-8")
                 if existing and not existing.endswith("\n"):
                     f.write("\n")
-                f.write("\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n")
+                f.write("\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n")  # legacy: pre-rebrand reference
                 for e in missing:
                     f.write(f"{e}\n")
             results.append(
@@ -963,11 +963,11 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
             )
     else:
         gitignore.write_text(
-            "# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"
+            "# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"  # legacy: pre-rebrand reference
             + "\n".join(entries_needed) + "\n",
             encoding="utf-8",
         )
-        results.append("Created: .gitignore (maestro runtime entries)")
+        results.append("Created: .gitignore (maestro runtime entries)")  # legacy: pre-rebrand reference
 
     return results
 
@@ -1026,7 +1026,7 @@ def main() -> int:
         print(f"WARNING: {w}")
 
     _phase("Writing per-repo .otaman markers", count=len(config["repos"]))
-    # Write .maestro marker files in each repo (pointing back to maestro folder)
+    # Write .maestro marker files in each repo (pointing back to maestro folder)  # legacy: pre-rebrand reference
     marker_results = install_maestro_markers(project_root, config)
     for r in marker_results:
         print(r)

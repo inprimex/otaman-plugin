@@ -323,7 +323,7 @@ def main() -> int:
         project_root = find_project_root(Path.cwd())
 
     if not project_root:
-        print("ERROR: Could not find maestro project root", file=sys.stderr)
+        print("ERROR: Could not find otaman project root", file=sys.stderr)
         return 2
 
     config = load_platform_config(project_root)

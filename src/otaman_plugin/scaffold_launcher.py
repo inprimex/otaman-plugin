@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Scaffold a launcher folder for a maestro project.
+"""Scaffold a launcher folder for an otaman project.
 
 Creates a dedicated folder the user can place anywhere (e.g., C:/work/launchers/myproj)
 containing:
   - launch.ps1                 Thin wrapper calling scripts/launch-agents.ps1
   - launch-settings.yaml       Named connections (local + lan + mesh placeholders)
-  - platform.yaml              Copied from the maestro folder (if provided)
+  - platform.yaml              Copied from the otaman folder (if provided)
 
-The launcher folder is decoupled from the maestro folder so it can live on the
-developer's laptop even when the maestro folder lives on a remote server.
+The launcher folder is decoupled from the otaman folder so it can live on the
+developer's laptop even when the otaman folder lives on a remote server.
 
 Usage:
     scaffold-launcher.py <target> [options]
@@ -18,10 +18,11 @@ Arguments:
 
 Options:
     --name NAME                Project name (defaults to target folder name)
-    --maestro-root PATH        Local maestro folder (for local connection + platform.yaml copy)
+    --otaman-root PATH         Local otaman folder (for local connection + platform.yaml copy)
+                               (legacy: alias --maestro-root accepted)
     --plugin-path PATH         Path to otaman-plugin (defaults to this script's parent)
     --remote-host USER@HOST    SSH host for `lan` connection (optional)
-    --remote-root PATH         Remote maestro folder path (optional)
+    --remote-root PATH         Remote otaman folder path (optional)
     --remote-plugin PATH       Remote otaman-plugin path (optional, default /home/USER/otaman-plugin)
     --ssh-key PATH             SSH private key path (optional)
     --mesh-host USER@HOST      SSH host for `mesh` connection (optional, extends lan)
@@ -86,7 +87,7 @@ def render_launch_ps1(plugin_path: str, project_name: str) -> str:
     plugin_posix = plugin_path.replace("\\", "/")
     script = f"{plugin_posix}/scripts/launch-agents.ps1"
     return (
-        f"# {project_name} agent launcher — calls maestro plugin script with project-specific settings\n"
+        f"# {project_name} agent launcher — calls maestro plugin script with project-specific settings\n"  # legacy: pre-rebrand reference
         f"# Settings live in this folder (launch-settings.yaml, platform.yaml).\n"
         f"$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f'$MaestroScript = "{script}"\n'
@@ -104,11 +105,11 @@ def render_launch_settings(opts: dict) -> str:
     mesh_host = opts["mesh_host"]
 
     # local_root: either provided maestro_root, or a sensible placeholder
-    local_root = maestro_root.replace("\\", "/") if maestro_root else f"C:/work/{name}/{name}-maestro"
-    rroot = remote_root or f"/home/USER/{name}/{name}-maestro"
+    local_root = maestro_root.replace("\\", "/") if maestro_root else f"C:/work/{name}/{name}-maestro"  # legacy: pre-rebrand reference
+    rroot = remote_root or f"/home/USER/{name}/{name}-maestro"  # legacy: pre-rebrand reference
 
     lines = [
-        f"# Maestro launch settings for {name}",
+        f"# Maestro launch settings for {name}",  # legacy: pre-rebrand reference
         "# Re-run setup: .\\launch.ps1 -Setup",
         "#",
         "# `active_connection` picks which connection block to use by default.",
@@ -167,7 +168,7 @@ def main(argv: list[str]) -> int:
     launch_ps1.write_text(render_launch_ps1(opts["plugin_path"], opts["name"]), encoding="utf-8")
     settings.write_text(render_launch_settings(opts), encoding="utf-8")
 
-    # Copy platform.yaml from the maestro folder if provided
+    # Copy platform.yaml from the maestro folder if provided  # legacy: pre-rebrand reference
     if opts["maestro_root"]:
         src = Path(opts["maestro_root"]) / "platform.yaml"
         if src.exists():

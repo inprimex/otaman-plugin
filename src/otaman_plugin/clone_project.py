@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Maestro Clone — set up a project from platform.yaml (clone all repos + init).
+"""Otaman Clone — set up a project from platform.yaml (clone all repos + init).
 
 Sources for platform.yaml:
   1. Local file path
-  2. Git repo URL (clones maestro repo first)
+  2. Git repo URL (clones the otaman repo first; legacy: pre-rebrand `*-maestro`
+     naming convention is still recognized)
   3. SSH remote path (fetches via scp/ssh)
 
 Usage:
@@ -12,11 +13,11 @@ Usage:
     # From local file:
     python clone-project.py /path/to/platform.yaml --target ~/projects/my-project
 
-    # From git repo (maestro folder is a git repo):
-    python clone-project.py git@github.com:org/project-maestro.git --target ~/projects
+    # From git repo (otaman folder is a git repo):
+    python clone-project.py git@github.com:org/project-otaman.git --target ~/projects
 
     # From SSH remote:
-    python clone-project.py user@host:/path/to/maestro/ --target ~/projects
+    python clone-project.py user@host:/path/to/otaman/ --target ~/projects
 
 Exit codes:
     0 — success
@@ -69,7 +70,7 @@ def fetch_config(source: str, target_dir: Path) -> Path | None:
 
     # Case 2: Git URL (ends with .git or contains github/gitlab)
     if source.endswith(".git") or "github.com" in source or "gitlab.com" in source or "bitbucket.org" in source:
-        _progress(f"Cloning maestro repo: {source}")
+        _progress(f"Cloning maestro repo: {source}")  # legacy: pre-rebrand reference
         # Extract repo name for local dir
         repo_name = source.rstrip("/").split("/")[-1].replace(".git", "")
         maestro_dir = target_dir / repo_name
@@ -96,14 +97,14 @@ def fetch_config(source: str, target_dir: Path) -> Path | None:
             _progress(f"ERROR: SSH fetch failed: {err}")
             return None
 
-        # Determine maestro folder name from config
+        # Determine maestro folder name from config  # legacy: pre-rebrand reference
         try:
             cfg = yaml.safe_load(content)
             project_name = cfg.get("project", "project")
         except yaml.YAMLError:
             project_name = "project"
 
-        maestro_dir = target_dir / f"{project_name}-maestro"
+        maestro_dir = target_dir / f"{project_name}-maestro"  # legacy: pre-rebrand reference
         maestro_dir.mkdir(parents=True, exist_ok=True)
         config_path = maestro_dir / "platform.yaml"
         config_path.write_text(content, encoding="utf-8")
@@ -219,11 +220,11 @@ def main() -> int:
     repos = config.get("repos", [])
     _progress(f"Project: {project} ({len(repos)} repos)")
 
-    # Determine maestro dir: if --target given, create maestro folder inside target
+    # Determine maestro dir: if --target given, create maestro folder inside target  # legacy: pre-rebrand reference
     if has_target:
-        maestro_dir = target_dir / f"{project}-maestro"
+        maestro_dir = target_dir / f"{project}-maestro"  # legacy: pre-rebrand reference
         maestro_dir.mkdir(parents=True, exist_ok=True)
-        # Copy config to maestro folder
+        # Copy config to maestro folder  # legacy: pre-rebrand reference
         import shutil
         dest_config = maestro_dir / "platform.yaml"
         if config_path.resolve() != dest_config.resolve():
@@ -238,21 +239,21 @@ def main() -> int:
             gi.write_text(
                 "# Runtime artifacts\n.agents/bus/\n.agents/blocked/\n"
                 ".agents/queue/\n.agents/sessions/\n.agents/current-agent\n"
-                "\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"
+                "\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"  # legacy: pre-rebrand reference
                 ".otaman/secrets.env\n.otaman/bridge-*.endpoint\n.otaman/afk\n",
                 encoding="utf-8",
             )
     else:
         maestro_dir = config_path.parent
 
-    _progress(f"Maestro folder: {maestro_dir}")
+    _progress(f"Maestro folder: {maestro_dir}")  # legacy: pre-rebrand reference
 
     # Step 2: Clone repos
     _progress("\n=== Cloning repositories ===")
     clone_report = clone_repos(config, maestro_dir)
 
     # Step 3: Run init
-    _progress("\n=== Running maestro init ===")
+    _progress("\n=== Running maestro init ===")  # legacy: pre-rebrand reference
     scripts_dir = Path(__file__).resolve().parent
     init_script = scripts_dir / "generate-agent-config.py"
     if init_script.exists():

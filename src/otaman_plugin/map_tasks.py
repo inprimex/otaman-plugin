@@ -186,16 +186,17 @@ def create_bus_messages(
         # Add index suffix to avoid collisions when multiple agents get tasks in same second
         ts = f"{now_ts}{i:02d}" if i > 0 else now_ts
         msg_id = f"{ts}-tasks-{slug}"
-        filename = f"{ts}-maestro-to-{owner}-tasks-{slug}.md"
+        filename = f"{ts}-maestro-to-{owner}-tasks-{slug}.md"  # legacy: bus orchestrator identity is still "maestro" until cross-repo rename
 
         task_lines = []
         for t in pending_tasks:
             repo_tag = f" ({t['repo']})" if t.get("repo") else ""
             task_lines.append(f"- [ ] {t['text']}{repo_tag}")
 
+        orchestrator_id = "maestro"  # legacy: bus orchestrator agent identity until cross-repo rename
         content = f"""---
 id: {msg_id}
-from: maestro
+from: {orchestrator_id}
 to: {owner}
 priority: normal
 type: task-assignment
