@@ -1,8 +1,9 @@
 """Doctor checks contributed by otaman-plugin.
 
 These functions are called by ``otaman doctor`` (otaman-cli, task 3.4 of
-``finish-maestro-to-otaman-migration``). The plugin owns the *check logic*;
-the CLI owns dispatch + rendering.
+the ``finish-maestro-to-otaman-migration`` spec change — migration: spec
+name retained as-shipped). The plugin owns the *check logic*; the CLI
+owns dispatch + rendering.
 
 API contract:
 

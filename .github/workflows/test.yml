@@ -68,6 +68,15 @@ jobs:
         working-directory: workspace/otaman-plugin
         run: uv sync --extra test --no-dev
 
+      - name: Audit maestro references
+        # Linux only. Windows runner skips per core-agent's recipe. macOS
+        # ships bash 3.2 which trips `set -u` on empty ALLOWED_FILES array
+        # expansion inside otaman-core/scripts/audit-maestro-refs.sh
+        # (bash 4+ tolerates it). Tracked in follow-up to core-agent.
+        if: runner.os == 'Linux'
+        working-directory: workspace/otaman-plugin
+        run: bash ../otaman-core/scripts/audit-maestro-refs.sh src/
+
       - name: Run tests
         working-directory: workspace/otaman-plugin
         run: uv run pytest tests/ -v

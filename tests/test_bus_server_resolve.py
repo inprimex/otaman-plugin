@@ -21,19 +21,29 @@ from bus_server import _find_project_root
 
 
 @pytest.fixture
-def sibling_layout(tmp_path):
-    """Sibling layout: maestro folder + repos under one parent.
+def sibling_layout(tmp_path, monkeypatch):
+    """Sibling layout: otaman folder + repos under one parent.
 
         tmp_path/
-            my-maestro/
+            my-otaman-root/
                 platform.yaml
                 .agents/ownership.json
             repo-a/
-                .maestro    (-> ../my-maestro)
+                .maestro    (-> ../my-otaman-root)
             repo-b/
-                .maestro    (-> ../my-maestro)
+                .maestro    (-> ../my-otaman-root)
+
+    The ``HOME=tmp_path`` patch is what makes otaman-core's
+    ``_safe_marker_path`` (added in `142abf3` — rejects markers that
+    resolve outside ``$HOME``) accept these fixture-built layouts:
+    pytest's ``tmp_path`` lives under ``/tmp/...`` which is outside
+    ``$HOME`` on most CI runners, and the resolver would otherwise
+    return ``None`` for every test case here. legacy: filename
+    ``.maestro`` retained per workspace-resolution spec fallback.
     """
-    maestro = tmp_path / "my-maestro"
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    maestro = tmp_path / "my-maestro"  # legacy: fixture folder name retained
     maestro.mkdir()
     (maestro / "platform.yaml").write_text("project: test\n")
     (maestro / ".agents").mkdir()
@@ -41,11 +51,11 @@ def sibling_layout(tmp_path):
 
     repo_a = tmp_path / "repo-a"
     repo_a.mkdir()
-    (repo_a / ".maestro").write_text("../my-maestro\n")
+    (repo_a / ".maestro").write_text("../my-maestro\n")  # legacy: marker filename + relative path target
 
     repo_b = tmp_path / "repo-b"
     repo_b.mkdir()
-    (repo_b / ".maestro").write_text("../my-maestro\n")
+    (repo_b / ".maestro").write_text("../my-maestro\n")  # legacy: marker filename + relative path target
 
     return {"maestro": maestro.resolve(), "repo_a": repo_a, "repo_b": repo_b}
 
