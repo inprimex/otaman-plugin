@@ -1,0 +1,19 @@
+name: software-development-default
+version: "1.0.0"
+description: >
+  General software delivery projects. Covers multi-repo orchestration, architecture
+  and security review, spec management, presale estimation, and strategic advisory.
+  BA-layer artifacts (outcome registry, flow registry, risk register) are not
+  enabled by default — add them via platform.yaml enable: if needed.
+
+skills:
+  - multi-repo-orchestration
+  - spec-management
+  - knowledge-capture
+  - cto-advisor
+  - project-estimator
+  - otaman-cto-reviewer
+  - otaman-security-observer
+  - otaman-spec-validator
+  - otaman-solution-architect
+  - otaman-debug-model-agent

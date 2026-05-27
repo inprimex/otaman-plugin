@@ -1,0 +1,12 @@
+name: minimal-meta-only
+version: "1.0.0"
+description: >
+  Bare minimum otaman orchestration: multi-repo coordination, spec workflow, and
+  knowledge capture only. No advisory, review observers, estimation, or BA-layer
+  skills. Use for early-stage projects, CI sessions, or tight token budgets.
+  Add specific skills via platform.yaml enable: as the project matures.
+
+skills:
+  - multi-repo-orchestration
+  - spec-management
+  - knowledge-capture

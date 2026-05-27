@@ -1,0 +1,17 @@
+name: healthcare-default
+version: "1.0.0"
+description: >
+  Regulated healthcare platforms (patient apps, clinical tools, EHR integrations,
+  telehealth). Extends software-development-default with full BA-layer support:
+  outcome registry (JTBD), user flow and business process authoring, risk register
+  review. Required for HIPAA audit readiness and clinical workflow governance.
+
+extends: software-development-default
+
+skills:
+  # BA-layer additions — required for regulated healthcare
+  - cpo-skill                       # JTBD outcome management for clinical features
+  - ba-skill                        # user flow + business process authoring (clinical workflows)
+  - risk-reviewer                   # risk register review (HIPAA, PHI exposure, audit failure)
+  - otaman-cto-reviewer-extended    # solution proposals + cost-rejection for CPO estimate cycles
+                                    # NOTE: only valid when cpo-skill is also active (see pairing rule)
