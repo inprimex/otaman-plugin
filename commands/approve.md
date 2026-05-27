@@ -85,7 +85,15 @@ When the human approves a proposal:
    - Reference to the original proposal (include the msg-stem so agents can match it to their blocked tasks)
    - Any modifications the human requested
    - Note: the proposing agent's blocked task (in `.agents/blocked/`) will be resolved when they run `/otaman:check` and see both the approval AND the subsequent `spec-change` notification
-8. **Map tasks** (if OpenSpec generated tasks.md): Run the task mapping script:
+8. **Assign spec authoring to spec-agent**: Write a task-assignment message to spec-agent:
+   - `type: task-assignment`
+   - `from: human`
+   - `to: spec-agent`
+   - `priority: high`
+   - Subject: `Author artifacts for change: {title}`
+   - Body: Include the change name, the specs path (`{specs.path}/openspec/changes/{feature-dir}`), and a pointer to the original proposal message (`{msg-stem}`) so spec-agent can read the full context. Spec-agent should author all artifacts: `proposal.md`, `design.md`, `tasks.md`, capability spec files, JSON schemas, and any ADRs described in the proposal.
+   - Note: task-mapping (the next step) runs AFTER spec-agent commits `tasks.md`. This task-assignment to spec-agent is what triggers that authoring.
+9. **Map tasks** (if OpenSpec generated tasks.md): Run the task mapping script:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/map-tasks.py" "$PROJECT_ROOT/{specs.path}/openspec/changes/{feature-dir}"
    ```
@@ -120,3 +128,4 @@ The human can approve but request changes:
 - All approvals and rejections are tracked via ack files and bus messages for the audit trail
 - If the `openspec` CLI fails, don't silently skip — tell the user and suggest manual alternatives
 - The spec-change-hook in the specs repo will automatically notify all agents when the spec is committed
+- After approval, spec-agent always authors the artifacts (`proposal.md`, `design.md`, `tasks.md`, spec files, ADRs). The proposing agent is NEVER responsible for spec authoring — only for implementation tasks in their own repo, which arrive via `task-assignment` messages after spec-agent maps `tasks.md`.

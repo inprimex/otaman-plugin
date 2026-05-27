@@ -109,9 +109,9 @@ Tell the agent clearly:
 > 2. If all your tasks are blocked, inform the human and wait
 > 3. Periodically run `/otaman:check` to look for:
 >    - `spec-change-approved` — your proposal was approved
->    - `spec-change` — specs were actually committed in the specs repo
->    - `task-assignment` — specific tasks from the new spec mapped to you
-> 4. Once you see BOTH `spec-change-approved` AND `spec-change`, read the updated spec files and resume the blocked task
+>    - `spec-change` — specs were actually committed in the specs repo (spec-agent authored and committed the artifacts)
+>    - `task-assignment` — your specific implementation tasks from the mapped tasks.md
+> 4. Once you see a `task-assignment` addressed to you from the new change, read the spec files it references and implement the assigned tasks **in your own repo**. You do NOT author spec artifacts — spec-agent does that. Your job resumes as implementation work.
 > 5. If you see `spec-change-rejected`, read the rejection reason and adapt
 >
 > Proposal message: `{msg-stem}`
@@ -126,3 +126,4 @@ Tell the agent clearly:
 - In both openspec and fallback mode, the flow is the same: propose → block → wait → resume
 - If the agent is the spec-agent itself (working in the specs repo), it still must go through the approval flow
 - Messages go to `bus/active/`, NOT directly to `bus/`
+- **spec-agent authors all spec artifacts** after approval — `proposal.md`, `design.md`, `tasks.md`, spec files, ADRs. The proposing agent NEVER writes these. The proposing agent only implements code in their own repo, driven by `task-assignment` messages that arrive after spec-agent maps `tasks.md`.
