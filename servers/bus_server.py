@@ -27,6 +27,13 @@ mcp = FastMCP(
     ),
 )
 
+# Message types that are allowed to use `to: all` (broadcast whitelist).
+# Any other type using `to: all` triggers a validation warning at send time.
+# Per targeted-bus-messaging spec (D5).
+_BROADCAST_WHITELIST: frozenset[str] = frozenset(
+    {"contract-change", "emergency-halt", "agent-registry-change"}
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -289,18 +296,31 @@ status: pending
 {body}
 """
 
+    # Broadcast whitelist validation (per targeted-bus-messaging spec D5).
+    # Warn — but do not block — when a non-whitelisted type uses `to: all`.
+    warning: str | None = None
+    if to == "all" and msg_type not in _BROADCAST_WHITELIST:
+        warning = (
+            f"WARNING: '{msg_type}' should not broadcast to all; "
+            "use targeted routing. "
+            f"Only {sorted(_BROADCAST_WHITELIST)} may use to: all."
+        )
+
     bus = _bus_dir(root)
     bus.mkdir(parents=True, exist_ok=True)
     msg_path = bus / filename
     msg_path.write_text(content, encoding="utf-8")
 
-    return {
+    result: dict[str, Any] = {
         "sent": True,
         "filename": filename,
         "stem": msg_path.stem,
         "from": agent,
         "to": to,
     }
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 @mcp.tool

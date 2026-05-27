@@ -81,10 +81,10 @@ When the human approves a proposal:
 7. **Broadcast approval**: Write a new bus message to `bus/active/` with:
    - `type: spec-change-approved`
    - `from: human`
-   - `to: all`
+   - `to: spec-agent` — at approval time `tasks.md` does not yet exist, so the targeted-bus-messaging fallback applies: spec-agent is the only recipient. Once spec-agent commits `tasks.md`, the spec-change-hook will derive targeted recipients from `@otaman-<repo>` annotations for the subsequent `spec-change` notification.
    - Reference to the original proposal (include the msg-stem so agents can match it to their blocked tasks)
    - Any modifications the human requested
-   - Note: the proposing agent's blocked task (in `.agents/blocked/`) will be resolved when they run `/otaman:check` and see both the approval AND the subsequent `spec-change` notification
+   - Note: the proposing agent's blocked task (in `.agents/blocked/`) will be resolved when they run `/otaman:check` and see the approval ack on their original `spec-change-request`
 8. **Assign spec authoring to spec-agent**: Write a task-assignment message to spec-agent:
    - `type: task-assignment`
    - `from: human`
@@ -127,5 +127,5 @@ The human can approve but request changes:
 - The approval creates a spec in the OpenSpec repo (or fallback proposals dir) — this is the point of no return for spec creation
 - All approvals and rejections are tracked via ack files and bus messages for the audit trail
 - If the `openspec` CLI fails, don't silently skip — tell the user and suggest manual alternatives
-- The spec-change-hook in the specs repo will automatically notify all agents when the spec is committed
+- The spec-change-hook in the specs repo will automatically notify involved agents (derived from `tasks.md` `@otaman-<repo>` annotations) when the spec is committed — not `to: all`
 - After approval, spec-agent always authors the artifacts (`proposal.md`, `design.md`, `tasks.md`, spec files, ADRs). The proposing agent is NEVER responsible for spec authoring — only for implementation tasks in their own repo, which arrive via `task-assignment` messages after spec-agent maps `tasks.md`.

@@ -83,11 +83,77 @@ COMMIT_AUTHOR="$(git log -1 --format='%an')"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
 MSG_TIMESTAMP="$(date -u +%Y%m%dT%H%M%S 2>/dev/null || date +%Y%m%dT%H%M%S)"
 
+# Derive spec-change recipients from tasks.md @otaman-<repo> annotations.
+# Per targeted-bus-messaging spec (D3): route to involved agents only.
+# Fallbacks: no tasks.md → spec-agent; no annotations → spec-agent, human.
+PLATFORM_YAML="$PROJECT_ROOT/platform.yaml"
+_SPEC_CHANGE_DIRS=""
+while IFS= read -r _f; do
+    if [[ "$_f" =~ ^openspec/changes/([^/]+)/ ]]; then
+        _cn="${BASH_REMATCH[1]}"
+        if [[ -n "$_cn" ]] && ! echo "$_SPEC_CHANGE_DIRS" | grep -qxF "$_cn" 2>/dev/null; then
+            _SPEC_CHANGE_DIRS="${_SPEC_CHANGE_DIRS}${_cn}"$'\n'
+        fi
+    fi
+done <<< "$CHANGED_FILES"
+
+TO_FIELD="spec-agent, human"  # default: no openspec/changes/ files in this commit
+
+if [[ -n "$_SPEC_CHANGE_DIRS" ]]; then
+    _agents_found=""
+    _any_tasks_md="false"
+    _any_annotations="false"
+
+    while IFS= read -r _cn; do
+        [[ -z "$_cn" ]] && continue
+        _tasks_file="$PWD/openspec/changes/$_cn/tasks.md"
+        if [[ -f "$_tasks_file" ]]; then
+            _any_tasks_md="true"
+            _anns="$(grep -oiE '@otaman-[a-z0-9-]+' "$_tasks_file" 2>/dev/null | sort -u || true)"
+            if [[ -n "$_anns" ]]; then
+                _any_annotations="true"
+                while IFS= read -r _ann; do
+                    [[ -z "$_ann" ]] && continue
+                    _repo="${_ann#@}"  # strip @, giving "otaman-<repo>"
+                    _owner=""
+                    if [[ -f "$PLATFORM_YAML" ]]; then
+                        _owner="$(awk -v r="$_repo" '
+                            $0 ~ ("name: +" r "$") { found=1; next }
+                            found && /owner:/ { sub(/.*owner:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit }
+                            found && /^[^[:space:]]/ { exit }
+                        ' "$PLATFORM_YAML" 2>/dev/null | head -1 || true)"
+                    fi
+                    if [[ -n "$_owner" ]] && ! echo "$_agents_found" | grep -qxF "$_owner" 2>/dev/null; then
+                        _agents_found="${_agents_found}${_owner}"$'\n'
+                    fi
+                done <<< "$_anns"
+            fi
+        fi
+    done <<< "$_SPEC_CHANGE_DIRS"
+
+    if [[ "$_any_tasks_md" == "false" ]]; then
+        TO_FIELD="spec-agent"
+    elif [[ "$_any_annotations" == "false" ]] || [[ -z "$_agents_found" ]]; then
+        TO_FIELD="spec-agent, human"
+    else
+        _to=""
+        while IFS= read -r _agent; do
+            [[ -z "$_agent" ]] && continue
+            if [[ -z "$_to" ]]; then
+                _to="$_agent"
+            else
+                _to="$_to, $_agent"
+            fi
+        done <<< "$_agents_found"
+        TO_FIELD="$_to"
+    fi
+fi
+
 # Create message with timestamp-based ID
 mkdir -p "$BUS_ACTIVE/acks"
 
 MSG_ID="${MSG_TIMESTAMP}-${COMMIT_HASH}"
-MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-specs-to-all-spec-change.md"
+MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-specs-spec-change.md"
 
 # Build affected dirs list
 AFFECTED_LIST=""
@@ -105,7 +171,7 @@ cat > "$MSG_FILE" << EOF
 ---
 id: ${MSG_ID}
 from: ${REPO_NAME}
-to: all
+to: ${TO_FIELD}
 priority: high
 type: spec-change
 timestamp: ${TIMESTAMP}
@@ -123,7 +189,8 @@ ${AFFECTED_LIST}
 **Changed files**:
 $(echo "$CHANGED_FILES" | sed 's/^/- /')
 
-All agents should review specs relevant to their repos and adapt implementation if needed.
+Recipients are derived from \`tasks.md\` \`@otaman-<repo>\` annotations in affected change directories.
+Fallback: \`spec-agent\` when no tasks.md exists; \`spec-agent, human\` when no annotations.
 Use \`/otaman:check\` to see this notification.
 EOF
 
