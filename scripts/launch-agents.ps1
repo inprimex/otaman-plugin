@@ -1141,15 +1141,21 @@ function Wrap-WithTmux {
     #                            Claude output; 50k is generous, ~few MB RAM.
     #   default-terminal      -- "tmux-256color" so Claude's TUI renders the
     #                            full palette (default "screen" clamps to 8).
-    # `tmux start-server` first so the subsequent `tmux set -gq` calls have a
-    # server to talk to. Without it, the launcher fails after a host reboot
-    # with "error connecting to /tmp/tmux-1000/default (No such file or
-    # directory)" because the chain's first `tmux set` runs before the
-    # `tmux new -A -s` below would create the server. `start-server` is a
-    # no-op if a server is already running, so this is safe on every path.
-    $tmuxSetup = "tmux start-server && tmux set -gq mouse on && tmux set -gq history-limit 50000 && tmux set -gq default-terminal 'tmux-256color' &&"
+    # Ensure server + session exist before setting server-wide options.
+    # `tmux start-server` alone doesn't work because exit-empty=on (default)
+    # means the server exits immediately when it has no sessions, so the
+    # next `tmux set` then fails with "no server running on /tmp/...".
+    #
+    # Correct pattern (mirrors scripts/launch-agents.sh): has-session check
+    # (exits non-zero if no server) OR new-session -d to create a detached
+    # session running the inner cmd. The session keeps the server alive,
+    # so `tmux set` succeeds. Then explicit `exec tmux attach` to attach
+    # interactively. Replaces the original `tmux new -A -s … bash -c …`
+    # auto-attach form with detached-create + explicit-attach so server
+    # options can be set in between.
+    $tmuxOptions = "tmux set -gq mouse on && tmux set -gq history-limit 50000 && tmux set -gq default-terminal 'tmux-256color'"
 
-    return "$tmuxSetup tmux new -A -s '$SessionName' bash -c 'echo $b64 | base64 -d | bash -l'"
+    return "( tmux has-session -t '$SessionName' 2>/dev/null || tmux new-session -d -s '$SessionName' bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t '$SessionName'"
 }
 
 function Build-SshCommand {
