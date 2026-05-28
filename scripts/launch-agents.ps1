@@ -1786,7 +1786,14 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
         $allCmds = @("Set-Location '$($fullPath.Path)'") + $repo.launch_commands
         if ($envPrefix) { $allCmds = @($envPrefix) + $allCmds }
         $chainedCmd = $allCmds -join '; '
-        $wtTabs += "--title `"$title`" --suppressApplicationTitle --tabColor `"$color`" powershell.exe -NoExit -Command `"$chainedCmd`""
+        # Encode the chain as base64 UTF-16LE (PowerShell -EncodedCommand format)
+        # so that `;` and other special characters survive wt.exe's command-line
+        # parser. wt.exe treats unescaped `;` as a tab separator regardless of
+        # inner shell quoting; base64 produces an opaque token containing only
+        # [A-Za-z0-9+/=], so wt.exe sees one token and passes it through.
+        $cmdBytes = [System.Text.Encoding]::Unicode.GetBytes($chainedCmd)
+        $cmdEncoded = [Convert]::ToBase64String($cmdBytes)
+        $wtTabs += "--title `"$title`" --suppressApplicationTitle --tabColor `"$color`" powershell.exe -NoExit -EncodedCommand $cmdEncoded"
     }
     elseif ($shell -eq 'ssh') {
         $cfgDirSsh = if ($activeAccount['config_dir']) { Expand-ConfigDir -ConfigDir $activeAccount['config_dir'] -Shell 'ssh' } else { "" }
