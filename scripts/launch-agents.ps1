@@ -446,7 +446,7 @@ function Build-EnvPrefix {
             $parts = @()
             foreach ($k in $pairs.Keys) {
                 $val = $pairs[$k] -replace "'", "''"
-                $parts += "`$env:$k = '$val'"
+                $parts += "Set-Item Env:$k -Value '$val'"
             }
             return ($parts -join '; ')
         }
@@ -454,7 +454,7 @@ function Build-EnvPrefix {
             $parts = @()
             foreach ($k in $pairs.Keys) {
                 $val = $pairs[$k] -replace "'", "''"
-                $parts += "`$env:$k = '$val'"
+                $parts += "Set-Item Env:$k -Value '$val'"
             }
             return ($parts -join '; ')
         }
