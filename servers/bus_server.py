@@ -60,12 +60,12 @@ def _normalize_path(p: str) -> Path:
 
 
 def _find_project_root(start: str | None = None) -> Path | None:
-    """Find maestro root via .maestro file, env var, or walk-up fallback.
+    """Find project root via .otaman/.maestro file  # legacy: .maestro marker supported, env var, or walk-up fallback.
 
     Robust to bad/missing cwd from the agent: if ``start`` is empty, whitespace,
     or doesn't normalize to an existing path on this host (e.g. a Windows path
     fed to a Linux server), fall back to the server's own cwd. Each managed
-    repo carries a .maestro marker, so the server cwd resolves correctly even
+    repo carries a .otaman/.maestro marker  # legacy: .maestro marker supported, so the server cwd resolves correctly even
     when the agent supplies a useless value.
     """
     import sys as _sys
@@ -149,7 +149,7 @@ def otaman_check(
     cwd: str,
     status_filter: str = "pending",
 ) -> dict[str, Any]:
-    """Check the maestro message bus for messages addressed to the current agent.
+    """Check the otaman message bus for messages addressed to the current agent.
 
     Args:
         cwd: Current working directory of the calling agent (used to find project root)
@@ -160,7 +160,7 @@ def otaman_check(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found (no .agents/ownership.json in parent directories)"}
+        return {"error": "No otaman project found (no .agents/ownership.json in parent directories)"}
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -258,7 +258,7 @@ def otaman_send(
     msg_type: str = "info",
     priority: str = "normal",
 ) -> dict[str, Any]:
-    """Send a message to another agent or all agents via the maestro bus.
+    """Send a message to another agent or all agents via the otaman bus.
 
     Args:
         cwd: Current working directory of the calling agent
@@ -270,7 +270,7 @@ def otaman_send(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -338,7 +338,7 @@ def otaman_ack(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -402,14 +402,14 @@ def otaman_ack(
 
 @mcp.tool
 def otaman_status(cwd: str) -> dict[str, Any]:
-    """Get a summary of the maestro project: agents, message counts, blocked tasks.
+    """Get a summary of the otaman project: agents, message counts, blocked tasks.
 
     Args:
         cwd: Current working directory (used to find project root)
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     result: dict[str, Any] = {"project_root": str(root)}
 
@@ -473,7 +473,7 @@ def otaman_blocked(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -540,7 +540,7 @@ def otaman_read_message(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     bus = _bus_dir(root)
     msg_file = bus / f"{message_stem}.md"
@@ -592,7 +592,7 @@ def otaman_complete(
 
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -601,11 +601,11 @@ def otaman_complete(
     if not tasks and not mark_all:
         return {"error": "Specify tasks (e.g., '2.1, 3.1-3.5') or set mark_all=True"}
 
-    # Call actualize-tasks.py
-    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
-    script = scripts_dir / "actualize-tasks.py"
-
-    cmd = [sys.executable, str(script), "--change", change_name, "--agent", agent, "--project-root", str(root)]
+    # Call actualize_tasks module (lives in src/otaman_plugin/, not scripts/)
+    cmd = [
+        sys.executable, "-m", "otaman_plugin.actualize_tasks",
+        "--change", change_name, "--agent", agent, "--project-root", str(root),
+    ]
     if mark_all:
         cmd.append("--all")
     elif tasks:
@@ -664,7 +664,7 @@ def otaman_propose(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -741,7 +741,7 @@ def otaman_set_agent(cwd: str, agent_name: str) -> dict[str, Any]:
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agent_file = root / ".agents" / "current-agent"
     agent_file.parent.mkdir(parents=True, exist_ok=True)
@@ -759,7 +759,7 @@ def otaman_list_agents(cwd: str) -> dict[str, Any]:
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agents_file = root / ".agents" / "agents.yaml"
     if not agents_file.exists():
@@ -823,7 +823,7 @@ def otaman_cleanup(cwd: str, dry_run: bool = False) -> dict[str, Any]:
 
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
     script = scripts_dir / "cleanup-bus.py"
@@ -855,7 +855,7 @@ def otaman_read_spec(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     # Find specs path from platform.yaml
     config_file = root / "platform.yaml"
@@ -922,7 +922,7 @@ def otaman_queue(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No maestro project found"}
+        return {"error": "No otaman project found"}
 
     agent = _get_agent_identity(root, cwd)
     if not agent:

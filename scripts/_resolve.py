@@ -1,8 +1,8 @@
-"""Shared maestro root resolution for all Python scripts.
+"""Shared otaman root resolution for all Python scripts.
 
 Resolution chain (first match wins):
-1. .maestro marker file in start dir or ancestors (contains relative path to maestro folder)
-2. MAESTRO_ROOT environment variable
+1. .otaman/.maestro marker file in start dir or ancestors  # legacy: .maestro marker supported
+2. OTAMAN_ROOT / MAESTRO_ROOT environment variable  # legacy: MAESTRO_ROOT env var supported
 3. Walk-up fallback: look for platform.yaml or .agents/ (legacy/monorepo compat)
 
 Also exposes expand_config_dir() for per-shell tilde / env-var expansion of
@@ -22,43 +22,45 @@ _DEFERRED_SHELLS = frozenset({"wsl", "ssh"})
 # Shells that speak native Windows paths.
 _WINDOWS_SHELLS = frozenset({"powershell", "pwsh", "cmd"})
 
-# Known fields in .maestro marker files. Unknown `key:` lines fall through to
+# Known fields in .otaman/.maestro marker files. Unknown `key:` lines fall through to  # legacy: .maestro supported
 # bare-path handling, which preserves support for Windows absolute paths
-# (e.g. ``C:/work/my-maestro``) that happen to contain a colon.
-_KNOWN_MARKER_FIELDS = frozenset({"maestro_root", "expected_account"})
+# (e.g. ``C:/work/my-otaman``) that happen to contain a colon.
+_KNOWN_MARKER_FIELDS = frozenset({"maestro_root", "expected_account"})  # legacy: maestro_root field name
 
 
 def find_maestro_root(start: Path | None = None) -> Path | None:
-    """Find the maestro root directory.
+    """Find the otaman root directory.  # legacy: function name kept for callers
 
     Args:
         start: Directory to start searching from. Defaults to cwd.
 
     Returns:
-        Resolved absolute path to the maestro root, or None if not found.
+        Resolved absolute path to the otaman root, or None if not found.
     """
     origin = (start or Path.cwd()).resolve()
 
-    # 1. .maestro marker file — walk up looking for it
+    # 1. .otaman/.maestro marker file — walk up looking for it  # legacy: .maestro marker supported
     current = origin
     while current != current.parent:
-        marker = current / ".maestro"
+        marker = current / ".otaman"
+        if not marker.is_file():
+            marker = current / ".maestro"  # legacy: .maestro marker path
         if marker.is_file():
-            rel = parse_marker_fields(marker).get("maestro_root")
+            rel = parse_marker_fields(marker).get("maestro_root")  # legacy: maestro_root field name
             if rel:
                 candidate = (current / rel).resolve()
                 if (candidate / "platform.yaml").exists() or (candidate / ".agents").is_dir():
                     return candidate
         current = current.parent
 
-    # 2. MAESTRO_ROOT environment variable
-    env_root = os.environ.get("MAESTRO_ROOT", "").strip()
+    # 2. OTAMAN_ROOT / MAESTRO_ROOT environment variable  # legacy: MAESTRO_ROOT env var
+    env_root = os.environ.get("OTAMAN_ROOT", os.environ.get("MAESTRO_ROOT", "")).strip()  # legacy: MAESTRO_ROOT env var
     if env_root:
         p = Path(env_root).resolve()
         if (p / "platform.yaml").exists() or (p / ".agents").is_dir():
             return p
 
-    # 3. Walk-up fallback (legacy layout: maestro artifacts in a parent directory)
+    # 3. Walk-up fallback (legacy layout: otaman artifacts in a parent directory)
     current = origin
     while current != current.parent:
         if (current / "platform.yaml").exists() or (current / ".agents").is_dir():
@@ -69,19 +71,19 @@ def find_maestro_root(start: Path | None = None) -> Path | None:
 
 
 def parse_marker_fields(marker_path: Path) -> dict[str, str]:
-    """Parse a ``.maestro`` marker file into a dict of fields.
+    """Parse a ``.otaman``/``.maestro`` marker file into a dict of fields.  # legacy: .maestro supported
 
     Accepts two formats, chosen line-by-line:
 
     - **Legacy** — a single bare line holding the relative path to the
-      maestro folder (e.g. ``../my-maestro``). Becomes ``maestro_root``.
+      otaman folder (e.g. ``../my-otaman``). Becomes ``maestro_root``.  # legacy: maestro_root field name
     - **Extended** — ``key: value`` lines for known fields, plus an
-      optional bare path line. Current known fields: ``maestro_root``,
+      optional bare path line. Current known fields: ``maestro_root``,  # legacy: maestro_root field name
       ``expected_account``.
 
     Unknown ``key: value`` lines are ignored so that Windows absolute
     paths containing a colon (``C:/foo``) continue to parse as bare
-    ``maestro_root`` values. Comment (``#``) and blank lines are skipped.
+    ``maestro_root`` values.  # legacy: maestro_root field name
     """
     fields: dict[str, str] = {}
     try:
@@ -99,20 +101,22 @@ def parse_marker_fields(marker_path: Path) -> dict[str, str]:
             if key in _KNOWN_MARKER_FIELDS:
                 fields.setdefault(key, value)
                 continue
-        # Bare line → treat as maestro_root if not set
-        fields.setdefault("maestro_root", line)
+        # Bare line → treat as maestro_root if not set  # legacy: maestro_root field name
+        fields.setdefault("maestro_root", line)  # legacy: maestro_root field name
     return fields
 
 
 def find_marker(start: Path | None = None) -> Path | None:
-    """Walk up from ``start`` (default: cwd) looking for a ``.maestro`` marker.
+    """Walk up from ``start`` (default: cwd) looking for a ``.otaman``/``.maestro`` marker.  # legacy: .maestro supported
 
     Returns the marker path, or None if no marker is found on the way up.
     """
     origin = (start or Path.cwd()).resolve()
     current = origin
     while current != current.parent:
-        marker = current / ".maestro"
+        marker = current / ".otaman"
+        if not marker.is_file():
+            marker = current / ".maestro"  # legacy: .maestro marker path
         if marker.is_file():
             return marker
         current = current.parent
@@ -120,7 +124,7 @@ def find_marker(start: Path | None = None) -> Path | None:
 
 
 def read_expected_account(start: Path | None = None) -> str | None:
-    """Return the ``expected_account`` field from the nearest ``.maestro`` marker.
+    """Return the ``expected_account`` field from the nearest ``.otaman``/``.maestro`` marker.  # legacy: .maestro supported
 
     Returns None if no marker is found or the field is absent/empty.
     """

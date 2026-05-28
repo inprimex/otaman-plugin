@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared logging utility for otaman/maestro bash hooks.
+# Shared logging utility for otaman bash hooks.
 #
 # Currently exports: rotate_log
 #

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Shared maestro root resolution for all bash hooks.
+# Shared otaman root resolution for all bash hooks.
 #
 # Resolution chain (first match wins):
-# 1. .maestro marker file in CWD or ancestors
-# 2. MAESTRO_ROOT environment variable
+# 1. .otaman/.maestro marker file in CWD or ancestors  # legacy: .maestro marker supported
+# 2. OTAMAN_ROOT / MAESTRO_ROOT environment variable  # legacy: MAESTRO_ROOT supported
 # 3. Walk-up fallback: look for .agents/ownership.json (legacy compat)
 #
 # Usage: source this file, then call find_maestro_root
@@ -21,7 +21,7 @@ find_maestro_root() {
     fi
 
     # If cwd is inside a linked git worktree, the worktree directory likely
-    # has no .otaman/.maestro marker (worktrees are created after init).
+    # has no .otaman/.maestro marker (worktrees are created after init).  # legacy: .maestro supported
     # Try again from the main repo's working tree, where the marker lives.
     local worktree_main
     worktree_main="$(resolve_worktree_main "$dir")"
@@ -36,7 +36,7 @@ find_maestro_root() {
 }
 
 # Internal: run the three-step resolution chain (marker → env → walk-up)
-# starting from a given directory. Echoes the resolved maestro root on
+# starting from a given directory. Echoes the resolved otaman root on
 # stdout and returns 0 on success; returns 1 with no output on failure.
 #
 # The `prev != check` fixed-point guard on each walk loop is the Windows-
@@ -46,15 +46,15 @@ find_maestro_root() {
 _find_maestro_root_from() {
     local dir="$1"
 
-    # 1. .otaman (preferred) or .maestro (legacy) marker file — walk up
+    # 1. .otaman (preferred) or .maestro marker file — walk up  # legacy: .maestro supported
     local check="$dir"
     local prev=""
     while [[ "$check" != "/" && "$check" != "." && "$check" != "$prev" ]]; do
         local marker=""
         if [[ -f "$check/.otaman" ]]; then
             marker="$check/.otaman"
-        elif [[ -f "$check/.maestro" ]]; then
-            marker="$check/.maestro"
+        elif [[ -f "$check/.maestro" ]]; then  # legacy: .maestro marker supported
+            marker="$check/.maestro"  # legacy: .maestro marker path
         fi
         if [[ -n "$marker" ]]; then
             local rel
@@ -157,15 +157,15 @@ resolve_worktree_main() {
     return 0
 }
 
-# Parse a .maestro marker file and echo the value of a known field.
+# Parse a .otaman/.maestro marker file and echo the value of a known field.  # legacy: .maestro supported
 #
 # Usage: _parse_marker_field <marker_path> <field_name>
-# Known fields: maestro_root, expected_account.
+# Known fields: maestro_root (legacy alias for otaman_root), expected_account.  # legacy: maestro_root field
 # Returns 0 with value on stdout if found, 1 otherwise.
 #
-# Legacy single-line markers (bare path) resolve to maestro_root for
-# backwards compatibility. Unknown `key:` lines are ignored so Windows
-# absolute paths (C:/foo) continue to parse as bare maestro_root values.
+# Legacy single-line markers (bare path) resolve to maestro_root  # legacy: maestro_root field name
+# for backward-compat. Unknown `key:` lines are ignored so Windows
+# absolute paths (C:/foo) continue to parse as bare otaman_root values.
 _parse_marker_field() {
     local marker="$1"
     local field="$2"
@@ -188,7 +188,7 @@ _parse_marker_field() {
             val="${val%"${val##*[![:space:]]}"}"
 
             case "$key" in
-                maestro_root|expected_account)
+                maestro_root|expected_account)  # legacy: maestro_root field name kept for backward-compat
                     if [[ "$key" == "$field" ]]; then
                         echo "$val"
                         return 0
@@ -198,18 +198,18 @@ _parse_marker_field() {
             esac
         fi
 
-        # Bare line — candidate for maestro_root (keep first).
+        # Bare line — candidate for otaman_root / maestro_root (keep first).  # legacy: maestro_root field name
         [[ -z "$bare_path" ]] && bare_path="$line"
     done < "$marker"
 
-    if [[ "$field" == "maestro_root" && -n "$bare_path" ]]; then
+    if [[ "$field" == "maestro_root" && -n "$bare_path" ]]; then  # legacy: maestro_root field name
         echo "$bare_path"
         return 0
     fi
     return 1
 }
 
-# Walk up from a directory looking for a .maestro marker file.
+# Walk up from a directory looking for a .otaman or .maestro marker file.  # legacy: .maestro supported
 #
 # Usage: find_marker [start_dir]
 # Echoes marker path if found, returns 1 otherwise.
@@ -220,8 +220,8 @@ find_marker() {
         if [[ -f "$check/.otaman" ]]; then
             echo "$check/.otaman"
             return 0
-        elif [[ -f "$check/.maestro" ]]; then
-            echo "$check/.maestro"
+        elif [[ -f "$check/.maestro" ]]; then  # legacy: .maestro marker supported
+            echo "$check/.maestro"  # legacy: .maestro marker path
             return 0
         fi
         check="$(dirname "$check")"
@@ -229,7 +229,7 @@ find_marker() {
     return 1
 }
 
-# Read the expected_account field from the nearest .maestro marker.
+# Read the expected_account field from the nearest .otaman/.maestro marker.  # legacy: .maestro supported
 #
 # Usage: read_expected_account [start_dir]
 # Echoes account name if found and non-empty, returns 1 otherwise.

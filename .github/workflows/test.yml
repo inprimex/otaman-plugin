@@ -75,7 +75,10 @@ jobs:
         # (bash 4+ tolerates it). Tracked in follow-up to core-agent.
         if: runner.os == 'Linux'
         working-directory: workspace/otaman-plugin
-        run: bash ../otaman-core/scripts/audit-maestro-refs.sh src/
+        run: |
+          bash ../otaman-core/scripts/audit-maestro-refs.sh src/
+          bash ../otaman-core/scripts/audit-maestro-refs.sh scripts/
+          bash ../otaman-core/scripts/audit-maestro-refs.sh servers/
 
       - name: Run tests
         working-directory: workspace/otaman-plugin

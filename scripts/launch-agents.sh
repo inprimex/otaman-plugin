@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Launch Claude Code agents for an otaman project (bash parity with
 # launch-agents.ps1). Set CLAUDE_CONFIG_DIR from the active connection's
-# account, load secrets.env (preferred: .otaman/secrets.env; legacy:
-# .maestro/secrets.env), then exec claude or spawn tmux.
+# account, load secrets.env (.otaman/secrets.env preferred;
+# legacy: .maestro/secrets.env fallback honored), then exec claude or spawn tmux.
 #
 # USAGE
 #   launch-agents.sh [options] [-- <extra args to claude>]
@@ -205,7 +205,7 @@ eval "$EXPORTS"
 # upgrade to walk later).
 #
 # Calls the `otaman` CLI on PATH; the polyrepo split moved the launcher-
-# register subcommand out of the plugin tree, so the legacy `cli/maestro.py`
+# register subcommand out of the plugin tree, so the legacy `cli/maestro.py`  # legacy: cli/maestro.py path
 # reference here is dead. If `otaman` isn't on PATH, the redirect + `|| true`
 # keep the launch silent.
 if [[ "$DRY_RUN" -ne 1 && -f "$MAESTRO_ROOT/launch-settings.yaml" ]]; then

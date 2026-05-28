@@ -3,7 +3,7 @@
 Walks a priority chain over platform.yaml's ``models:`` block to pick
 the right tier for a given (repo, agent) pair. Used by the launcher to
 inject ``ANTHROPIC_MODEL`` / ``CLAUDE_CODE_EFFORT_LEVEL`` into the
-spawned Claude session, and by ``maestro models show`` to explain
+spawned Claude session, and by ``otaman models show`` to explain
 which rule applied.
 
 Resolution chain (first non-empty wins, model and effort resolved
@@ -60,7 +60,7 @@ def _validate(tier: str, valid: frozenset[str], field: str) -> str:
 
     Invalid values are silently dropped rather than raising, because this
     function runs at launch time and the user should not be blocked by a
-    typo in platform.yaml. ``maestro models show`` warns about invalid
+    typo in platform.yaml. ``otaman models show`` warns about invalid
     values separately.
     """
     if not tier:
@@ -117,14 +117,14 @@ def _merge_models(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, An
     return out
 
 
-def _load_models_block(maestro_root_or_file: Path) -> dict[str, Any]:
-    """Load merged models config from the maestro root or a single file.
+def _load_models_block(maestro_root_or_file: Path) -> dict[str, Any]:  # legacy: maestro_root param name
+    """Load merged models config from the otaman root or a single file.
 
     If ``maestro_root_or_file`` is a directory, reads both:
       - ``<root>/platform.yaml``     (project-global, lower priority)
       - ``<root>/launch-settings.yaml`` (launcher-local, higher priority)
     and deep-merges. This lets launcher-only configs (common when the
-    maestro folder lives on a remote host and the launcher runs on
+    otaman folder lives on a remote host and the launcher runs on
     Windows) define model routing without round-tripping the remote.
 
     If ``maestro_root_or_file`` is a file path, reads that file only.
@@ -175,7 +175,7 @@ def resolve_tier(
     """Walk the resolution chain and return the effective (model, effort).
 
     Args:
-        maestro_root: path to the maestro folder (contains platform.yaml).
+        maestro_root: path to the otaman folder (contains platform.yaml).  # legacy: maestro_root param name
         repo: active repo name (matches a platform.yaml repos[].name).
         agent: current agent identity. If not given but ``repo`` is, the
             repo's owner is used as the lookup agent.
@@ -183,7 +183,7 @@ def resolve_tier(
             --model flag, etc). These always win.
     """
     # Resolve from both platform.yaml AND launch-settings.yaml in the
-    # maestro root. launch-settings.yaml wins when present — it's the
+    # otaman root. launch-settings.yaml wins when present — it's the
     # launcher-local source, right next to connections/accounts.
     models = _load_models_block(maestro_root)
     platform_yaml = maestro_root / "platform.yaml"
@@ -261,7 +261,7 @@ def explain_chain(
 ) -> list[str]:
     """Return human-readable lines explaining which rule fired.
 
-    Used by ``maestro models show`` to make the resolution transparent.
+    Used by ``otaman models show`` to make the resolution transparent.
     """
     resolved = resolve_tier(
         maestro_root,

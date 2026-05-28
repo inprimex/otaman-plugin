@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-platform wrapper to launch a maestro MCP server with the correct Python.
+# Cross-platform wrapper to launch an otaman MCP server with the correct Python.
 # Usage: bash run-server.sh <server-script.py>
 #
 # Resolves Python in this order:

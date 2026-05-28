@@ -9,7 +9,7 @@ All YAML parsing stays on the Python side where ``accounts.py``,
 Usage::
 
     launch-resolve.py --connection <name> [--shell bash|ssh|zsh|fish]
-                      [--otaman-root PATH]      # legacy alias: --maestro-root
+                      [--otaman-root PATH]      # legacy: --maestro-root alias honored
 
 Outputs (on stdout) shell-safe export statements:
 
@@ -251,14 +251,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Target shell for path expansion (default: bash)",
     )
     # Otaman folder path. `--otaman-root` is the preferred name;
-    # `--maestro-root` is retained as a legacy alias for back-compat with
+    # `--maestro-root` is retained as a legacy: alias for back-compat with
     # callers that haven't migrated yet (e.g. wrapper scripts vendored
     # outside this repo). Both write to the same argparse dest so the
     # downstream code reads one value.
     parser.add_argument(
         "--otaman-root",
-        "--maestro-root",
-        dest="maestro_root",
+        "--maestro-root",  # legacy: --maestro-root CLI argument
+        dest="maestro_root",  # legacy: maestro_root dest name
         metavar="PATH",
         help="Otaman folder path (default: auto-resolve from cwd)",
     )

@@ -37,7 +37,7 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 def _find_plugin_root() -> Path | None:
-    """Find the maestro plugin root (where assets/ lives)."""
+    """Find the otaman plugin root (where assets/ lives)."""
     # Check env var first (set by Claude Code)
     import os
     env_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
@@ -53,13 +53,13 @@ def _find_plugin_root() -> Path | None:
 
 
 def _find_presale_dir(cwd: str) -> Path | None:
-    """Find presale dir by walking up from cwd. Prefers .otaman-presale/, falls back to legacy .maestro-presale/."""
+    """Find presale dir by walking up from cwd. Prefers .otaman-presale/, falls back to legacy .maestro-presale/  # legacy: .maestro-presale/ supported."""
     d = Path(cwd).resolve()
     for _ in range(10):
         new = d / ".otaman-presale"
         if new.is_dir():
             return new
-        legacy = d / ".maestro-presale"
+        legacy = d / ".maestro-presale"  # legacy: .maestro-presale/ directory
         if legacy.is_dir():
             return legacy
         parent = d.parent
@@ -319,7 +319,7 @@ def get_domain_expert(
 
 @mcp.tool
 def get_project_meta(cwd: str) -> dict[str, Any]:
-    """Read project metadata from .otaman-presale/project-meta.yaml (or legacy .maestro-presale/).
+    """Read project metadata from .otaman-presale/project-meta.yaml (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directory
 
     Args:
         cwd: Current working directory (used to find .otaman-presale/)
@@ -329,7 +329,7 @@ def get_project_meta(cwd: str) -> dict[str, Any]:
     """
     presale = _find_presale_dir(cwd)
     if not presale:
-        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/) directory found"}
+        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"}
 
     meta = _load_yaml(presale / "project-meta.yaml")
     if not meta:
@@ -355,7 +355,7 @@ def update_project_phase(
 
     presale = _find_presale_dir(cwd)
     if not presale:
-        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/) directory found"}
+        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"}
 
     meta_path = presale / "project-meta.yaml"
     meta = _load_yaml(meta_path)
@@ -407,7 +407,7 @@ def save_knowledge_item(
     if destination == "project":
         presale = _find_presale_dir(cwd)
         if not presale:
-            return {"error": "No .otaman-presale/ (or legacy .maestro-presale/) directory found"}
+            return {"error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"}
 
         knowledge_file = presale / "captured-knowledge.yaml"
         data = _load_yaml(knowledge_file) or {"items": []}

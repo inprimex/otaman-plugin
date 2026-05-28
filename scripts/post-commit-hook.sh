@@ -117,7 +117,7 @@ AGENT_NAME="${AGENT_NAME:-$REPO_NAME}"
 mkdir -p "$BUS_ACTIVE/acks"
 
 MSG_ID="${MSG_TIMESTAMP}-${COMMIT_HASH}"
-MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-${AGENT_NAME}-to-all-post-commit-review.md"
+MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-${AGENT_NAME}-to-human-post-commit-review.md"
 
 TRIGGER_LIST=""
 for t in $TRIGGERS; do
@@ -128,7 +128,7 @@ cat > "$MSG_FILE" << EOF
 ---
 id: ${MSG_ID}
 from: ${AGENT_NAME}
-to: all
+to: human
 priority: normal
 type: review-request
 timestamp: ${TIMESTAMP}

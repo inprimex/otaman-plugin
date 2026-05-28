@@ -310,9 +310,9 @@ function Get-AccountForConnection {
 # matching surrounding quotes stripped.
 #
 # Path resolution (M-1 migration): prefer .otaman/secrets.env; fall back
-# to legacy .maestro/secrets.env if the new path doesn't exist. This lets
+# to .maestro/secrets.env if the new path doesn't exist. This lets  # legacy: .maestro/secrets.env fallback
 # already-migrated projects use the modern layout without breaking older
-# deployments that still write to .maestro/.
+# deployments that still write to .maestro/.  # legacy: .maestro/ directory
 # Resolve the session model/effort tier for a given repo by shelling out
 # to scripts/launch-resolve.py. Walks platform.yaml's `models:` chain
 # (by_repo → by_agent → default). Returns @{Model=<alias>; Effort=<level>}
@@ -358,10 +358,10 @@ function Get-MaestroSecretsEnv {
     param([string]$MaestroRoot)
     $result = [ordered]@{}
     if (-not $MaestroRoot) { return $result }
-    # M-1: prefer .otaman/secrets.env, fall back to legacy .maestro/secrets.env.
+    # M-1: prefer .otaman/secrets.env, fall back to .maestro/secrets.env.  # legacy: .maestro/secrets.env path
     $path = Join-Path $MaestroRoot ".otaman/secrets.env"
     if (-not (Test-Path $path)) {
-        $legacy = Join-Path $MaestroRoot ".maestro/secrets.env"
+        $legacy = Join-Path $MaestroRoot ".maestro/secrets.env"  # legacy: .maestro/secrets.env path
         if (Test-Path $legacy) { $path = $legacy } else { return $result }
     }
     foreach ($line in (Get-Content $path -Encoding UTF8 -ErrorAction SilentlyContinue)) {
@@ -383,7 +383,7 @@ function Get-MaestroSecretsEnv {
 }
 
 # Build a shell-appropriate env-prefix that sets CLAUDE_CONFIG_DIR and any
-# secrets.env vars (from .otaman/ or legacy .maestro/) BEFORE the claude
+# secrets.env vars (from .otaman/ or .maestro/) BEFORE the claude  # legacy: .maestro/ directory
 # command runs.
 #
 # Returns a string that can be prepended (with the shell's chain operator)
@@ -398,7 +398,7 @@ function Build-EnvPrefix {
         [string]$Model = "",    # ANTHROPIC_MODEL (session default tier)
         [string]$Effort = "",   # CLAUDE_CODE_EFFORT_LEVEL
         [bool]$Unattended = $false, # connection flagged `unattended: true`
-        [string]$Account = ""       # maestro account name (e.g. "personal" / "greenbin")
+        [string]$Account = ""       # account name (e.g. "personal" / "greenbin")  # legacy: maestro account name
     )
     $pairs = [ordered]@{}
     if ($ConfigDirExpanded) { $pairs['CLAUDE_CONFIG_DIR'] = $ConfigDirExpanded }
@@ -1033,7 +1033,7 @@ function Show-RepoPicker {
 # Path resolution for local connection
 # ============================================================
 # Resolves repo.path (relative, e.g., ../detectmod) against local_root.
-# local_root is the absolute path to the maestro folder on local disk.
+# local_root is the absolute path to the otaman folder on local disk.  # legacy: maestro folder name
 
 function Resolve-LocalPath {
     param([string]$LocalRoot, [string]$RepoPath)
@@ -1186,7 +1186,7 @@ function Build-SshCommand {
 
     if ($useTmux) {
         # Tmux session prefix: "otaman-<project>-<repo>". Existing legacy
-        # "maestro-*" sessions on roman-ml keep running until each project
+        # "maestro-*" sessions on roman-ml keep running until each project  # legacy: maestro- tmux prefix
         # is explicitly migrated.
         $session = "otaman"
         if ($ProjectName) { $session += "-$(ConvertTo-TmuxSessionName $ProjectName)" }
@@ -1609,9 +1609,9 @@ foreach ($r in $launchable) {
         # Resolve remote path: use explicit ssh_path, or resolve repo's relative path against remote root
         $p_ = if ($r.launch_ssh_path) { $r.launch_ssh_path }
              elseif ($activeConn["ssh_remote_root"] -and $r.path) {
-                 # Repo path is relative to maestro folder (e.g., ../lmachine-common)
-                 # Remote root is the maestro folder (e.g., /home/romans/lmachine/lmachine-maestro)
-                 # Combine and normalize: /home/romans/lmachine/lmachine-maestro/../lmachine-common
+                 # Repo path is relative to otaman folder (e.g., ../lmachine-common)  # legacy: maestro folder name
+                 # Remote root is the otaman folder (e.g., /home/romans/lmachine/lmachine-maestro)  # legacy: maestro folder name
+                 # Combine and normalize: /home/romans/lmachine/lmachine-maestro/../lmachine-common  # legacy: lmachine-maestro folder name
                  # -> /home/romans/lmachine/lmachine-common
                  $combined = "$($activeConn['ssh_remote_root'])/$($r.path)" -replace '\\', '/'
                  # Normalize ../  segments
@@ -1658,7 +1658,7 @@ if ($Close -or $Restart) {
             Write-Warn "$($r.name): reliability=none — no tmux session, skipping"
             continue
         }
-        $sess = "maestro"
+        $sess = "maestro"  # legacy: maestro tmux session prefix
         if ($projectName) { $sess += "-$(ConvertTo-TmuxSessionName $projectName)" }
         $sess += "-$(ConvertTo-TmuxSessionName $r.name)"
 
@@ -1725,7 +1725,7 @@ if ($Close -or $Restart) {
 if (-not $DryRun) {
     try {
         # Polyrepo split moved the launcher-register subcommand to otaman-cli;
-        # the legacy `cli/maestro.py` path inside this repo is dead. Call the
+        # the legacy `cli/maestro.py` path inside this repo is dead. Call the  # legacy: cli/maestro.py path
         # `otaman` binary on PATH instead. If absent, the redirect keeps the
         # launch silent.
         $otamanCli = Get-Command otaman -ErrorAction SilentlyContinue
@@ -1811,13 +1811,13 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
         # size-based rotation (1 MiB threshold, keeps 3 backups).
         #
         # M-1 migration: new installs write to .otaman/. If a legacy
-        # .maestro/ directory exists and .otaman/ does not, we keep writing
-        # to .maestro/ — avoids splitting one project's log history across
-        # two directories until someone migrates explicitly (mv .maestro
+        # .maestro/ directory exists and .otaman/ does not, we keep writing  # legacy: .maestro/ directory
+        # to .maestro/ — avoids splitting one project's log history across  # legacy: .maestro/ directory
+        # two directories until someone migrates explicitly (mv .maestro  # legacy: .maestro directory
         # .otaman, or `otaman migrate`).
         try {
             $logDir = Join-Path $cfgParent ".otaman"
-            $legacyDir = Join-Path $cfgParent ".maestro"
+            $legacyDir = Join-Path $cfgParent ".maestro"  # legacy: .maestro directory
             if ((Test-Path $legacyDir) -and -not (Test-Path $logDir)) {
                 $logDir = $legacyDir
             }
