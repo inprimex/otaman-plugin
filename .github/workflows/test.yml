@@ -1,10 +1,7 @@
 name: test
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:  # manual trigger only — auto-triggers disabled until billing resolved
 
 env:
   # Force Node 24 runtime now (deprecated Node 20 removed Sep 16 2026).
