@@ -733,21 +733,21 @@ status: pending
 
 @mcp.tool
 def otaman_set_agent(cwd: str, agent_name: str) -> dict[str, Any]:
-    """Set the current agent identity for this session.
+    """DEPRECATED. Returns a deprecation notice; performs no side effects.
 
-    Args:
-        cwd: Current working directory
-        agent_name: Agent name to set (e.g., "auth-agent", "payment-agent")
+    Per `agent-identity-per-directory` spec (D6): the canonical identity
+    mechanisms are the `OTAMAN_AGENT` env var (highest priority) or an
+    `agent:` field in a repo's `.otaman` marker. Writing to
+    `.agents/current-agent` is no longer the correct identity mechanism.
     """
-    root = _find_project_root(cwd)
-    if not root:
-        return {"error": "No otaman project found"}
-
-    agent_file = root / ".agents" / "current-agent"
-    agent_file.parent.mkdir(parents=True, exist_ok=True)
-    agent_file.write_text(agent_name.strip() + "\n", encoding="utf-8")
-
-    return {"agent": agent_name, "file": str(agent_file)}
+    return {
+        "deprecated": True,
+        "message": (
+            "otaman_set_agent is deprecated. Set OTAMAN_AGENT env var or "
+            "add 'agent: <name>' to your repo's .otaman file instead. "
+            "Writing to current-agent is no longer the correct identity mechanism."
+        ),
+    }
 
 
 @mcp.tool
