@@ -293,6 +293,60 @@ expand_config_dir() {
     esac
 }
 
+# Resolve the current agent identity via the standard priority chain:
+#   1. OTAMAN_AGENT env var (process-scoped — set by launcher or OTAMAN_AGENT=x prefix)
+#   2. .otaman agent: field — CWD walk up, both file-shape and directory-shape
+#   3. current-agent file at $project_root/.agents/current-agent (deprecated fallback)
+#
+# Usage: resolve_agent_identity [project_root]
+# Echoes agent name and returns 0 on success; returns 1 if identity cannot be determined.
+resolve_agent_identity() {
+    local project_root="${1:-}"
+
+    # 1. OTAMAN_AGENT env var
+    if [[ -n "${OTAMAN_AGENT:-}" ]]; then
+        echo "$OTAMAN_AGENT"
+        return 0
+    fi
+
+    # 2. .otaman agent: field — walk up from CWD
+    local check="$PWD"
+    local prev=""
+    while [[ "$check" != "/" && "$check" != "." && "$check" != "$prev" ]]; do
+        if [[ -f "$check/.otaman" ]]; then
+            # File shape: YAML with agent: field
+            local agent_val
+            agent_val="$(grep '^agent:' "$check/.otaman" 2>/dev/null | sed 's/^agent:[[:space:]]*//' | tr -d '[:space:]')"
+            if [[ -n "$agent_val" ]]; then
+                echo "$agent_val"
+                return 0
+            fi
+        elif [[ -d "$check/.otaman" && -f "$check/.otaman/agent" ]]; then
+            # Directory shape: single-line text file
+            local agent_val
+            agent_val="$(tr -d '[:space:]' < "$check/.otaman/agent" 2>/dev/null)"
+            if [[ -n "$agent_val" ]]; then
+                echo "$agent_val"
+                return 0
+            fi
+        fi
+        prev="$check"
+        check="$(dirname "$check")"
+    done
+
+    # 3. current-agent deprecated fallback
+    if [[ -n "$project_root" && -f "$project_root/.agents/current-agent" ]]; then
+        local agent_val
+        agent_val="$(tr -d '[:space:]' < "$project_root/.agents/current-agent")"
+        if [[ -n "$agent_val" ]]; then
+            echo "$agent_val"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 # Routing resolution (formerly "account", briefly "profile" — see
 # otaman-core/_resolve.py docstring for full history).
 # read_expected_routing prefers expected_routing:, falls back to expected_account:.

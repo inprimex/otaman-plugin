@@ -23,10 +23,8 @@ source "$SCRIPT_DIR/_resolve.sh"
 
 PROJECT_ROOT="$(find_maestro_root 2>/dev/null)" || exit 0
 
-# Get agent identity
-AGENT_FILE="$PROJECT_ROOT/.agents/current-agent"
-[[ -f "$AGENT_FILE" ]] || exit 0
-AGENT="$(tr -d '[:space:]' < "$AGENT_FILE")"
+# Resolve agent identity via priority chain: OTAMAN_AGENT env > .otaman agent: field > current-agent fallback
+AGENT="$(resolve_agent_identity "$PROJECT_ROOT")" || exit 0
 [[ -n "$AGENT" ]] || exit 0
 
 # Check blocked tasks file
@@ -34,7 +32,7 @@ BLOCKED_FILE="$PROJECT_ROOT/.agents/blocked/$AGENT.md"
 [[ -f "$BLOCKED_FILE" ]] || exit 0
 
 # Count blocked tasks (look for ## Blocked: headers)
-COUNT="$(grep -c '^## Blocked:' "$BLOCKED_FILE" 2>/dev/null || echo 0)"
+COUNT=$(grep -c '^## Blocked:' "$BLOCKED_FILE" 2>/dev/null) || COUNT=0
 [[ "$COUNT" -eq 0 ]] && exit 0
 
 # Extract blocked task names (up to 5 for the message)
