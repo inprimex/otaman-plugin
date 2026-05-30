@@ -6,6 +6,7 @@
 Otaman folder: `../otaman-meta/` (contains `.agents/`, `platform.yaml`, bus messages)
 
 ### First Session Checklist
+0. **Set identity for hooks**: `echo "plugin-agent" > ../otaman-meta/.agents/current-agent` — hooks read this file directly; without it they see a stale agent name and block writes.
 1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
 2. Read `../otaman-meta/.agents/queue/plugin-agent.md` — see your active/queued/blocked tasks
 3. Read specs relevant to your repo (specs_dir paths below)
