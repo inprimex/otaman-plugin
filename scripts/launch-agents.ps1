@@ -36,7 +36,8 @@ param(
     [switch]$Pull,                # Pull remote platform.yaml back to local (overwrites local copy; SSH connection required)
     [switch]$Close,               # Kill tmux sessions for selected repos (don't open tabs)
     [switch]$Restart,             # Kill then re-launch (combination of -Close + normal launch)
-    [switch]$Yes                  # Skip confirmation prompts (for -Close / -Restart automation)
+    [switch]$Yes,                 # Skip confirmation prompts (for -Close / -Restart automation)
+    [switch]$ViaRunner            # B-41: dispatch each repo through otaman-runner's HTTP API (per ADR-009). Falls back to local wt.exe spawn when endpoint missing or /spawn fails.
 )
 
 # ============================================================
@@ -47,6 +48,61 @@ function Write-Step { param($m) Write-Host "`n[$([char]0x25B6)] $m" -ForegroundC
 function Write-Ok   { param($m) Write-Host "  [OK] $m" -ForegroundColor Green }
 function Write-Warn { param($m) Write-Host "  [!]  $m" -ForegroundColor Yellow }
 function Write-Err  { param($m) Write-Host "  [X]  $m" -ForegroundColor Red }
+
+# ============================================================
+# Otaman-runner client (B-41 — companion to bash --via-runner per ADR-009)
+# ============================================================
+# Parses ~/.otaman/runner.endpoint and POSTs /spawn for each repo, mirroring
+# scripts/launch-agents.sh:read_runner_endpoint / runner_spawn_one.
+#
+# Used only when -ViaRunner is passed. Endpoint-missing or any /spawn failure
+# falls back to the local wt.exe spawn path (laptop dev parity per spec-agent
+# 20260522T205846). Fallback is logged as `[degraded mode: runner unavailable;
+# using local fallback]` so the user knows which spawn path actually ran.
+
+function Read-RunnerEndpoint {
+    $path = Join-Path $HOME ".otaman/runner.endpoint"
+    if (-not (Test-Path $path)) { return $null }
+    $host_ = $null; $port = $null; $token = $null
+    foreach ($line in (Get-Content $path -Encoding UTF8)) {
+        $kv = $line -split '=', 2
+        if ($kv.Length -ne 2) { continue }
+        switch ($kv[0].Trim()) {
+            'host'  { $host_ = $kv[1].Trim() }
+            'port'  { $port  = $kv[1].Trim() }
+            'token' { $token = $kv[1].Trim() }
+        }
+    }
+    if (-not $host_ -or -not $port -or -not $token) { return $null }
+    return @{ Host = $host_; Port = $port; Token = $token }
+}
+
+function Invoke-RunnerSpawn {
+    # POST /spawn against the runner daemon. Returns the attach_command on
+    # success; throws on HTTP / payload error so the caller can catch and
+    # trigger the local-fallback path.
+    param(
+        [Parameter(Mandatory)] $Endpoint,
+        [Parameter(Mandatory)][string] $Agent,
+        [Parameter(Mandatory)][string] $Repo,
+        [Parameter(Mandatory)][string] $ProjectRoot,
+        [string] $Account = ""
+    )
+    $body = @{
+        agent        = $Agent
+        repo         = $Repo
+        project_root = $ProjectRoot
+        mode         = "interactive"
+        account      = if ($Account) { $Account } else { $null }
+    } | ConvertTo-Json -Compress
+    $uri = "http://$($Endpoint.Host):$($Endpoint.Port)/spawn"
+    $headers = @{ Authorization = "Bearer $($Endpoint.Token)"; "Content-Type" = "application/json" }
+    $resp = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -TimeoutSec 30
+    if (-not $resp.attach -or -not $resp.attach.attach_command) {
+        throw "no attach info in response: $($resp | ConvertTo-Json -Compress)"
+    }
+    return [string]$resp.attach.attach_command
+}
 
 # Size-based log rotation. Called before append-only writes so launcher.log
 # (and any other trace logs we add later) stays bounded. No-op if the file
@@ -1748,6 +1804,51 @@ $separateWindows = @() # PuTTY/KiTTY separate windows
 # Resolve WSL distro: CLI arg > connection > default Ubuntu
 $effectiveWslDistro = if ($WslDistro) { $WslDistro } elseif ($activeConn['wsl_distro']) { $activeConn['wsl_distro'] } else { 'Ubuntu' }
 
+# B-41: -ViaRunner dispatches each repo through otaman-runner's HTTP API.
+# Bash parity: scripts/launch-agents.sh:300 (tmux mode --via-runner branch).
+# Each successful /spawn returns an attach_command; we render it as a wt.exe
+# tab body (run inside WSL so the bash one-liner executes natively). On any
+# error we fall through to the existing per-shell tab build below, with a
+# `[degraded mode: ...]` notice so the user knows which path actually ran.
+$useRunnerTabs = $false
+if ($ViaRunner) {
+    $endpoint = Read-RunnerEndpoint
+    if ($endpoint) {
+        Write-Host "via-runner: spawning via http://$($endpoint.Host):$($endpoint.Port)" -ForegroundColor DarkGray
+        $runnerWtTabs = @()
+        $runnerOk = $true
+        foreach ($repo in $valid) {
+            $rTitle = if ($repo.launch_title) { $repo.launch_title } else { $repo.name }
+            $rColor = if ($repo.launch_color) { $repo.launch_color } else { "#4169E1" }
+            if (-not $rColor.StartsWith('#')) { $rColor = "#$rColor" }
+            $rAgent = if ($repo.owner) { $repo.owner } else { $repo.name }
+            try {
+                $attachCmd = Invoke-RunnerSpawn -Endpoint $endpoint -Agent $rAgent -Repo $repo.name -ProjectRoot $cfgParent -Account $activeAccountName
+            } catch {
+                Write-Warn "via-runner: spawn failed for $($repo.name): $_"
+                $runnerOk = $false
+                break
+            }
+            # Wrap the opaque attach_command in WSL bash -ic so it runs in a
+            # real shell (typical attach_command is `ssh user@host tmux a ...`
+            # or `tmux a -t ...`). Mirrors the existing wsl-shell tab build.
+            $escaped = $attachCmd -replace '"', '\"'
+            $runnerWtTabs += "--title `"$rTitle`" --suppressApplicationTitle --tabColor `"$rColor`" wsl.exe -d $effectiveWslDistro -- bash -ic `"$escaped`""
+            Write-Host "  spawned $rAgent@$($repo.name) -> $attachCmd" -ForegroundColor DarkGray
+        }
+        if ($runnerOk -and $runnerWtTabs.Count -gt 0) {
+            $wtTabs = $runnerWtTabs
+            $useRunnerTabs = $true
+        } else {
+            Write-Warn "[degraded mode: runner unavailable; using local fallback]"
+        }
+    } else {
+        Write-Warn "[degraded mode: runner unavailable; using local fallback]"
+        Write-Host "  (no endpoint file at ~/.otaman/runner.endpoint)" -ForegroundColor DarkGray
+    }
+}
+
+if (-not $useRunnerTabs) {
 for ($i = 0; $i -lt $valid.Count; $i++) {
     $repo = $valid[$i]
     $title = if ($repo.launch_title) { $repo.launch_title } else { $repo.name }
@@ -1854,6 +1955,7 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
     Write-Host "$title" -NoNewline -ForegroundColor $cc
     Write-Host (" ({0})" -f $shell) -ForegroundColor DarkGray
 }
+}  # end if (-not $useRunnerTabs) — B-41
 
 # Launch Windows Terminal tabs
 if ($wtTabs.Count -gt 0) {
