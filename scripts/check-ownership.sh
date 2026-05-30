@@ -31,11 +31,9 @@ source "$SCRIPT_DIR/_resolve.sh"
 PROJECT_ROOT="$(find_maestro_root 2>/dev/null)" || exit 0
 
 OWNERSHIP_FILE="$PROJECT_ROOT/.agents/ownership.json"
-AGENT_IDENTITY_FILE="$PROJECT_ROOT/.agents/current-agent"
 
-# If no agent identity set, allow
-[[ -f "$AGENT_IDENTITY_FILE" ]] || exit 0
-CURRENT_AGENT="$(tr -d '[:space:]' < "$AGENT_IDENTITY_FILE")"
+# Resolve agent identity via priority chain: OTAMAN_AGENT env > .otaman agent: field > current-agent fallback
+CURRENT_AGENT="$(resolve_agent_identity "$PROJECT_ROOT")" || exit 0
 [[ -n "$CURRENT_AGENT" ]] || exit 0
 
 # --- Portable JSON value extraction (no grep -P, no python) ---
