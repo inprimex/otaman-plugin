@@ -50,6 +50,8 @@ otaman doctor    # should pass
 otaman status    # cross-repo dashboard
 
 # 5. Open a tab in one of the repos and start an agent session
+#    Agent identity is resolved from the .otaman file written by init
+#    (OTAMAN_AGENT env var overrides if needed)
 cd ~/my-otaman-trial/frontend
 claude --plugin-dir <path-to-otaman-plugin> '/otaman:check'
 ```
