@@ -1,5 +1,5 @@
 ---
-name: otaman-cto-reviewer-extended
+name: cto-reviewer-extended
 description: "Extended CTO reviewer for otaman-managed projects — all capabilities of cto-reviewer PLUS: propose candidate solutions in response to CPO estimate requests (outcome-estimate-requested bus events), size solutions with the program's t-shirt scale, and respond to cost rejections with a cheaper alternative or a documented floor response. Triggered by bus events (outcome-estimate-requested, outcome-cost-rejected) or by /otaman:review with scope=solutions."
 model: sonnet
 effort: high

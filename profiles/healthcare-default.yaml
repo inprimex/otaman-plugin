@@ -13,5 +13,5 @@ skills:
   - cpo-skill                       # JTBD outcome management for clinical features
   - ba-skill                        # user flow + business process authoring (clinical workflows)
   - risk-reviewer                   # risk register review (HIPAA, PHI exposure, audit failure)
-  - otaman-cto-reviewer-extended    # solution proposals + cost-rejection for CPO estimate cycles
+  - cto-reviewer-extended           # solution proposals + cost-rejection for CPO estimate cycles
                                     # NOTE: only valid when cpo-skill is also active (see pairing rule)
