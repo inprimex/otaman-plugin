@@ -1,6 +1,6 @@
 ---
 name: cpo-skill
-description: "CPO-agent skill for outcome management — scaffolds JTBD outcome drafts from natural-language prompts, audits completeness (missing as-a / i-want-to / so-i-can sub-fields), and surfaces inconsistencies (duplicate JTBD statements, P0s with stale Drafting status, orphaned solutions). Use when the CPO needs to author, review, or triage the program's outcomes.yaml."
+description: "CPO-agent skill for outcome management — scaffolds JTBD outcome drafts from natural-language prompts, audits completeness (missing as-a / i-want-to / incremental-outcome / so-i-can sub-fields), and surfaces inconsistencies (duplicate JTBD statements, P0s with stale Drafting status, orphaned solutions). Use when the CPO needs to author, review, or triage the program's outcomes.yaml."
 triggers:
   - "outcome"
   - "JTBD"
@@ -38,13 +38,15 @@ If `outcomes.yaml` doesn't exist yet, tell the user and offer to scaffold an emp
 
 ### How to scaffold
 
-Extract the JTBD triple from the description:
+Extract the four required JTBD sub-fields (per `outcome-and-solution-registries` design A.3):
 
-| JTBD field | Question to ask yourself |
-|------------|--------------------------|
-| `as-a`     | Who is the primary actor? Match to a persona id in `personas.yaml` if possible; otherwise use a descriptive slug. |
-| `i-want-to` | What capability do they need? One concrete verb phrase. |
-| `so-i-can` | What goal does this unlock? One outcome clause. |
+| JTBD field | Required | Question to ask yourself |
+|------------|----------|--------------------------|
+| `as-a` | ✅ | Who is the primary actor? Match to a persona id in `personas.yaml` if possible; otherwise use a descriptive slug. |
+| `i-want-to` | ✅ | What capability do they need? One concrete verb phrase. |
+| `incremental-outcome` | ✅ | What does the user immediately achieve? One concrete near-term result — the unit the team can ship and measure. |
+| `so-i-can` | ✅ | What higher-level motivation does this unlock? One outcome clause framing the user's "why". |
+| `ultimate-outcome` | optional | The broader program-level benefit. Leave empty if not yet clear. |
 
 Then emit a complete YAML block ready to paste into `outcomes.yaml`:
 
@@ -54,7 +56,9 @@ Then emit a complete YAML block ready to paste into `outcomes.yaml`:
   statement:
     as-a: <persona-id>                # references personas.yaml; or free-form slug if registry absent
     i-want-to: "<verb phrase>"
-    so-i-can: "<outcome clause>"
+    incremental-outcome: "<concrete near-term result the user achieves>"
+    so-i-can: "<higher-level motivation>"
+    ultimate-outcome: ""              # optional — fill in if the broader program benefit is clear
   status: Drafting
   priority: P2                        # default; CPO adjusts
   impact: M                           # default; CPO adjusts (XS / S / M / L / XL)
@@ -87,7 +91,9 @@ Then emit a complete YAML block ready to paste into `outcomes.yaml`:
   statement:
     as-a: product-manager           # adjust if your personas.yaml uses a different id
     i-want-to: "export the outcome registry to a spreadsheet"
+    incremental-outcome: "download a CSV/XLSX file containing the current outcome registry"
     so-i-can: "share delivery status and business outcomes with stakeholders in board meetings"
+    ultimate-outcome: ""            # leave empty until the broader program benefit is clear
   status: Drafting
   priority: P2
   impact: S
@@ -116,6 +122,7 @@ For each outcome entry, verify:
 |-------|-----------|----------|
 | Missing `as-a` | `statement.as-a` is empty or absent | ❌ Error — blocks JTBD validity |
 | Missing `i-want-to` | `statement.i-want-to` is empty or absent | ❌ Error |
+| Missing `incremental-outcome` | `statement.incremental-outcome` is empty or absent | ❌ Error — required per design A.3 |
 | Missing `so-i-can` | `statement.so-i-can` is empty or absent | ❌ Error |
 | Unknown persona | `as-a` value not in `personas.yaml` (if registry exists) | ⚠️ Warning |
 | Missing `category` | `category` absent or empty | ⚠️ Warning |
@@ -134,11 +141,12 @@ Scanned <N> outcomes.
 
 ### ❌ Errors (must fix before promoting to Considering)
 - JTBD-3-...: missing `so-i-can`
-- JTBD-7-...: `cost-accepted: Yes` but no `chosen-solution`
+- JTBD-7-...: missing `incremental-outcome`
+- JTBD-9-...: `cost-accepted: Yes` but no `chosen-solution`
 
 ### ⚠️ Warnings
 - JTBD-5-...: persona `power-user` not found in personas.yaml
-- JTBD-9-...: `estimate-requested: true` since 2026-05-10 — no solution proposed yet
+- JTBD-11-...: `estimate-requested: true` since 2026-05-10 — no solution proposed yet
 
 ### ✅ Clean
 JTBD-1, JTBD-2, JTBD-4, JTBD-6, JTBD-8 — no issues.
