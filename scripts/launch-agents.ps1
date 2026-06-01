@@ -1113,6 +1113,11 @@ function Resolve-LocalPath {
 # dots and colons; we strip those and any other non-alphanumeric character to
 # underscores so the same repo name resolves to the same session every launch.
 function ConvertTo-TmuxSessionName {
+    # WARNING: do NOT call this on a composite `<program>:<agent-name>` session
+    # name — it strips the `:` separator. Per fix-launcher-tmux-session-naming
+    # the new session-name format relies on the colon being preserved. Use this
+    # function only on legacy single-token names (e.g., individual repo names)
+    # or other non-session strings.
     param([string]$Name)
     if (-not $Name) { return "" }
     return ($Name -replace '[^A-Za-z0-9_-]', '_')
@@ -1211,7 +1216,11 @@ function Wrap-WithTmux {
     # options can be set in between.
     $tmuxOptions = "tmux set -gq mouse on && tmux set -gq history-limit 50000 && tmux set -gq default-terminal 'tmux-256color'"
 
-    return "( tmux has-session -t '$SessionName' 2>/dev/null || tmux new-session -d -s '$SessionName' bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t '$SessionName'"
+    # `=` prefix on has-session and attach forces exact match (tmux 2.5+) so
+    # the colon in `<program>:<agent-name>` is not parsed as session:window.
+    # Single-quote the name to prevent the remote shell from interpreting
+    # the colon before tmux sees it.
+    return "( tmux has-session -t '=$SessionName' 2>/dev/null || tmux new-session -d -s '$SessionName' bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t '=$SessionName'"
 }
 
 function Build-SshCommand {
@@ -1221,7 +1230,8 @@ function Build-SshCommand {
         [string[]]$Commands,
         [hashtable]$Settings,
         [string]$RepoName = "",
-        [string]$ProjectName = ""
+        [string]$ProjectName = "",
+        [string]$AgentName = ""    # owner: field from platform.yaml; drives the tmux session name
     )
 
     $client = $Settings["ssh_client"]
@@ -1241,12 +1251,19 @@ function Build-SshCommand {
     $chainedCmd = $allCmds -join ' && '
 
     if ($useTmux) {
-        # Tmux session prefix: "otaman-<project>-<repo>". Existing legacy
-        # "maestro-*" sessions on roman-ml keep running until each project  # legacy: maestro- tmux prefix
-        # is explicitly migrated.
-        $session = "otaman"
-        if ($ProjectName) { $session += "-$(ConvertTo-TmuxSessionName $ProjectName)" }
-        if ($RepoName)    { $session += "-$(ConvertTo-TmuxSessionName $RepoName)" }
+        # Tmux session name: "${ProjectName}:${AgentName}" — no sanitisation;
+        # `project:` and `owner:` values conform to [a-z0-9-] by platform.yaml
+        # convention, and the `:` separator is part of the format. Per
+        # fix-launcher-tmux-session-naming. Fall back to RepoName if AgentName
+        # is absent (with a warning so the misconfiguration surfaces).
+        $agentForSession = $AgentName
+        if (-not $agentForSession) {
+            $agentForSession = $RepoName
+            if ($RepoName) {
+                Write-Warn "Build-SshCommand: repo '$RepoName' missing owner: field in platform.yaml; using repo name for tmux session"
+            }
+        }
+        $session = "${ProjectName}:${agentForSession}"
         $chainedCmd = Wrap-WithTmux -SessionName $session -InnerCommand $chainedCmd
     }
 
@@ -1714,9 +1731,15 @@ if ($Close -or $Restart) {
             Write-Warn "$($r.name): reliability=none — no tmux session, skipping"
             continue
         }
-        $sess = "maestro"  # legacy: maestro tmux session prefix
-        if ($projectName) { $sess += "-$(ConvertTo-TmuxSessionName $projectName)" }
-        $sess += "-$(ConvertTo-TmuxSessionName $r.name)"
+        # Per fix-launcher-tmux-session-naming: session name is
+        # "${projectName}:${owner}". Fall back to repo name if owner: missing
+        # (with a warning), to match Build-SshCommand's fallback.
+        $agentForSession = $r.owner
+        if (-not $agentForSession) {
+            $agentForSession = $r.name
+            Write-Warn "$($r.name): missing owner: field in platform.yaml; using repo name for tmux session"
+        }
+        $sess = "${projectName}:${agentForSession}"
 
         $h = if ($r.launch_ssh_host) { $r.launch_ssh_host } else { $activeConn['ssh_default_host'] }
         $keyFlag = ""
@@ -1724,7 +1747,8 @@ if ($Close -or $Restart) {
         # -t not needed for a one-shot remote command. tmux kill-session
         # exits 1 if the session doesn't exist; redirect stderr so the
         # quiet-skip is genuinely quiet, and force exit 0 with `|| true`.
-        $remoteCmd = "tmux kill-session -t '$sess' 2>/dev/null || true"
+        # `=` prefix forces exact match so the colon doesn't get parsed.
+        $remoteCmd = "tmux kill-session -t '=$sess' 2>/dev/null || true"
         $killActions += @{
             repo = $r.name
             session = $sess
@@ -1900,7 +1924,7 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
         $cfgDirSsh = if ($activeAccount['config_dir']) { Expand-ConfigDir -ConfigDir $activeAccount['config_dir'] -Shell 'ssh' } else { "" }
         $envPrefix = Build-EnvPrefix -Shell 'ssh' -ConfigDirExpanded $cfgDirSsh -SecretsEnv $maestroSecrets -Model $repoTier.Model -Effort $repoTier.Effort -Unattended $connUnattended -Account $activeAccountName
         $sshCmds = if ($envPrefix) { @($envPrefix) + $repo.launch_commands } else { $repo.launch_commands }
-        $sshResult = Build-SshCommand -Host_ $repo.launch_ssh_host -RemotePath $repo.launch_ssh_path -Commands $sshCmds -Settings $activeConn -RepoName $repo.name -ProjectName $projectName
+        $sshResult = Build-SshCommand -Host_ $repo.launch_ssh_host -RemotePath $repo.launch_ssh_path -Commands $sshCmds -Settings $activeConn -RepoName $repo.name -ProjectName $projectName -AgentName $repo.owner
         if (-not $sshResult) { Write-Warn "$($repo.name): SSH not configured, skipping"; continue }
 
         if ($sshResult.type -eq 'wt-tab') {

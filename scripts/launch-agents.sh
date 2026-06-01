@@ -355,9 +355,21 @@ EOF
             echo "error: no repos in platform.yaml; tmux mode needs at least one" >&2
             exit 1
         fi
-        session="otaman-${OTAMAN_ACTIVE_CONNECTION:-${MAESTRO_ACTIVE_CONNECTION:-default}}"
-        # Resolve per-repo paths using platform.yaml via Python (keeps bash
-        # free of YAML parsing). Paths are relative to MAESTRO_ROOT.
+        # Read top-level `project:` field from platform.yaml. Session names
+        # are constructed as "${project}:${owner}" per fix-launcher-tmux-session-naming.
+        project=$(${PYTHON} - <<EOF
+import yaml, pathlib
+root = pathlib.Path("$MAESTRO_ROOT")
+with open(root / "platform.yaml", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f) or {}
+print(cfg.get("project", "otaman"))
+EOF
+)
+        # Resolve per-repo paths and owners using platform.yaml via Python
+        # (keeps bash free of YAML parsing). Paths are relative to MAESTRO_ROOT.
+        # Output format per repo: <name>|<resolved_path>|<owner>
+        # `owner` falls back to `name` when absent (with no warning here — the
+        # PS1 launcher emits the warning; bash trusts the YAML).
         mapfile -t repo_paths < <(
             ${PYTHON} - <<EOF
 import sys, yaml, pathlib
@@ -369,7 +381,9 @@ for r in cfg.get("repos", []) or []:
         continue
     p = r.get("path", "")
     resolved = (root / p).resolve() if p else root
-    print(f"{r.get('name','')}|{resolved}")
+    name = r.get("name", "")
+    owner = r.get("owner") or name
+    print(f"{name}|{resolved}|{owner}")
 EOF
         )
 
@@ -400,28 +414,26 @@ EOF
         # already-warm process state.
         claude_loop="claude --version >/dev/null 2>&1 || true; while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
 
-        if tmux has-session -t "$session" 2>/dev/null; then
-            echo "tmux: attaching to existing session '$session'" >&2
-        else
-            first="${filtered[0]}"
-            first_name="${first%%|*}"
-            first_path="${first#*|}"
-            tmux new-session -d -s "$session" -n "$first_name" -c "$first_path"
-            tmux send-keys -t "$session:$first_name" "$claude_loop" C-m
-            filtered=("${filtered[@]:1}")
-        fi
-
+        # One session per repo. Session name: "${project}:${owner}". The `=`
+        # prefix on -t forces exact match (tmux 2.5+) so `otaman:plugin-agent`
+        # is not parsed as session `otaman`, window `plugin-agent`.
+        first_session=""
         for row in "${filtered[@]}"; do
-            name="${row%%|*}"
-            path="${row#*|}"
-            tmux new-window -t "$session" -n "$name" -c "$path"
-            tmux send-keys -t "$session:$name" "$claude_loop" C-m
+            IFS='|' read -r name path owner <<< "$row"
+            session="${project}:${owner}"
+            if tmux has-session -t "=${session}" 2>/dev/null; then
+                echo "tmux: session '$session' already running; not respawning" >&2
+            else
+                tmux new-session -d -s "$session" -c "$path"
+                tmux send-keys -t "=${session}" "$claude_loop" C-m
+            fi
+            [[ -z "$first_session" ]] && first_session="$session"
         done
 
         if [[ -n "${TMUX:-}" ]]; then
-            tmux switch-client -t "$session"
+            tmux switch-client -t "=${first_session}"
         else
-            exec tmux attach -t "$session"
+            exec tmux attach -t "=${first_session}"
         fi
         ;;
 esac
