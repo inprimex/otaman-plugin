@@ -335,16 +335,29 @@ def detect_standards(repo_path: Path) -> dict[str, Any]:
 def _looks_like_spec_repo(repo_path: Path) -> bool:
     """Check if a repo is itself an OpenSpec-style specs repository.
 
-    Detects repos named *-specs, *-spec, specs, or openspec that contain
-    multiple subdirectories with markdown spec files (spec.md, change.md,
-    contracts.md, etc.).
+    Two-tier detection (per otaman-scan-ux-hardening task 2.2):
+
+    1. Name-based (runs first): a directory whose name ends in ``-specs`` or
+       ``-spec`` AND contains a ``.git/`` directory qualifies regardless of
+       content. This covers the freshly-initialised case (`<program>-specs/`
+       with `git init` and nothing else) so empty spec scaffolds aren't
+       silently dropped by the scanner.
+
+    2. Content-based (fallback): the legacy heuristic — name matches the
+       spec-repo naming convention AND at least two subdirectories contain
+       spec-like markdown files. Used for spec repos that lack `.git/` (rare
+       — e.g. spec repos vendored as submodules with the git dir elsewhere).
     """
     name = repo_path.name.lower()
     name_match = any(name.endswith(s) for s in ("-specs", "-spec")) or name in ("specs", "openspec")
     if not name_match:
         return False
 
-    # Must have multiple subdirectories with spec-like markdown files
+    # Tier 1 — name-based: dir name matches AND has a `.git/` directory.
+    if (repo_path / ".git").exists():
+        return True
+
+    # Tier 2 — content-based: at least 2 subdirs with spec-like markdown files.
     spec_subdirs = 0
     spec_file_names = {"spec.md", "change.md", "contracts.md", "design.md",
                        "proposal.md", "requirements.md", "api.md"}
@@ -537,6 +550,16 @@ def scan_directory(root: Path) -> dict[str, Any]:
         if not suggested_owner:
             suggested_owner = f"agent-{display_name}"
 
+        # Spec-repo detection (per otaman-scan-ux-hardening task 2.2).
+        # When a repo is recognised as the program's specs repo, mark it
+        # explicitly and force `owner: spec-agent` so the draft platform.yaml
+        # routes spec-authoring work correctly. Detection runs name-based-first
+        # via `_looks_like_spec_repo`, covering both populated spec repos and
+        # freshly-initialised empty ones.
+        is_spec_repo = _looks_like_spec_repo(repo_path)
+        if is_spec_repo:
+            suggested_owner = "spec-agent"
+
         has_claude_md = (repo_path / "CLAUDE.md").exists()
         has_claude_config = (
             (repo_path / ".claude").is_dir()
@@ -589,6 +612,7 @@ def scan_directory(root: Path) -> dict[str, Any]:
             "path": rel_path,
             "tech": tech,
             "suggested_owner": suggested_owner,
+            "is_spec_repo": is_spec_repo,
             "has_git": has_git,
             "has_claude_md": has_claude_md,
             "has_claude_config": has_claude_config,
@@ -698,6 +722,8 @@ def generate_draft_yaml(root: Path, report: dict[str, Any], maestro_dir: Path | 
             "path": rel_path,
             "owner": repo["suggested_owner"],
         }
+        if repo.get("is_spec_repo"):
+            entry["is_spec_repo"] = True
         if repo.get("tech"):
             entry["tech"] = repo["tech"]
         if repo.get("description"):
@@ -749,6 +775,20 @@ def generate_draft_yaml(root: Path, report: dict[str, Any], maestro_dir: Path | 
         "bus_path": ".agents/bus",
         "format": "markdown",
         "max_age_days": 30,
+    }
+
+    # Launcher stub (per otaman-scan-ux-hardening task 2.3). Always emit on
+    # fresh draft generation so the user has a starting point for both local
+    # and ssh launch configurations. The `ssh` block is disabled by default
+    # with placeholder values — the user fills in `host` + `repo_path` and
+    # flips `enabled: true` when they want a remote launcher target.
+    config["launcher"] = {
+        "local": {"enabled": True},
+        "ssh": {
+            "enabled": False,
+            "host": "user@host.example.com",
+            "repo_path": "/path/on/remote",
+        },
     }
 
     # Standards section: auto-detected from repo tooling
@@ -878,6 +918,20 @@ def update_existing_config(root: Path, report: dict[str, Any], *, dry_run: bool 
             "auto_detect": True,
         }
         changes["updated"].append({"name": "(contracts)", "fields": ["added"]})
+
+    # Launcher stub (per otaman-scan-ux-hardening task 2.3). Only add when
+    # absent so re-running `otaman scan --update` doesn't overwrite a
+    # user-customised launcher block.
+    if "launcher" not in config:
+        config["launcher"] = {
+            "local": {"enabled": True},
+            "ssh": {
+                "enabled": False,
+                "host": "user@host.example.com",
+                "repo_path": "/path/on/remote",
+            },
+        }
+        changes["updated"].append({"name": "(launcher)", "fields": ["added"]})
 
     out_path = root / "platform.yaml.updated"
     if dry_run:

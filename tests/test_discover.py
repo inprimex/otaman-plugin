@@ -528,3 +528,145 @@ class TestDraftGeneration:
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         assert config["specs"]["format"] == "openspec"
         assert config["specs"]["path"] == "./specs"
+
+
+# ---------------------------------------------------------------------------
+# otaman-scan-ux-hardening task 2.2 + 2.3 — spec-repo name detection +
+# launcher: stub emission
+# ---------------------------------------------------------------------------
+
+class TestSpecRepoDetectionAndLauncherStub:
+    def test_empty_specs_repo_detected_by_name(self, project_dir: Path) -> None:
+        """An empty `<program>-specs/` with `.git/` qualifies as the specs repo."""
+        # Simulate a freshly-`git init`ed but otherwise empty spec scaffold —
+        # this is the case the original content-based heuristic missed.
+        make_git_repo(project_dir / "foo-specs")
+        # Add a sibling non-specs git repo so the report has something to
+        # compare against.
+        make_git_repo(project_dir / "api")
+        (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
+
+        report = discover.scan_directory(project_dir)
+        by_name = {r["name"]: r for r in report["repos"]}
+
+        assert by_name["foo-specs"]["is_spec_repo"] is True
+        assert by_name["foo-specs"]["suggested_owner"] == "spec-agent"
+        # Non-specs repo unchanged
+        assert by_name["api"]["is_spec_repo"] is False
+        assert by_name["api"]["suggested_owner"] != "spec-agent"
+
+    def test_spec_repo_dash_spec_suffix(self, project_dir: Path) -> None:
+        """Directories ending in `-spec` (singular) also qualify."""
+        make_git_repo(project_dir / "bar-spec")
+        report = discover.scan_directory(project_dir)
+        by_name = {r["name"]: r for r in report["repos"]}
+        assert by_name["bar-spec"]["is_spec_repo"] is True
+        assert by_name["bar-spec"]["suggested_owner"] == "spec-agent"
+
+    def test_non_matching_name_not_flagged(self, project_dir: Path) -> None:
+        """A `.git/`-only repo whose name doesn't match the convention stays normal."""
+        # Use a name without one of scan_directory's prefix-strip prefixes
+        # (repo-, service-, svc-, app-) so the report `name` equals the dir name.
+        make_git_repo(project_dir / "frontend")
+        report = discover.scan_directory(project_dir)
+        by_name = {r["name"]: r for r in report["repos"]}
+        assert by_name["frontend"]["is_spec_repo"] is False
+
+    def test_draft_emits_launcher_stub(self, project_dir: Path) -> None:
+        """generate_draft_yaml always emits a `launcher:` block on fresh draft."""
+        make_git_repo(project_dir / "api")
+        (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
+
+        report = discover.scan_directory(project_dir)
+        draft_path = discover.generate_draft_yaml(project_dir, report)
+
+        import yaml
+        config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
+        assert "launcher" in config
+        assert config["launcher"]["local"]["enabled"] is True
+        assert config["launcher"]["ssh"]["enabled"] is False
+        assert "host" in config["launcher"]["ssh"]
+        assert "repo_path" in config["launcher"]["ssh"]
+
+    def test_draft_marks_spec_repo_in_yaml(self, project_dir: Path) -> None:
+        """An empty `<program>-specs/` gets `owner: spec-agent` + `is_spec_repo: true` in the draft."""
+        make_git_repo(project_dir / "foo-specs")
+        make_git_repo(project_dir / "api")
+        (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
+
+        report = discover.scan_directory(project_dir)
+        draft_path = discover.generate_draft_yaml(project_dir, report)
+
+        import yaml
+        config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
+        by_name = {r["name"]: r for r in config["repos"]}
+        assert by_name["foo-specs"]["owner"] == "spec-agent"
+        assert by_name["foo-specs"]["is_spec_repo"] is True
+        # Non-spec repo doesn't carry the flag
+        assert "is_spec_repo" not in by_name["api"]
+
+    def test_update_adds_launcher_when_absent(self, project_dir: Path) -> None:
+        """`scan --update` adds the launcher stub if the existing config lacks one."""
+        make_git_repo(project_dir / "api")
+        (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
+
+        import yaml
+        # Existing config WITHOUT a launcher block (pre-2.3 platform.yaml shape)
+        config = {
+            "project": "test",
+            "version": "1.0",
+            "repos": [
+                {"name": "api", "path": "./api", "owner": "backend-agent"},
+            ],
+            "specs": {"format": "fallback"},
+            "communication": {"bus_path": ".agents/bus", "format": "markdown"},
+        }
+        (project_dir / "platform.yaml").write_text(
+            yaml.dump(config, default_flow_style=False), encoding="utf-8"
+        )
+
+        report = discover.scan_directory(project_dir)
+        out_path, changes = discover.update_existing_config(project_dir, report)
+
+        updated = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+        assert "launcher" in updated
+        assert updated["launcher"]["local"]["enabled"] is True
+        # The addition is reflected in the changes summary
+        assert any(c.get("name") == "(launcher)" for c in changes.get("updated", []))
+
+    def test_update_preserves_existing_launcher(self, project_dir: Path) -> None:
+        """`scan --update` does NOT overwrite an existing user-customised launcher block."""
+        make_git_repo(project_dir / "api")
+        (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
+
+        import yaml
+        custom_launcher = {
+            "local": {"enabled": False},          # user disabled local
+            "ssh": {
+                "enabled": True,                  # user enabled ssh
+                "host": "dev@my-real-host",       # user filled in real host
+                "repo_path": "/srv/projects/api",
+            },
+        }
+        config = {
+            "project": "test",
+            "version": "1.0",
+            "repos": [
+                {"name": "api", "path": "./api", "owner": "backend-agent"},
+            ],
+            "specs": {"format": "fallback"},
+            "communication": {"bus_path": ".agents/bus", "format": "markdown"},
+            "launcher": custom_launcher,
+        }
+        (project_dir / "platform.yaml").write_text(
+            yaml.dump(config, default_flow_style=False), encoding="utf-8"
+        )
+
+        report = discover.scan_directory(project_dir)
+        out_path, changes = discover.update_existing_config(project_dir, report)
+
+        updated = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+        # User's launcher block survived intact
+        assert updated["launcher"] == custom_launcher
+        # No launcher entry in the changes summary
+        assert not any(c.get("name") == "(launcher)" for c in changes.get("updated", []))
