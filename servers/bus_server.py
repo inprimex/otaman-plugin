@@ -112,6 +112,100 @@ def _extract_subject(text: str) -> str:
     return "(no subject)"
 
 
+# ---------------------------------------------------------------------------
+# Response-contract badges (inter-agent-request-response-contract tasks 3.2 + 3.3)
+# ---------------------------------------------------------------------------
+#
+# Badges surface in the structured otaman_check result so any consumer
+# (hooks, UI renderers, downstream tooling) can highlight messages that
+# need attention:
+#   - "awaiting-response": expects-response: true, no outbound reply from us
+#   - "deadline-approaching": response-deadline within the next 2 hours
+#   - "deadline-passed": response-deadline already elapsed
+#
+# Reply detection uses the `reply-to:` field shipped with the
+# targeted-bus-messaging spec: a "reply" is any bus message where
+# `from: <this-agent>` and `reply-to:` matches the original message's `id:`.
+
+_DEADLINE_APPROACHING_WINDOW_SECONDS: int = 2 * 60 * 60  # 2 hours
+
+
+def _collect_outbound_reply_ids(agent: str, bus_dir: Path) -> set[str]:
+    """Collect message ids that this agent has authored a `reply-to:` for.
+
+    Returns the set of strings referenced by `reply-to:` fields in messages
+    where `from: <agent>` — i.e. the ids of messages we've replied to.
+    Empty set when the bus dir is missing or unreadable.
+    """
+    reply_ids: set[str] = set()
+    if not bus_dir.is_dir():
+        return reply_ids
+    for msg_path in bus_dir.glob("*.md"):
+        try:
+            text = msg_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm = _parse_frontmatter(text)
+        if fm.get("from", "").strip() != agent:
+            continue
+        reply_to = fm.get("reply-to", "").strip()
+        if reply_to:
+            reply_ids.add(reply_to)
+    return reply_ids
+
+
+def _parse_iso8601(s: str) -> datetime | None:
+    """Parse an ISO 8601 / RFC 3339 timestamp string. Returns None on failure.
+
+    Python 3.10's ``datetime.fromisoformat`` does not accept the ``Z`` suffix
+    (added in 3.11); swap it for ``+00:00`` so 3.10 callers parse correctly.
+    The result is rejected as ``None`` if it lacks timezone info — per spec,
+    `response-deadline` must carry an explicit offset.
+    """
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        return None
+    return dt
+
+
+def _compute_response_badges(
+    fm: dict[str, str],
+    outbound_reply_ids: set[str],
+    now: datetime,
+) -> list[str]:
+    """Compute response-contract badges for a single message frontmatter.
+
+    Per inter-agent-request-response-contract tasks 3.2 + 3.3.
+    """
+    badges: list[str] = []
+
+    expects_response = fm.get("expects-response", "").strip().lower() == "true"
+    if expects_response:
+        msg_id = fm.get("id", "").strip()
+        # No reply (matched by id) → awaiting. If id is absent (older message
+        # without an id field), assume awaiting — conservative default that
+        # surfaces the contract gap to the operator.
+        if not msg_id or msg_id not in outbound_reply_ids:
+            badges.append("awaiting-response")
+
+    deadline = _parse_iso8601(fm.get("response-deadline", "").strip())
+    if deadline is not None:
+        delta_seconds = (deadline - now).total_seconds()
+        if delta_seconds < 0:
+            badges.append("deadline-passed")
+        elif delta_seconds <= _DEADLINE_APPROACHING_WINDOW_SECONDS:
+            badges.append("deadline-approaching")
+
+    return badges
+
+
 def _get_agent_identity(root: Path, cwd: str | None = None) -> str | None:
     """Determine agent name from CLAUDE.md (repo-specific) or current-agent (global).
 
@@ -170,6 +264,11 @@ def otaman_check(
     acks = _acks_dir(root)
     messages: list[dict[str, Any]] = []
 
+    # Pre-compute the agent's outbound reply set once. Drives the
+    # `awaiting-response` badge per inter-agent-request-response-contract.
+    now = datetime.now(timezone.utc)
+    outbound_reply_ids = _collect_outbound_reply_ids(agent, bus)
+
     if bus.is_dir():
         for msg_path in sorted(bus.glob("*.md")):
             text = msg_path.read_text(encoding="utf-8")
@@ -202,6 +301,7 @@ def otaman_check(
                 "timestamp": fm.get("timestamp", ""),
                 "status": ack_val,
                 "subject": _extract_subject(text),
+                "badges": _compute_response_badges(fm, outbound_reply_ids, now),
             })
 
     # Sort: urgent first, then by timestamp descending
