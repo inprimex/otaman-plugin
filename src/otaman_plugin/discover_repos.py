@@ -782,17 +782,6 @@ def generate_draft_yaml(root: Path, report: dict[str, Any], maestro_dir: Path | 
     # and ssh launch configurations. The `ssh` block is disabled by default
     # with placeholder values — the user fills in `host` + `repo_path` and
     # flips `enabled: true` when they want a remote launcher target.
-    #
-    # TRANSITIONAL (2026-06-03): `platform-schema.yaml` in otaman-core has
-    # `additionalProperties: false` at root and does not yet accept the
-    # top-level `launcher:` key — this live emission triggers validation
-    # failure in `otaman init`. cli-agent's `post_scan.update_draft()`
-    # (otaman-cli PR #37) currently strips this key and re-emits it as a
-    # YAML comment block to keep `otaman init` validation green. When the
-    # schema extension lands (cli-agent → core-agent request
-    # `20260603T103644-cli-agent-to-core-agent-schema-extension-request-top-level-launc`),
-    # this comment + cli-agent's strip-and-re-emit step can both be removed
-    # in a coordinated cleanup.
     config["launcher"] = {
         "local": {"enabled": True},
         "ssh": {
@@ -933,8 +922,6 @@ def update_existing_config(root: Path, report: dict[str, Any], *, dry_run: bool 
     # Launcher stub (per otaman-scan-ux-hardening task 2.3). Only add when
     # absent so re-running `otaman scan --update` doesn't overwrite a
     # user-customised launcher block.
-    # TRANSITIONAL (2026-06-03): same schema-gap caveat as `generate_draft_yaml`
-    # above — see the longer comment there for the cleanup plan.
     if "launcher" not in config:
         config["launcher"] = {
             "local": {"enabled": True},
