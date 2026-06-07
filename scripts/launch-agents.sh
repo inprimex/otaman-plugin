@@ -13,9 +13,14 @@
 #       --repo NAME         For tmux: launch claude in that repo's directory
 #       --list-repos        Print repo names and exit
 #   -d, --dry-run           Print resolved state and commands, don't execute
-#       --via-runner        Use otaman-runner's HTTP API to spawn (per ADR-009).
-#                           Requires the runner daemon running locally; falls
-#                           back to in-script spawn if endpoint file is missing.
+#       --no-runner         Skip otaman-runner; spawn tmux sessions directly
+#                           (legacy / offline mode). Default is to call the
+#                           runner's HTTP /spawn first per ADR-009; the launcher
+#                           already falls back automatically when the endpoint
+#                           file is missing, so this flag is mainly for users
+#                           who explicitly want to bypass a running daemon.
+#       --via-runner        Deprecated no-op (runner is now the default in tmux
+#                           mode). Kept for backward compatibility.
 #   -h, --help              Show this help
 #
 # EXAMPLES
@@ -31,9 +36,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_resolve.sh"
 
 # ------------------------------------------------------------------
-# Optional: dispatch to otaman-runner via HTTP API (per ADR-009).
-# Opt in with --via-runner. Falls back silently if the runner endpoint
-# file is missing — preserves Mode 1 (no daemon) operation.
+# Dispatch to otaman-runner via HTTP API (per ADR-009).
+# Runner-first is the default in tmux mode (auto-session-spawn-implementation
+# task 4.2). Falls back to direct tmux spawn when the runner endpoint file is
+# missing or any /spawn call fails — preserves Mode 1 (no daemon) operation
+# and dev/offline use. Pass --no-runner to skip the runner entirely.
 #
 # Implements just enough of the runner client protocol to spawn one
 # session per repo in interactive (tmux) mode. Each /spawn returns an
@@ -60,19 +67,25 @@ read_runner_endpoint() {
 # small Python helpers (avoids a jq dependency).
 runner_spawn_one() {
     local host="$1" port="$2" token="$3"
-    local agent="$4" repo="$5" project_root="$6" account="${7:-}"
+    local agent="$4" repo="$5" project_root="$6" account="${7:-}" human="${8:-}"
     local body
+    # Body shape per auto-session-spawn-implementation proposal §4 and the
+    # runner daemon's _request_from_dict: agent/repo/project_root/mode are
+    # required by the runner; account + human are forwarded when set; the
+    # runner uses `human` (bridge-facing alias for `user`) for session-registry
+    # dedup keys (per Q1 of auto-session-spawn-on-bus-events/design.md).
     body=$(${PYTHON} -c '
 import json, sys
-agent, repo, project_root, account = sys.argv[1:5]
+agent, repo, project_root, account, human = sys.argv[1:6]
 print(json.dumps({
     "agent": agent,
     "repo": repo,
     "project_root": project_root,
     "mode": "interactive",
     "account": account or None,
+    "human": human or None,
 }))
-' "$agent" "$repo" "$project_root" "$account")
+' "$agent" "$repo" "$project_root" "$account" "$human")
     local resp
     resp=$(curl -sS --max-time 30 \
         -X POST "http://${host}:${port}/spawn" \
@@ -100,7 +113,10 @@ SHELL_MODE="bash"   # bash | tmux | print
 REPO_FILTER=""
 LIST_REPOS=0
 DRY_RUN=0
-VIA_RUNNER=0
+# Runner-first is the default in tmux mode (auto-session-spawn-implementation
+# task 4.2). `--no-runner` opts out for direct tmux spawn. The legacy
+# `--via-runner` flag remains accepted as a no-op for back-compat.
+VIA_RUNNER=1
 EXTRA_ARGS=()
 
 usage() {
@@ -130,7 +146,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --via-runner)
-            VIA_RUNNER=1
+            # Deprecated no-op — runner-first is now the default in tmux mode.
+            shift
+            ;;
+        --no-runner)
+            VIA_RUNNER=0
             shift
             ;;
         -h|--help)
@@ -297,14 +317,20 @@ case "$SHELL_MODE" in
         ;;
 
     tmux)
-        # --via-runner: dispatch each repo through otaman-runner's HTTP API.
-        # Falls back to the local tmux path if the runner is unreachable.
+        # Runner-first dispatch (default in tmux mode per
+        # auto-session-spawn-implementation task 4.2). Each repo's spawn goes
+        # through otaman-runner's HTTP /spawn endpoint; the runner creates the
+        # tmux session with the canonical ${project}:${owner} name and returns
+        # the attach_command. If the endpoint file is missing or any /spawn
+        # fails, the launcher warns and falls back to the direct-tmux path
+        # below. `--no-runner` skips this branch entirely (offline / dev mode).
         if [[ "$VIA_RUNNER" -eq 1 ]]; then
             if mapfile -t _endpoint < <(read_runner_endpoint); then
                 _host="${_endpoint[0]}"
                 _port="${_endpoint[1]}"
                 _token="${_endpoint[2]}"
-                echo "via-runner: spawning via http://${_host}:${_port}" >&2
+                _human="${USER:-${LOGNAME:-}}"
+                echo "runner: spawning via http://${_host}:${_port} (human=${_human:-<unset>})" >&2
                 # Build the repo list using same Python parse as the local path
                 mapfile -t _repo_rows < <(
                     ${PYTHON} - <<EOF
@@ -329,8 +355,8 @@ EOF
                     fi
                     _attach=$(runner_spawn_one "$_host" "$_port" "$_token" \
                         "$_agent_name" "$_repo_name" "$MAESTRO_ROOT" \
-                        "${MAESTRO_ACTIVE_ACCOUNT:-}") || {
-                        echo "via-runner: spawn failed for $_repo_name; will fall back to local" >&2
+                        "${MAESTRO_ACTIVE_ACCOUNT:-}" "$_human") || {
+                        echo "runner: spawn failed for $_repo_name; falling back to direct tmux spawn" >&2
                         VIA_RUNNER=0
                         break
                     }
@@ -343,7 +369,7 @@ EOF
                     eval "exec $_attach_first"
                 fi
             else
-                echo "via-runner: no endpoint file at ~/.otaman/runner.endpoint; falling back to local spawn" >&2
+                echo "runner: no endpoint file at ~/.otaman/runner.endpoint; falling back to direct tmux spawn (start the runner daemon or pass --no-runner to silence)" >&2
                 VIA_RUNNER=0
             fi
         fi

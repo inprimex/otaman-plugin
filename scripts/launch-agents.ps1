@@ -37,7 +37,8 @@ param(
     [switch]$Close,               # Kill tmux sessions for selected repos (don't open tabs)
     [switch]$Restart,             # Kill then re-launch (combination of -Close + normal launch)
     [switch]$Yes,                 # Skip confirmation prompts (for -Close / -Restart automation)
-    [switch]$ViaRunner            # B-41: dispatch each repo through otaman-runner's HTTP API (per ADR-009). Falls back to local wt.exe spawn when endpoint missing or /spawn fails.
+    [switch]$ViaRunner,           # Deprecated no-op (runner is now the default in tmux mode per auto-session-spawn-implementation task 4.3). Kept for back-compat.
+    [switch]$NoRunner             # Skip otaman-runner; spawn wt.exe tabs directly. Use when the runner daemon isn't installed or for offline dev.
 )
 
 # ============================================================
@@ -50,15 +51,17 @@ function Write-Warn { param($m) Write-Host "  [!]  $m" -ForegroundColor Yellow }
 function Write-Err  { param($m) Write-Host "  [X]  $m" -ForegroundColor Red }
 
 # ============================================================
-# Otaman-runner client (B-41 — companion to bash --via-runner per ADR-009)
+# Otaman-runner client (companion to bash launcher's runner path per ADR-009)
 # ============================================================
 # Parses ~/.otaman/runner.endpoint and POSTs /spawn for each repo, mirroring
 # scripts/launch-agents.sh:read_runner_endpoint / runner_spawn_one.
 #
-# Used only when -ViaRunner is passed. Endpoint-missing or any /spawn failure
-# falls back to the local wt.exe spawn path (laptop dev parity per spec-agent
-# 20260522T205846). Fallback is logged as `[degraded mode: runner unavailable;
-# using local fallback]` so the user knows which spawn path actually ran.
+# Runner-first is the default in wt.exe tmux mode (auto-session-spawn-
+# implementation task 4.3). Endpoint-missing or any /spawn failure falls back
+# to the legacy wt.exe spawn path (laptop dev parity per spec-agent
+# 20260522T205846). Pass -NoRunner to skip the runner entirely. Fallback is
+# logged as `[degraded mode: runner unavailable; using local fallback]` so the
+# user knows which spawn path actually ran.
 
 function Read-RunnerEndpoint {
     $path = Join-Path $HOME ".otaman/runner.endpoint"
@@ -81,12 +84,18 @@ function Invoke-RunnerSpawn {
     # POST /spawn against the runner daemon. Returns the attach_command on
     # success; throws on HTTP / payload error so the caller can catch and
     # trigger the local-fallback path.
+    #
+    # Body shape per auto-session-spawn-implementation proposal §4: agent +
+    # repo + project_root + mode are required; account + human are forwarded
+    # when set. `human` is the bridge-facing alias for `user` (drives the
+    # session-registry dedup key per Q1 of auto-session-spawn-on-bus-events).
     param(
         [Parameter(Mandatory)] $Endpoint,
         [Parameter(Mandatory)][string] $Agent,
         [Parameter(Mandatory)][string] $Repo,
         [Parameter(Mandatory)][string] $ProjectRoot,
-        [string] $Account = ""
+        [string] $Account = "",
+        [string] $Human = ""
     )
     $body = @{
         agent        = $Agent
@@ -94,6 +103,7 @@ function Invoke-RunnerSpawn {
         project_root = $ProjectRoot
         mode         = "interactive"
         account      = if ($Account) { $Account } else { $null }
+        human        = if ($Human)   { $Human }   else { $null }
     } | ConvertTo-Json -Compress
     $uri = "http://$($Endpoint.Host):$($Endpoint.Port)/spawn"
     $headers = @{ Authorization = "Bearer $($Endpoint.Token)"; "Content-Type" = "application/json" }
@@ -1828,17 +1838,20 @@ $separateWindows = @() # PuTTY/KiTTY separate windows
 # Resolve WSL distro: CLI arg > connection > default Ubuntu
 $effectiveWslDistro = if ($WslDistro) { $WslDistro } elseif ($activeConn['wsl_distro']) { $activeConn['wsl_distro'] } else { 'Ubuntu' }
 
-# B-41: -ViaRunner dispatches each repo through otaman-runner's HTTP API.
-# Bash parity: scripts/launch-agents.sh:300 (tmux mode --via-runner branch).
-# Each successful /spawn returns an attach_command; we render it as a wt.exe
-# tab body (run inside WSL so the bash one-liner executes natively). On any
-# error we fall through to the existing per-shell tab build below, with a
-# `[degraded mode: ...]` notice so the user knows which path actually ran.
+# Runner-first dispatch (default in wt.exe tmux mode per auto-session-spawn-
+# implementation task 4.3). Each repo's spawn goes through otaman-runner's
+# HTTP /spawn endpoint; the runner returns an attach_command which we render
+# as a wt.exe tab body (run inside WSL so the bash one-liner executes
+# natively). If the endpoint file is missing or any /spawn fails we fall
+# through to the existing per-shell tab build below with a
+# `[degraded mode: ...]` notice so the user knows which spawn path actually
+# ran. Pass -NoRunner to skip the runner entirely (offline / dev mode).
 $useRunnerTabs = $false
-if ($ViaRunner) {
+if (-not $NoRunner) {
     $endpoint = Read-RunnerEndpoint
     if ($endpoint) {
-        Write-Host "via-runner: spawning via http://$($endpoint.Host):$($endpoint.Port)" -ForegroundColor DarkGray
+        $human = $env:USERNAME
+        Write-Host "runner: spawning via http://$($endpoint.Host):$($endpoint.Port) (human=$(if ($human) { $human } else { '<unset>' }))" -ForegroundColor DarkGray
         $runnerWtTabs = @()
         $runnerOk = $true
         foreach ($repo in $valid) {
@@ -1847,9 +1860,9 @@ if ($ViaRunner) {
             if (-not $rColor.StartsWith('#')) { $rColor = "#$rColor" }
             $rAgent = if ($repo.owner) { $repo.owner } else { $repo.name }
             try {
-                $attachCmd = Invoke-RunnerSpawn -Endpoint $endpoint -Agent $rAgent -Repo $repo.name -ProjectRoot $cfgParent -Account $activeAccountName
+                $attachCmd = Invoke-RunnerSpawn -Endpoint $endpoint -Agent $rAgent -Repo $repo.name -ProjectRoot $cfgParent -Account $activeAccountName -Human $human
             } catch {
-                Write-Warn "via-runner: spawn failed for $($repo.name): $_"
+                Write-Warn "runner: spawn failed for $($repo.name): $_"
                 $runnerOk = $false
                 break
             }
@@ -1868,7 +1881,7 @@ if ($ViaRunner) {
         }
     } else {
         Write-Warn "[degraded mode: runner unavailable; using local fallback]"
-        Write-Host "  (no endpoint file at ~/.otaman/runner.endpoint)" -ForegroundColor DarkGray
+        Write-Host "  (no endpoint file at ~/.otaman/runner.endpoint; start the runner daemon or pass -NoRunner to silence)" -ForegroundColor DarkGray
     }
 }
 
