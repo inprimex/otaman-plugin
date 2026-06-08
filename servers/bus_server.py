@@ -207,10 +207,20 @@ def _compute_response_badges(
 
 
 def _get_agent_identity(root: Path, cwd: str | None = None) -> str | None:
-    """Determine agent name from CLAUDE.md (repo-specific) or current-agent (global).
+    """Determine agent name from CLAUDE.md, .otaman marker, or current-agent fallback.
 
-    CLAUDE.md is checked first because it's per-repo and more specific,
-    while current-agent is a project-wide default.
+    Resolution order (first match wins):
+
+    1. ``CLAUDE.md`` in ``cwd`` — regex ``You are `<name>``` (per-repo, most
+       specific). Many repos' CLAUDE.md don't carry this exact phrasing, so
+       step 2 is the load-bearing identity source in practice.
+    2. ``.otaman`` marker in ``cwd`` — ``agent:`` field (per-repo canonical
+       identity, per the agent-identity-per-directory spec). Walks up the
+       directory tree from ``cwd`` via ``otaman_core._resolve.read_agent``.
+    3. ``.agents/current-agent`` at the project root (global fallback).
+       Project root resolves to the otaman folder, so this returns whatever
+       identity was last written there — typically wrong when ``cwd`` is
+       inside another agent's repo. Kept as a defensive last resort.
     """
     # 1. Try CLAUDE.md in cwd (most specific — per-repo identity)
     if cwd:
@@ -220,7 +230,17 @@ def _get_agent_identity(root: Path, cwd: str | None = None) -> str | None:
             m = re.search(r"You are `([^`]+)`", text)
             if m:
                 return m.group(1)
-    # 2. Fall back to global current-agent file
+    # 2. Try .otaman marker agent: field via the CWD ancestry walk.
+    # This is the canonical per-repo identity source; almost every managed
+    # repo carries a .otaman with `agent: <name>`. Importing inside the
+    # function keeps the otaman_core dependency lazy (matches the pattern
+    # already used by _find_project_root).
+    if cwd:
+        from otaman_core._resolve import read_agent
+        name = read_agent(_normalize_path(cwd))
+        if name:
+            return name
+    # 3. Fall back to global current-agent file (last resort).
     agent_file = root / ".agents" / "current-agent"
     if agent_file.exists():
         name = agent_file.read_text(encoding="utf-8").strip()
