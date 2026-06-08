@@ -18,12 +18,12 @@ jobs:
 
     steps:
       - name: Checkout otaman-plugin
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           path: workspace/otaman-plugin
 
       - name: Checkout otaman-core (sibling path-dep)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: inprimex/otaman-core
           token: ${{ secrets.INPRIMEX_RO_TOKEN }}
