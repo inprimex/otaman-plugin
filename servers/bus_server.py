@@ -113,6 +113,162 @@ def _extract_subject(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# bus-cc-routing — CC fan-out (tasks 1.1-1.4)
+# ---------------------------------------------------------------------------
+
+def _parse_cc_field(text: str) -> list[str]:
+    """Parse the optional ``cc:`` field from a message's YAML frontmatter.
+
+    The field is optional; absent or empty values yield ``[]``. Both
+    inline (``cc: [a, b]``) and block (``cc:\\n  - a\\n  - b``) list shapes
+    are supported. Whitespace and quoting are tolerated.
+    """
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    if not m:
+        return []
+    fm_text = m.group(1)
+    lines = fm_text.splitlines()
+    result: list[str] = []
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("cc:"):
+            continue
+        # Inline form: ``cc: [a, b, c]``
+        rest = stripped[3:].strip()
+        if rest.startswith("[") and rest.endswith("]"):
+            inner = rest[1:-1]
+            for item in inner.split(","):
+                name = item.strip().strip('"').strip("'")
+                if name:
+                    result.append(name)
+            return result
+        # Block form: subsequent indented ``- agent-name`` lines.
+        # Walk forward until we hit a non-indented line or another key.
+        for next_line in lines[idx + 1 :]:
+            if not next_line.startswith((" ", "\t", "-")):
+                break
+            item = next_line.strip()
+            if item.startswith("-"):
+                name = item[1:].strip().strip('"').strip("'")
+                if name:
+                    result.append(name)
+        return result
+    return []
+
+
+def _load_routing_rules(root: Path) -> list[dict[str, Any]]:
+    """Load ``bus.routing_rules`` from ``platform.yaml`` at the project root.
+
+    Returns an empty list when the file is missing, malformed, or contains
+    no ``bus.routing_rules`` section. Pure YAML parse — schema validation
+    happens at rule evaluation time.
+    """
+    platform = root / "platform.yaml"
+    if not platform.is_file():
+        return []
+    try:
+        import yaml  # local import keeps the module load lightweight
+    except ImportError:
+        return []
+    try:
+        data = yaml.safe_load(platform.read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError):
+        return []
+    bus_cfg = data.get("bus") or {}
+    rules = bus_cfg.get("routing_rules") or []
+    if not isinstance(rules, list):
+        return []
+    return [r for r in rules if isinstance(r, dict)]
+
+
+def evaluate_routing_rules(
+    rules: list[dict[str, Any]],
+    to: str,
+    priority: str,
+) -> set[str]:
+    """Return the union of ``cc:`` lists from all rules that match.
+
+    Per bus-cc-routing design Q3: rules are evaluated in order, but all
+    matching rules contribute (union, not first-match-wins). A rule matches
+    when every ``when.<field>`` constraint is satisfied:
+
+    - ``when.to: <name>`` requires exact string equality with ``to``.
+    - ``when.priority: <val>`` matches when ``priority`` equals the single
+      value, or appears in a list (OR semantics for the list form).
+
+    Unknown ``when`` keys cause the rule to be skipped silently — keeps the
+    evaluator forward-compatible with future ``when`` extensions without
+    breaking older bus servers.
+    """
+    cc_union: set[str] = set()
+    supported_when_keys = {"to", "priority"}
+    for rule in rules:
+        when = rule.get("when") or {}
+        if not isinstance(when, dict):
+            continue
+        if not set(when.keys()).issubset(supported_when_keys):
+            continue
+        if "to" in when and when["to"] != to:
+            continue
+        if "priority" in when:
+            pri = when["priority"]
+            if isinstance(pri, list):
+                if priority not in pri:
+                    continue
+            elif pri != priority:
+                continue
+        cc_list = rule.get("cc") or []
+        if not isinstance(cc_list, list):
+            continue
+        for name in cc_list:
+            if isinstance(name, str) and name:
+                cc_union.add(name)
+    return cc_union
+
+
+def _compute_effective_cc(
+    to: str,
+    priority: str,
+    explicit_cc: list[str] | None,
+    routing_rules: list[dict[str, Any]],
+) -> list[str]:
+    """Compose the effective CC list per bus-cc-routing Q1.
+
+    - Union of explicit sender ``cc`` and routing-rule-derived ``cc``
+    - Deduplicated (set semantics) but returned in a stable insertion order
+      so test assertions and the on-disk message stay deterministic
+    - The primary ``to`` recipient is excluded even if a rule names them
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+    candidates: list[str] = []
+    if explicit_cc:
+        candidates.extend(c for c in explicit_cc if isinstance(c, str) and c)
+    candidates.extend(sorted(evaluate_routing_rules(routing_rules, to, priority)))
+    for name in candidates:
+        if name == to or name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return ordered
+
+
+def _inject_x_cc(content: str) -> str:
+    """Insert ``x-cc: true`` into the existing frontmatter of *content*.
+
+    The line is appended after the last frontmatter field, before the
+    closing ``---`` delimiter. The original message file is never mutated;
+    this helper is called only when writing per-recipient CC copies.
+    """
+    m = re.match(r"^(---\s*\n)(.*?)(\n---)", content, re.DOTALL)
+    if not m:
+        return content  # malformed frontmatter; caller will not reach here
+    head, fm_body, tail = m.group(1), m.group(2), m.group(3)
+    new_fm = fm_body.rstrip("\n") + "\nx-cc: true"
+    return head + new_fm + tail + content[m.end():]
+
+
+# ---------------------------------------------------------------------------
 # Response-contract badges (inter-agent-request-response-contract tasks 3.2 + 3.3)
 # ---------------------------------------------------------------------------
 #
@@ -377,6 +533,7 @@ def otaman_send(
     body: str,
     msg_type: str = "info",
     priority: str = "normal",
+    cc: list[str] | None = None,
 ) -> dict[str, Any]:
     """Send a message to another agent or all agents via the otaman bus.
 
@@ -387,6 +544,10 @@ def otaman_send(
         body: Message body (markdown)
         msg_type: Message type: info, question, contract-change, spec-change-request, review-request, proposal
         priority: Priority: low, normal, high, urgent
+        cc: Optional list of additional agents to receive a copy. Routing
+            rules in ``platform.yaml`` ``bus.routing_rules`` are unioned in;
+            the primary ``to`` recipient is excluded; copies carry
+            ``x-cc: true`` in their frontmatter (bus-cc-routing spec).
     """
     root = _find_project_root(cwd)
     if not root:
@@ -401,11 +562,23 @@ def otaman_send(
     slug = re.sub(r"[^a-z0-9]+", "-", subject.lower())[:40].strip("-")
     filename = f"{ts}-{agent}-to-{to}-{slug}.md"
 
+    # bus-cc-routing fan-out: compose the effective CC from the sender's
+    # explicit list (if any) and the routing rules in platform.yaml. The
+    # primary `to` is always excluded; rules are evaluated all-matching
+    # (union, not first-match-wins) per design Q3.
+    routing_rules = _load_routing_rules(root)
+    effective_cc = _compute_effective_cc(to, priority, cc, routing_rules)
+
+    # Frontmatter — `cc:` is included on the primary message so recipients
+    # see who else got a copy (design Q2). `x-cc:` is added only to copies.
+    cc_line = ""
+    if effective_cc:
+        cc_line = f"cc: [{', '.join(effective_cc)}]\n"
     content = f"""---
 id: {ts}-{agent[:8]}
 from: {agent}
 to: {to}
-priority: {priority}
+{cc_line}priority: {priority}
 type: {msg_type}
 timestamp: {ts_iso}
 status: pending
@@ -431,6 +604,19 @@ status: pending
     msg_path = bus / filename
     msg_path.write_text(content, encoding="utf-8")
 
+    # Write one CC copy per recipient. Each carries `x-cc: true` injected
+    # into the frontmatter (original primary file is never modified). The
+    # filename embeds the CC recipient so copies don't collide with the
+    # primary or with each other on disk.
+    cc_copies: list[str] = []
+    if effective_cc:
+        cc_content = _inject_x_cc(content)
+        for rcpt in effective_cc:
+            cc_filename = f"{ts}-{agent}-to-{to}-cc-{rcpt}-{slug}.md"
+            cc_path = bus / cc_filename
+            cc_path.write_text(cc_content, encoding="utf-8")
+            cc_copies.append(cc_path.stem)
+
     result: dict[str, Any] = {
         "sent": True,
         "filename": filename,
@@ -438,6 +624,9 @@ status: pending
         "from": agent,
         "to": to,
     }
+    if effective_cc:
+        result["cc"] = effective_cc
+        result["cc_copies"] = cc_copies
     if warning:
         result["warning"] = warning
     return result
