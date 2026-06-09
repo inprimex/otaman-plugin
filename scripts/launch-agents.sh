@@ -443,6 +443,10 @@ EOF
         # One session per repo. Session name: "${project}:${owner}". The `=`
         # prefix on -t forces exact match (tmux 2.5+) so `otaman:plugin-agent`
         # is not parsed as session `otaman`, window `plugin-agent`.
+        #
+        # Window name is set to the repo name (task 1.5) so the tmux status
+        # bar reads "<project>:<owner>:<repo>" — surfaces project + agent +
+        # program at a glance without context-switching.
         first_session=""
         for row in "${filtered[@]}"; do
             IFS='|' read -r name path owner <<< "$row"
@@ -450,7 +454,7 @@ EOF
             if tmux has-session -t "=${session}" 2>/dev/null; then
                 echo "tmux: session '$session' already running; not respawning" >&2
             else
-                tmux new-session -d -s "$session" -c "$path"
+                tmux new-session -d -s "$session" -n "$name" -c "$path"
                 tmux send-keys -t "=${session}" "$claude_loop" C-m
             fi
             [[ -z "$first_session" ]] && first_session="$session"

@@ -1177,7 +1177,8 @@ function Get-ProjectName {
 function Wrap-WithTmux {
     param(
         [string]$SessionName,
-        [string]$InnerCommand
+        [string]$InnerCommand,
+        [string]$WindowName = ""    # Per fix-launcher-tmux-session-naming task 2.5: window name = repo
     )
     # Build-EnvPrefix emits ``$HOME`` (backtick + $HOME) so PS
     # Invoke-Expression on the un-tmux'd path leaves a literal `$HOME` for
@@ -1230,7 +1231,15 @@ function Wrap-WithTmux {
     # the colon in `<program>:<agent-name>` is not parsed as session:window.
     # Single-quote the name to prevent the remote shell from interpreting
     # the colon before tmux sees it.
-    return "( tmux has-session -t '=$SessionName' 2>/dev/null || tmux new-session -d -s '$SessionName' bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t '=$SessionName'"
+    #
+    # `-n '<repo>'` sets the window name at session creation so the tmux
+    # status bar reads "<program>:<agent>:<repo>" (per task 2.5). Omitted
+    # when WindowName is empty so legacy callers see no behavioural change.
+    $newSessionArgs = "-d -s '$SessionName'"
+    if ($WindowName) {
+        $newSessionArgs += " -n '$WindowName'"
+    }
+    return "( tmux has-session -t '=$SessionName' 2>/dev/null || tmux new-session $newSessionArgs bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t '=$SessionName'"
 }
 
 function Build-SshCommand {
@@ -1274,7 +1283,7 @@ function Build-SshCommand {
             }
         }
         $session = "${ProjectName}:${agentForSession}"
-        $chainedCmd = Wrap-WithTmux -SessionName $session -InnerCommand $chainedCmd
+        $chainedCmd = Wrap-WithTmux -SessionName $session -InnerCommand $chainedCmd -WindowName $RepoName
     }
 
     # Resolve host: per-repo > CLI param > settings default

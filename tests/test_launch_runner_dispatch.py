@@ -84,6 +84,14 @@ class TestBashLauncherContract:
         assert '_human="${USER:-${LOGNAME:-}}"' in text
         assert '"$_human"' in text
 
+    def test_tmux_new_session_sets_window_name(self, text: str):
+        # Per fix-launcher-tmux-session-naming task 1.5: tmux new-session
+        # must include `-n "$name"` so the status bar reads
+        # "<project>:<owner>:<repo>". The fallback (direct-tmux) path
+        # creates the session; runner-path callers leave window naming
+        # to the runner.
+        assert 'tmux new-session -d -s "$session" -n "$name" -c "$path"' in text
+
 
 # ---------------------------------------------------------------------------
 # PS1 text-based contract tests
@@ -125,6 +133,25 @@ class TestPs1LauncherContract:
     def test_dispatch_passes_username(self, text: str):
         assert "$human = $env:USERNAME" in text
         assert "-Human $human" in text
+
+    def test_wrap_with_tmux_accepts_window_name(self, text: str):
+        # Per fix-launcher-tmux-session-naming task 2.5: Wrap-WithTmux now
+        # accepts a $WindowName parameter and emits `-n '<repo>'` when set.
+        # Slice from function header to the first `^}` that closes it.
+        idx = text.index("function Wrap-WithTmux")
+        end = text.index("\n}\n", idx)
+        snippet = text[idx:end]
+        assert "[string]$WindowName" in snippet, (
+            "Wrap-WithTmux must accept a $WindowName parameter"
+        )
+        assert "-n '$WindowName'" in snippet, (
+            "Wrap-WithTmux must emit `-n '<repo>'` in tmux new-session args"
+        )
+
+    def test_build_ssh_command_passes_repo_as_window_name(self, text: str):
+        # The Wrap-WithTmux call in Build-SshCommand must forward $RepoName
+        # as the WindowName so the remote tmux window picks it up.
+        assert "-WindowName $RepoName" in text
 
 
 # ---------------------------------------------------------------------------
