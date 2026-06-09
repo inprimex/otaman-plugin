@@ -362,6 +362,34 @@ def _compute_response_badges(
     return badges
 
 
+def _extract_cc_recipient_from_stem(
+    stem: str, cc_list: list[str] | None = None
+) -> str | None:
+    """Identify which CC recipient a bus message file is addressed to.
+
+    CC copies follow the filename convention
+    ``<ts>-<from>-to-<to>-cc-<recipient>-<slug>``. Agent names contain
+    hyphens (``spec-agent``, ``cpo-agent``) and the slug also starts with
+    a hyphen, so a naive regex like ``-cc-([a-z0-9-]+?)-`` is ambiguous.
+
+    We disambiguate using the message's own ``cc:`` frontmatter list as a
+    name dictionary: after splitting on ``-cc-`` we check which cc-list
+    member prefixes the remaining stem. This is robust to arbitrary slug
+    content and any future agent naming convention. When ``cc_list`` is
+    not supplied, falls back to ``None`` (caller should always pass the
+    list when running on a real bus file).
+    """
+    if "-cc-" not in stem:
+        return None
+    tail = stem.split("-cc-", 1)[1]
+    if not cc_list:
+        return None
+    for name in cc_list:
+        if tail == name or tail.startswith(name + "-"):
+            return name
+    return None
+
+
 def _get_agent_identity(root: Path, cwd: str | None = None) -> str | None:
     """Determine agent name from CLAUDE.md, .otaman marker, or current-agent fallback.
 
@@ -439,6 +467,7 @@ def otaman_check(
     bus = _bus_dir(root)
     acks = _acks_dir(root)
     messages: list[dict[str, Any]] = []
+    cc_messages: list[dict[str, Any]] = []
 
     # Pre-compute the agent's outbound reply set once. Drives the
     # `awaiting-response` badge per inter-agent-request-response-contract.
@@ -449,13 +478,31 @@ def otaman_check(
         for msg_path in sorted(bus.glob("*.md")):
             text = msg_path.read_text(encoding="utf-8")
             fm = _parse_frontmatter(text)
-
-            # Check addressing
-            to = fm.get("to", "").strip()
-            if to != agent and to != "all":
-                continue
-
             stem = msg_path.stem
+
+            # CC copy routing (bus-cc-routing task 2.3).
+            # A CC copy is identified by `x-cc: true` in frontmatter; the
+            # CC recipient is encoded in the filename suffix `-cc-<agent>-`,
+            # disambiguated against the file's `cc:` list (agent names and
+            # slugs both contain hyphens). We surface the copy ONLY to its
+            # target recipient, then route it into the separate `cc_messages`
+            # list (never `messages`).
+            is_cc_copy = fm.get("x-cc", "").strip().lower() == "true"
+            cc_list_for_routing = _parse_cc_field(text) if is_cc_copy else []
+            cc_recipient = (
+                _extract_cc_recipient_from_stem(stem, cc_list_for_routing)
+                if is_cc_copy
+                else None
+            )
+
+            if is_cc_copy:
+                if cc_recipient != agent:
+                    continue
+            else:
+                # Primary-message addressing (unchanged for back-compat)
+                to = fm.get("to", "").strip()
+                if to != agent and to != "all":
+                    continue
 
             # Check ack status for this agent
             ack_file = acks / f"{stem}.{agent}.ack"
@@ -468,22 +515,34 @@ def otaman_check(
             if status_filter != "all" and ack_val != status_filter:
                 continue
 
-            messages.append({
+            entry: dict[str, Any] = {
                 "stem": stem,
                 "from": fm.get("from", "unknown"),
-                "to": to,
+                "to": fm.get("to", "").strip(),
                 "type": fm.get("type", "info"),
                 "priority": fm.get("priority", "normal"),
                 "timestamp": fm.get("timestamp", ""),
                 "status": ack_val,
                 "subject": _extract_subject(text),
                 "badges": _compute_response_badges(fm, outbound_reply_ids, now),
-            })
+            }
+            if is_cc_copy:
+                # CC entries always carry the cc list so the recipient sees
+                # who else got a copy. The primary `to` field is preserved
+                # so consumers can show "from X to Y, you were CC'd".
+                entry["cc"] = _parse_cc_field(text)
+                cc_messages.append(entry)
+            else:
+                messages.append(entry)
 
-    # Sort: urgent first, then by timestamp descending
+    # Sort: urgent first, then by timestamp descending. Apply to both
+    # primary `messages` and the bus-cc-routing `cc_messages` list so
+    # both surfaces share a consistent ordering.
     priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
     messages.sort(key=lambda m: (priority_order.get(m["priority"], 2), m["timestamp"]), reverse=False)
     messages.sort(key=lambda m: priority_order.get(m["priority"], 2))
+    cc_messages.sort(key=lambda m: (priority_order.get(m["priority"], 2), m["timestamp"]), reverse=False)
+    cc_messages.sort(key=lambda m: priority_order.get(m["priority"], 2))
 
     # Check blocked tasks
     blocked: list[dict[str, str]] = []
@@ -510,6 +569,9 @@ def otaman_check(
                 "status_note": status_note,
             })
 
+    # Counts cover primary messages only — keeps the existing semantics
+    # stable for legacy consumers. CC copies are informational; consumers
+    # that want CC totals can sum `cc_messages` themselves.
     counts = {
         "pending": sum(1 for m in messages if m["status"] == "pending"),
         "read": sum(1 for m in messages if m["status"] == "read"),
@@ -520,6 +582,7 @@ def otaman_check(
         "agent": agent,
         "project_root": str(root),
         "messages": messages,
+        "cc_messages": cc_messages,
         "blocked_tasks": blocked,
         "counts": counts,
     }
