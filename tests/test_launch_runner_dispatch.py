@@ -153,6 +153,27 @@ class TestPs1LauncherContract:
         # as the WindowName so the remote tmux window picks it up.
         assert "-WindowName $RepoName" in text
 
+    def test_wt_launch_uses_start_process_not_invoke_expression(self, text: str):
+        # Regression guard for the 2026-06-09 multi-tab bug. Invoke-Expression
+        # re-parses the wt.exe command string, splitting on PowerShell's `;`
+        # statement separator, so only the first new-tab ever opened. The
+        # fix routes through Start-Process which forwards the arg string
+        # verbatim to wt.exe (which handles `;` as its own tab separator).
+        assert 'Start-Process "wt.exe" -ArgumentList $wtArgs' in text, (
+            "wt.exe launch must use Start-Process; Invoke-Expression splits "
+            "on `;` and drops every tab after the first"
+        )
+        # Sanity: the legacy Invoke-Expression path must NOT come back.
+        # (The dry-run block has separate write paths that don't use it; this
+        # check targets the actual launch sites only.)
+        launch_block_start = text.index("if ($wtTabs.Count -gt 0)")
+        launch_block_end = text.index("# Launch PuTTY", launch_block_start)
+        launch_block = text[launch_block_start:launch_block_end]
+        assert "Invoke-Expression $wtCmd" not in launch_block, (
+            "Invoke-Expression $wtCmd must not be re-introduced in the wt.exe "
+            "launch block — it caused the 2026-06-09 multi-tab bug"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Runtime test — mock HTTP server captures the bash runner_spawn_one body

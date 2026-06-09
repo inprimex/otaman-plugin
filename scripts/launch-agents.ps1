@@ -2015,8 +2015,20 @@ if ($wtTabs.Count -gt 0) {
             Write-Host "$pfx $($wtTabs[$j])" -ForegroundColor DarkGray
         }
     } else {
-        try { Invoke-Expression $wtCmd; Write-Ok "Launched $($wtTabs.Count) WT tab(s)" }
-        catch { Write-Err "Windows Terminal failed: $_" }
+        # Pass the wt.exe arg string to Start-Process so PowerShell does NOT
+        # re-parse it. Invoke-Expression treats `;` as a PS statement separator
+        # and splits the command, so only the first new-tab ever ran — every
+        # tab after the first was silently dropped. wt.exe's own parser handles
+        # `;` correctly as its tab separator when it receives the full arg
+        # string verbatim. Strip the leading "wt.exe " literal and forward
+        # the rest unchanged.
+        $wtArgs = $wtCmd -replace '^wt\.exe\s+', ''
+        try {
+            Start-Process "wt.exe" -ArgumentList $wtArgs
+            Write-Ok "Launched $($wtTabs.Count) WT tab(s)"
+        } catch {
+            Write-Err "Windows Terminal failed: $_"
+        }
     }
 }
 
