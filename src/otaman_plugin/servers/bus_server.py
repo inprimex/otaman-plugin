@@ -68,8 +68,6 @@ def _find_project_root(start: str | None = None) -> Path | None:
     repo carries a .otaman/.maestro marker  # legacy: .maestro marker supported, so the server cwd resolves correctly even
     when the agent supplies a useless value.
     """
-    import sys as _sys
-    _scripts = Path(__file__).resolve().parent.parent / "scripts"
     from otaman_core._resolve import find_maestro_root
 
     if start and start.strip():
@@ -1197,8 +1195,23 @@ def otaman_cleanup(cwd: str, dry_run: bool = False) -> dict[str, Any]:
     if not root:
         return {"error": "No otaman project found"}
 
-    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+    # Locate the cleanup helper at <repo>/scripts/cleanup-bus.py. After
+    # ce-org-agent-bootstrap moved this module into the otaman_plugin.servers
+    # package, the path is four parents up (servers → otaman_plugin → src →
+    # repo). When installed via pip the repo-root scripts/ tree isn't
+    # present; report a clean error in that case rather than spawning a
+    # missing-file traceback.
+    scripts_dir = Path(__file__).resolve().parents[3] / "scripts"
     script = scripts_dir / "cleanup-bus.py"
+    if not script.is_file():
+        return {
+            "error": (
+                "cleanup-bus.py not found alongside the plugin source. "
+                "This MCP tool requires the otaman-plugin dev layout; the "
+                "CE installed-package mode does not currently ship the "
+                "helper script."
+            )
+        }
 
     cmd = [sys.executable, str(script), str(root)]
     if dry_run:

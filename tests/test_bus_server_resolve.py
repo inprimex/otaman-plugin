@@ -14,10 +14,9 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "servers"))
 # _resolve now imported from otaman_core (sibling repo on pytest pythonpath)
 
-from bus_server import _find_project_root
+from otaman_plugin.servers.bus_server import _find_project_root
 
 
 @pytest.fixture

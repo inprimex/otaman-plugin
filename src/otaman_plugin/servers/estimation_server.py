@@ -45,10 +45,16 @@ def _find_plugin_root() -> Path | None:
         p = Path(env_root)
         if (p / "assets").is_dir():
             return p
-    # Walk up from this file
-    d = Path(__file__).resolve().parent.parent
-    if (d / "assets").is_dir():
-        return d
+    # Walk up from this file to find the repo root that holds `assets/`.
+    # After ce-org-agent-bootstrap moved this module under
+    # otaman_plugin.servers, the repo root is four parents up
+    # (servers → otaman_plugin → src → repo). Both depths are checked so
+    # the legacy `servers/estimation_server.py` invocation path keeps
+    # working if the file is ever symlinked back.
+    here = Path(__file__).resolve()
+    for candidate in (here.parents[3], here.parents[1]):
+        if (candidate / "assets").is_dir():
+            return candidate
     return None
 
 

@@ -15,9 +15,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "servers"))
 
-from bus_server import (
+from otaman_plugin.servers.bus_server import (
     _collect_outbound_reply_ids,
     _compute_response_badges,
     _parse_iso8601,

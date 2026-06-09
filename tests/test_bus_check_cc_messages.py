@@ -20,9 +20,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "servers"))
 
-from bus_server import (  # noqa: E402
+from otaman_plugin.servers.bus_server import (  # noqa: E402
     _extract_cc_recipient_from_stem,
     otaman_check,
     otaman_send,

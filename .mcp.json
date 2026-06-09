@@ -4,7 +4,7 @@
       "command": "bash",
       "args": [
         "${CLAUDE_PLUGIN_ROOT}/servers/run-server.sh",
-        "bus_server.py"
+        "otaman_plugin.servers.bus_server"
       ],
       "env": {
         "PYTHONUNBUFFERED": "1"
@@ -14,7 +14,7 @@
       "command": "bash",
       "args": [
         "${CLAUDE_PLUGIN_ROOT}/servers/run-server.sh",
-        "estimation_server.py"
+        "otaman_plugin.servers.estimation_server"
       ],
       "env": {
         "PYTHONUNBUFFERED": "1"
