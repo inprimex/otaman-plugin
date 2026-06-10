@@ -65,6 +65,25 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 - Message handling while busy: ack as `read`, add to queue, finish current task first
 - Urgent messages: pause current work, inform the human immediately
 
+### Agent Status (REQUIRED)
+
+Before writing any code for a specific task, call:
+```
+otaman set-status working --task "<N.M task description>" --change <change-name>
+```
+
+When waiting on another agent or a dependency:
+```
+otaman set-status waiting --task "<N.M ...>" --change <change-name>
+```
+
+When done with all current tasks:
+```
+otaman set-status idle
+```
+
+This is a single CLI call — no file editing, no token overhead. It lets the human see live fleet state in `otaman status` and in `otaman check`. Per `agent-status-presence` design Q3.
+
 ### Task Queue
 - Your queue file: `../otaman-meta/.agents/queue/plugin-agent.md`
 - Max 1 active task at a time — finish or pause before switching
