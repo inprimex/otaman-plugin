@@ -586,6 +586,159 @@ def otaman_check(
     }
 
 
+# ---------------------------------------------------------------------------
+# auto-clear-blocked-entries — tombstone helper (tasks 1.1, 1.3, 1.4)
+# ---------------------------------------------------------------------------
+#
+# When `otaman_send` emits a spec-change-approved / spec-change-rejected /
+# task-assignment message, scan every agent's `.agents/blocked/<agent>.md`
+# file and tombstone matching `## Blocked:` entries by wrapping them in an
+# HTML comment with a `cleared <date> — <reason>` trailer. The
+# `check-blocked.sh` PreToolUse hook then no longer sees the entry as
+# active because its regex matches `^## Blocked:` line-leading headers only.
+#
+# Matching strategy by message type:
+#   - spec-change-approved / spec-change-rejected: extract proposal stems
+#     from the message body and match them against the `**Proposal**:` field
+#     in each blocked entry. Reason: "approved" or "rejected".
+#   - task-assignment (fallback): compare the message's `change:` value
+#     against the `**Change**:` field in each blocked entry. Entries that
+#     lack the field are skipped silently for back-compat with entries
+#     created before this change. Reason: "task-assigned".
+
+# Bus filenames follow `<ts>-<from>-to-<to>-<slug>` where every component
+# uses kebab-case. Spec wrote `[a-z0-9]+` for the agent part, but real
+# agent names contain hyphens (`plugin-agent`); widened to `[a-z0-9-]+`
+# here. Flagged in the PR; the spec text is the part out of sync, not
+# this implementation.
+_PROPOSAL_STEM_RE = re.compile(
+    r"\d{8}T\d{6}-[a-z0-9-]+-to-[a-z0-9-]+-[a-z0-9-]+"
+)
+
+_TOMBSTONE_REASONS: dict[str, str] = {
+    "spec-change-approved": "approved",
+    "spec-change-rejected": "rejected",
+    "task-assignment": "task-assigned",
+}
+
+
+def _extract_proposal_stems(body: str) -> list[str]:
+    """Find proposal-stem references in a message body.
+
+    Returns every match of the canonical bus filename pattern; callers
+    typically convert to a set for membership tests. An empty body yields
+    the empty list.
+    """
+    return _PROPOSAL_STEM_RE.findall(body or "")
+
+
+def _auto_tombstone_blocked(
+    root: Path,
+    msg_type: str,
+    body: str,
+    change_name: str | None = None,
+) -> list[dict[str, str]]:
+    """Tombstone matching `## Blocked:` entries across all agents' blocked files.
+
+    Per auto-clear-blocked-entries spec. Returns a list of dicts —
+    ``[{"agent", "title", "reason"}, ...]`` — describing each tombstoned
+    entry. An empty list means nothing matched (no side effect).
+
+    Idempotent: already-commented entries (wrapped in ``<!-- ... -->``) are
+    not matched because the `^## Blocked:` regex requires a line-leading
+    header. Calling this twice with the same input is a no-op the second
+    time.
+    """
+    blocked_dir = root / ".agents" / "blocked"
+    if not blocked_dir.is_dir():
+        return []
+
+    reason = _TOMBSTONE_REASONS.get(msg_type)
+    if not reason:
+        return []
+
+    if msg_type in ("spec-change-approved", "spec-change-rejected"):
+        match_stems = set(_extract_proposal_stems(body))
+        match_change: str | None = None
+        if not match_stems:
+            return []
+    else:  # task-assignment
+        match_stems = set()
+        match_change = (change_name or "").strip() or None
+        if not match_change:
+            return []
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    tombstoned: list[dict[str, str]] = []
+
+    # An entry runs from a line-leading `## Blocked:` to the next such line
+    # or end of string. ``re.MULTILINE`` makes ``^`` match line starts;
+    # ``re.DOTALL`` makes ``.`` match newlines. Non-greedy ``.+?`` plus the
+    # lookahead keeps each entry small without swallowing the next entry.
+    entry_re = re.compile(
+        r"^(## Blocked: .+?)(?=\n## Blocked: |\Z)",
+        re.DOTALL | re.MULTILINE,
+    )
+    proposal_field_re = re.compile(
+        r"^\s*-\s*\*\*Proposal\*\*:\s*(\S+)", re.MULTILINE
+    )
+    change_field_re = re.compile(
+        r"^\s*-\s*\*\*Change\*\*:\s*(\S+)", re.MULTILINE
+    )
+    title_re = re.compile(r"^## Blocked:\s*(.+)$", re.MULTILINE)
+
+    for blocked_file in sorted(blocked_dir.glob("*.md")):
+        agent_name = blocked_file.stem
+        try:
+            text = blocked_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        modified = False
+        new_parts: list[str] = []
+        last_end = 0
+
+        for m in entry_re.finditer(text):
+            entry_block = m.group(1)
+
+            # Preserve unchanged text between matches.
+            new_parts.append(text[last_end:m.start()])
+
+            should_tombstone = False
+            if msg_type in ("spec-change-approved", "spec-change-rejected"):
+                prop_m = proposal_field_re.search(entry_block)
+                if prop_m and prop_m.group(1) in match_stems:
+                    should_tombstone = True
+            else:  # task-assignment
+                change_m = change_field_re.search(entry_block)
+                if change_m and change_m.group(1) == match_change:
+                    should_tombstone = True
+
+            if should_tombstone:
+                title_m = title_re.search(entry_block)
+                title = title_m.group(1).strip() if title_m else "(untitled)"
+                tombstoned.append(
+                    {"agent": agent_name, "title": title, "reason": reason}
+                )
+                trailer = f"\ncleared {today} — {reason} -->"
+                new_parts.append("<!-- " + entry_block.rstrip() + trailer)
+                modified = True
+            else:
+                new_parts.append(entry_block)
+
+            last_end = m.end()
+
+        new_parts.append(text[last_end:])
+
+        if modified:
+            try:
+                blocked_file.write_text("".join(new_parts), encoding="utf-8")
+            except OSError:
+                continue
+
+    return tombstoned
+
+
 @mcp.tool
 def otaman_send(
     cwd: str,
@@ -595,6 +748,7 @@ def otaman_send(
     msg_type: str = "info",
     priority: str = "normal",
     cc: list[str] | None = None,
+    change: str | None = None,
 ) -> dict[str, Any]:
     """Send a message to another agent or all agents via the otaman bus.
 
@@ -609,6 +763,11 @@ def otaman_send(
             rules in ``platform.yaml`` ``bus.routing_rules`` are unioned in;
             the primary ``to`` recipient is excluded; copies carry
             ``x-cc: true`` in their frontmatter (bus-cc-routing spec).
+        change: Optional change-name slug to record in the message
+            frontmatter. Used by the auto-clear-blocked-entries
+            ``task-assignment`` fallback to match ``**Change**:`` fields in
+            blocked entries. Senders of ``task-assignment`` messages SHOULD
+            set this; other message types may set it for tracing.
     """
     root = _find_project_root(cwd)
     if not root:
@@ -632,14 +791,19 @@ def otaman_send(
 
     # Frontmatter — `cc:` is included on the primary message so recipients
     # see who else got a copy (design Q2). `x-cc:` is added only to copies.
+    # `change:` is optional and surfaces the related change-name slug so
+    # the auto-clear-blocked-entries task-assignment fallback can match.
     cc_line = ""
     if effective_cc:
         cc_line = f"cc: [{', '.join(effective_cc)}]\n"
+    change_line = ""
+    if change:
+        change_line = f"change: {change}\n"
     content = f"""---
 id: {ts}-{agent[:8]}
 from: {agent}
 to: {to}
-{cc_line}priority: {priority}
+{cc_line}{change_line}priority: {priority}
 type: {msg_type}
 timestamp: {ts_iso}
 status: pending
@@ -678,6 +842,17 @@ status: pending
             cc_path.write_text(cc_content, encoding="utf-8")
             cc_copies.append(cc_path.stem)
 
+    # auto-clear-blocked-entries (task 1.2): tombstone matching ## Blocked:
+    # entries in the data layer when sending an approval/rejection (primary
+    # signal via proposal-stem match) or a task-assignment (fallback signal
+    # via the message's `change` field). The helper is idempotent — already
+    # commented-out entries are not re-tombstoned.
+    auto_tombstoned: list[dict[str, str]] = []
+    if msg_type in ("spec-change-approved", "spec-change-rejected"):
+        auto_tombstoned = _auto_tombstone_blocked(root, msg_type, body, None)
+    elif msg_type == "task-assignment" and change:
+        auto_tombstoned = _auto_tombstone_blocked(root, msg_type, body, change)
+
     result: dict[str, Any] = {
         "sent": True,
         "filename": filename,
@@ -688,6 +863,8 @@ status: pending
     if effective_cc:
         result["cc"] = effective_cc
         result["cc_copies"] = cc_copies
+    if auto_tombstoned:
+        result["auto_tombstoned"] = auto_tombstoned
     if warning:
         result["warning"] = warning
     return result
@@ -1077,13 +1254,17 @@ status: pending
     filepath = bus / filename
     filepath.write_text(content, encoding="utf-8")
 
-    # Record blocked task
+    # Record blocked task. The `Change:` field (auto-clear-blocked-entries
+    # task 1.5) carries the slug derived from the title so the
+    # task-assignment fallback can match later, even if the approving
+    # message's body lacks the proposal stem.
     blocked_dir = root / ".agents" / "blocked"
     blocked_dir.mkdir(parents=True, exist_ok=True)
     blocked_file = blocked_dir / f"{agent}.md"
     blocked_entry = f"""
 ## Blocked: {title}
 - **Proposal**: {filepath.stem}
+- **Change**: {slug}
 - **Blocked since**: {now_iso}
 - **Depends on**: spec-change-approved + spec-change notification
 - **Task to resume**: Implement feature after spec is committed
