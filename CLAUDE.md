@@ -65,6 +65,27 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 - Message handling while busy: ack as `read`, add to queue, finish current task first
 - Urgent messages: pause current work, inform the human immediately
 
+### Outcome Proposals (business-impact ideas)
+
+When you spot a business-impact idea — a pricing change, a process change, a
+new outcome the program should pursue — send it as an **outcome-proposal**,
+not as `info`:
+
+```
+otaman send --type outcome-proposal --to human --subject "<short hook>"
+```
+
+Strategic agents (cofounder-agent, cpo-agent, and any others named in the
+project's `bus.routing_rules`) are auto-notified via CC — you do not list
+them manually. The primary delivery stays addressed to `human` for sign-off.
+
+- Use this type whenever your subject mentions business impact, a proposed
+  outcome, a market move, or a structural change to how the program is run.
+- Do **not** use `--type info` for outcome statements; they get lost in the
+  general bus noise and skip the strategic CC fan-out.
+- Implementation tasks, status updates, and routine FYIs stay on `info` /
+  `question` / `task-complete` as before.
+
 ### Agent Status (REQUIRED)
 
 Before writing any code for a specific task, call:

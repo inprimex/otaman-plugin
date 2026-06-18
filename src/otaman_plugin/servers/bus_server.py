@@ -183,23 +183,29 @@ def evaluate_routing_rules(
     rules: list[dict[str, Any]],
     to: str,
     priority: str,
+    msg_type: str | None = None,
 ) -> set[str]:
     """Return the union of ``cc:`` lists from all rules that match.
 
     Per bus-cc-routing design Q3: rules are evaluated in order, but all
     matching rules contribute (union, not first-match-wins). A rule matches
-    when every ``when.<field>`` constraint is satisfied:
+    when every ``when.<field>`` constraint is satisfied (AND semantics):
 
     - ``when.to: <name>`` requires exact string equality with ``to``.
     - ``when.priority: <val>`` matches when ``priority`` equals the single
       value, or appears in a list (OR semantics for the list form).
+    - ``when.type: <val>`` (outcome-proposal-routing 1.1) matches when
+      ``msg_type`` equals the single value, or appears in a list. A rule
+      with ``when.type`` set never matches when the caller passes
+      ``msg_type=None`` (the caller can't claim AND-matches on a field it
+      didn't specify).
 
     Unknown ``when`` keys cause the rule to be skipped silently — keeps the
     evaluator forward-compatible with future ``when`` extensions without
     breaking older bus servers.
     """
     cc_union: set[str] = set()
-    supported_when_keys = {"to", "priority"}
+    supported_when_keys = {"to", "priority", "type"}
     for rule in rules:
         when = rule.get("when") or {}
         if not isinstance(when, dict):
@@ -215,6 +221,15 @@ def evaluate_routing_rules(
                     continue
             elif pri != priority:
                 continue
+        if "type" in when:
+            if msg_type is None:
+                continue
+            typ = when["type"]
+            if isinstance(typ, list):
+                if msg_type not in typ:
+                    continue
+            elif typ != msg_type:
+                continue
         cc_list = rule.get("cc") or []
         if not isinstance(cc_list, list):
             continue
@@ -229,6 +244,7 @@ def _compute_effective_cc(
     priority: str,
     explicit_cc: list[str] | None,
     routing_rules: list[dict[str, Any]],
+    msg_type: str | None = None,
 ) -> list[str]:
     """Compose the effective CC list per bus-cc-routing Q1.
 
@@ -242,7 +258,9 @@ def _compute_effective_cc(
     candidates: list[str] = []
     if explicit_cc:
         candidates.extend(c for c in explicit_cc if isinstance(c, str) and c)
-    candidates.extend(sorted(evaluate_routing_rules(routing_rules, to, priority)))
+    candidates.extend(
+        sorted(evaluate_routing_rules(routing_rules, to, priority, msg_type))
+    )
     for name in candidates:
         if name == to or name in seen:
             continue
@@ -787,7 +805,7 @@ def otaman_send(
     # primary `to` is always excluded; rules are evaluated all-matching
     # (union, not first-match-wins) per design Q3.
     routing_rules = _load_routing_rules(root)
-    effective_cc = _compute_effective_cc(to, priority, cc, routing_rules)
+    effective_cc = _compute_effective_cc(to, priority, cc, routing_rules, msg_type)
 
     # Frontmatter — `cc:` is included on the primary message so recipients
     # see who else got a copy (design Q2). `x-cc:` is added only to copies.
