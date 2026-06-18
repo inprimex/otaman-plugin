@@ -14,19 +14,6 @@ Full documentation, walkthroughs, and architecture notes live at **[docs.otaman.
 - **stdio MCP server** — runs in-process when no bridge daemon is present, enabling single-user local operation.
 - **Launcher scripts** — `launch-agents.sh` (Linux / macOS) and `launch-agents.ps1` (Windows) for multi-agent session start-up.
 
-## Status
-
-| Component | State |
-|---|---|
-| Claude Code plugin manifest | shipped |
-| Slash commands (`/otaman:init`, `/otaman:status`, etc.) | shipped |
-| Skills (multi-repo-orchestration, spec-management, etc.) | shipped |
-| Agent definitions (cto-reviewer, security-observer, etc.) | shipped |
-| Hook scripts (ownership, blocked-task, bridge-approval) | shipped |
-| stdio MCP server (local fallback) | shipped |
-| `launch-agents.sh` (Linux / macOS launcher) | shipped |
-| `launch-agents.ps1` (Windows launcher) | shipped |
-
 ## Dependencies
 
 - Claude Code (the harness)
