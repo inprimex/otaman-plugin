@@ -230,6 +230,29 @@ def _build_maestro_block(
         for r in other_repos
     )
 
+    # monorepo-path-ownership task 3.1: render an "Owned paths" subsection
+    # when this repo declares `owner-paths` and the current agent appears
+    # as the owner of at least one glob. Agents who don't claim any path
+    # (full-repo owners under the catch-all `owner:`) get no section per
+    # design layer 6.
+    #
+    # Read both the YAML key (`owner-paths`) and the Python-normalized key
+    # (`owner_paths`) so this works before AND after otaman-core task 1.1
+    # adds the parser-side normalization. Whichever lands first is fine.
+    owner_paths_raw = repo.get("owner_paths") or repo.get("owner-paths") or {}
+    owned_paths_section = ""
+    if isinstance(owner_paths_raw, dict) and owner_paths_raw:
+        my_globs = [g for g, agent in owner_paths_raw.items() if agent == repo["owner"]]
+        if my_globs:
+            glob_list = "\n".join(f"- `{g}`" for g in my_globs)
+            owned_paths_section = (
+                f"\n\n### Owned paths in {repo['name']}\n\n"
+                f"You own the following paths inside `{repo['name']}`:\n"
+                f"{glob_list}\n\n"
+                "Changes outside these paths require coordination with the owning agent. "
+                "Cross-path edits surface at PR review time."
+            )
+
     # Compute relative path from repo to maestro folder for .agents/ references.  # legacy: pre-rebrand reference
     # M = relative path from repo to maestro folder (e.g., "../lmachine-maestro")  # legacy: pre-rebrand reference
     m = ".."  # fallback: assume parent dir
@@ -398,6 +421,7 @@ Otaman folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 {other_repos_list}
 - You may read other repos' source code, configs, and CLAUDE.md to understand their APIs
 - If you need a change in another repo, send a `task-assignment` or `question` message to its owner
+{owned_paths_section}
 
 ### Communication — Bash CLI for hot path, MCP for richer ops
 
