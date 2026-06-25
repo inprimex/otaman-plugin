@@ -1225,21 +1225,30 @@ function Wrap-WithTmux {
     # interactively. Replaces the original `tmux new -A -s … bash -c …`
     # auto-attach form with detached-create + explicit-attach so server
     # options can be set in between.
-    $tmuxOptions = "tmux set -gq mouse on && tmux set -gq history-limit 50000 && tmux set -gq default-terminal 'tmux-256color'"
+    # No single quotes needed: tmux-256color has no spaces or special chars.
+    $tmuxOptions = "tmux set -gq mouse on && tmux set -gq history-limit 50000 && tmux set -gq default-terminal tmux-256color"
 
-    # `=` prefix on has-session and attach forces exact match (tmux 2.5+) so
-    # the colon in `<program>:<agent-name>` is not parsed as session:window.
-    # Single-quote the name to prevent the remote shell from interpreting
-    # the colon before tmux sees it.
-    #
-    # `-n '<repo>'` sets the window name at session creation so the tmux
-    # status bar reads "<program>:<agent>:<repo>" (per task 2.5). Omitted
-    # when WindowName is empty so legacy callers see no behavioural change.
-    $newSessionArgs = "-d -s '$SessionName'"
+    # Session names now use '-' as separator (not ':'), so the '=' exact-match
+    # prefix and per-name single-quoting are no longer required. Names like
+    # "sunflowers-spec-agent" contain only [A-Za-z0-9-] — safe without quoting.
+    $newSessionArgs = "-d -s $SessionName"
     if ($WindowName) {
-        $newSessionArgs += " -n '$WindowName'"
+        $newSessionArgs += " -n $WindowName"
     }
-    return "( tmux has-session -t '=$SessionName' 2>/dev/null || tmux new-session $newSessionArgs bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t '=$SessionName'"
+
+    # Build the wrapper script. Single quotes inside are fine here because the
+    # entire script is base64-encoded below — they never appear in the SSH arg.
+    $wrapperScript = "( tmux has-session -t $SessionName 2>/dev/null || tmux new-session $newSessionArgs bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t $SessionName"
+
+    # Double-base64: encode the whole wrapper so the final SSH argument is just
+    #   echo OUTERB64 | base64 -d | bash
+    # This contains only [A-Za-z0-9+/=|. ] — no shell metacharacters at all.
+    # Eliminates the quoting issue that caused "unexpected EOF while looking for
+    # matching '" errors when single-quoted strings passed through the
+    # PowerShell -> Start-Process -> wt.exe -> ssh.exe -> sshd chain.
+    $wrapperBytes = [System.Text.Encoding]::UTF8.GetBytes($wrapperScript)
+    $outerB64 = [Convert]::ToBase64String($wrapperBytes)
+    return "echo $outerB64 | base64 -d | bash"
 }
 
 function Build-SshCommand {
