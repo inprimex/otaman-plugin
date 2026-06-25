@@ -1270,10 +1270,11 @@ function Build-SshCommand {
     $chainedCmd = $allCmds -join ' && '
 
     if ($useTmux) {
-        # Tmux session name: "${ProjectName}:${AgentName}" — no sanitisation;
-        # `project:` and `owner:` values conform to [a-z0-9-] by platform.yaml
-        # convention, and the `:` separator is part of the format. Per
-        # fix-launcher-tmux-session-naming. Fall back to RepoName if AgentName
+        # Tmux session name: "${ProjectName}-${AgentName}" — dash separator.
+        # Colon was previously used but tmux interprets ':' as session:window
+        # separator in target notation, making attach fail even with '=' prefix
+        # (tmux strips ':agent' and looks for session 'project' alone).
+        # Per fix-launcher-tmux-session-naming. Fall back to RepoName if AgentName
         # is absent (with a warning so the misconfiguration surfaces).
         $agentForSession = $AgentName
         if (-not $agentForSession) {
@@ -1282,7 +1283,7 @@ function Build-SshCommand {
                 Write-Warn "Build-SshCommand: repo '$RepoName' missing owner: field in platform.yaml; using repo name for tmux session"
             }
         }
-        $session = "${ProjectName}:${agentForSession}"
+        $session = "${ProjectName}-${agentForSession}"
         $chainedCmd = Wrap-WithTmux -SessionName $session -InnerCommand $chainedCmd -WindowName $RepoName
     }
 
@@ -1751,14 +1752,15 @@ if ($Close -or $Restart) {
             continue
         }
         # Per fix-launcher-tmux-session-naming: session name is
-        # "${projectName}:${owner}". Fall back to repo name if owner: missing
-        # (with a warning), to match Build-SshCommand's fallback.
+        # "${projectName}-${owner}" (dash, not colon — colon breaks tmux target
+        # parsing). Fall back to repo name if owner: missing (with a warning),
+        # to match Build-SshCommand's fallback.
         $agentForSession = $r.owner
         if (-not $agentForSession) {
             $agentForSession = $r.name
             Write-Warn "$($r.name): missing owner: field in platform.yaml; using repo name for tmux session"
         }
-        $sess = "${projectName}:${agentForSession}"
+        $sess = "${projectName}-${agentForSession}"
 
         $h = if ($r.launch_ssh_host) { $r.launch_ssh_host } else { $activeConn['ssh_default_host'] }
         $keyFlag = ""
