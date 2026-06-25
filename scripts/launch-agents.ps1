@@ -1318,14 +1318,27 @@ function Build-SshCommand {
 
     switch ($client) {
         "ssh" {
-            # OpenSSH: runs in terminal, great for WT tabs
+            # OpenSSH: runs in terminal, great for WT tabs.
+            # Wrap the SSH call in powershell.exe -EncodedCommand so that wt.exe's
+            # command line contains only [A-Za-z0-9+/=] — no quoting issues
+            # regardless of whether wt.exe routes through cmd.exe or PS first.
+            # Previously: ssh -t host "echo B64 | base64 -d | bash" — the pipes
+            # and double quotes were being mangled by the intermediate shell,
+            # causing "bash: -c: line 1: unexpected EOF while looking for
+            # matching '" on the remote. Encoding the PS command as UTF-16LE
+            # base64 makes the wt.exe argument opaque to any intermediate shell.
             $keyFlag = ""
             if ($Settings["ssh_key"]) { $keyFlag = "-i $($Settings['ssh_key']) " }
-            # Escape double quotes in the command, wrap in double quotes for SSH
-            $escaped = $chainedCmd -replace '"', '\"'
+            # Escape any literal " in the remote command for embedding in PS "..."
+            $remoteCmd = $chainedCmd -replace '"', '`"'
+            # Build the PowerShell command: ssh [key] -t host "REMOTE_CMD"
+            $psCmd = "ssh " + $keyFlag + "-t $target " + '"' + $remoteCmd + '"'
+            # Encode as UTF-16LE (PS -EncodedCommand format) — produces safe base64
+            $psCmdBytes = [System.Text.Encoding]::Unicode.GetBytes($psCmd)
+            $psCmdEncoded = [Convert]::ToBase64String($psCmdBytes)
             return @{
                 type = "wt-tab"
-                args = "ssh ${keyFlag}-t $target `"$escaped`""
+                args = "powershell.exe -NonInteractive -NoProfile -NoLogo -EncodedCommand $psCmdEncoded"
             }
         }
         "plink" {
