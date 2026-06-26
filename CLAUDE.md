@@ -54,6 +54,8 @@ Richer / less-frequent ops — use MCP tools (load schemas with ToolSearch first
 
 Why the split: bus checks happen dozens of times per session, and the MCP-via-instruction path proved unreliable across model variants (2026-04-29 incident — see plugin CLAUDE.md). The Bash CLI is deterministic. Heavier write operations stay on MCP because their structured payload is worth the schema-load overhead.
 
+**CC fan-out works the same from both transports.** As of `cli-send-cc-fanout-parity`, `otaman send <to> --cc <agent>` via bash CLI writes per-recipient CC copies with `x-cc: true` identical to MCP `otaman_send(..., cc=[...])`. CC recipients see the message in `otaman check` regardless of which transport the sender used.
+
 ### Bus Awareness (CRITICAL)
 - **Check the bus proactively** — do NOT wait for the human to tell you:
   - After completing each task (feature done, test passing)
