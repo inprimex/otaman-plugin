@@ -1530,5 +1530,57 @@ def otaman_queue(
     return {"error": f"Unknown action: {action}. Use 'read' or 'update'."}
 
 
+@mcp.tool
+def otaman_notify_change(cwd: str, change_name: str) -> dict[str, Any]:
+    """Send a `spec-change` notification + dispatch task-assignments.
+
+    Post-merge-spec-notify task 2.1 — MCP mirror of the bash
+    `otaman notify-change` command. Use after a spec PR is merged on
+    GitHub (the post-commit hook does not fire on GitHub-side merges).
+
+    Recipient derivation matches `spec-change-hook.sh` exactly:
+    `@otaman-<repo>` annotations in `tasks.md` → repo owners via
+    `platform.yaml repos[]`. Fallback to `spec-agent` when no `tasks.md`,
+    or `[spec-agent, human]` when `tasks.md` has no annotations.
+
+    Calls `map-tasks.py` for task-assignment dispatch when available;
+    gracefully skips with a warning when the script is absent
+    (depends on map-tasks-dispatch shipping).
+
+    Idempotency: NOT guaranteed. Running twice sends duplicate messages.
+    Caller (typically spec-agent post-merge) is responsible for calling
+    it once per change.
+
+    Args:
+        cwd: Current working directory of the calling agent
+        change_name: OpenSpec change slug — must match a directory under
+                     ``<specs.path>/openspec/changes/``
+
+    Returns:
+        Dict with keys: ``change_name``, ``recipients``, ``message_path``,
+        ``map_tasks_called``, ``map_tasks_path``, ``tasks_md_path``,
+        plus ``error`` when something failed (and ``exit_code``).
+    """
+    root = _find_project_root(cwd)
+    if not root:
+        return {"error": "No otaman project found"}
+
+    try:
+        # The cli ships the canonical implementation; importing keeps the
+        # MCP and CLI paths byte-equivalent without duplicating logic.
+        from otaman_cli.notify_change import notify_change
+    except ImportError as exc:
+        return {
+            "error": (
+                "otaman-cli is not importable from the bus_server runtime; "
+                f"install it to use otaman_notify_change ({exc})"
+            )
+        }
+
+    exit_code, summary = notify_change(root, change_name)
+    summary["exit_code"] = exit_code
+    return summary
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio", show_banner=False)
