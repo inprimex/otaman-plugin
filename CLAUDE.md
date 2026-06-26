@@ -116,7 +116,13 @@ This is a single CLI call — no file editing, no token overhead. It lets the hu
 - When you finish tasks from a `task-assignment`, you MUST report completion:
   - `otaman complete <change-name> --tasks "2.1, 2.3"` (specific tasks)
   - `otaman complete <change-name> --all` (all tasks for that change)
-- This updates `tasks.md` checkboxes in the specs repo and sends a `task-complete` bus message
+- This sends a `task-complete` bus message; spec-agent applies the
+  `tasks.md` tick asynchronously on next session start. You do NOT need
+  to commit to `otaman-specs` yourself — that repo is read-only for every
+  agent except spec-agent, so any local working-tree edit would be
+  silently reverted on the next `git pull`. Output line
+  `spec-agent will tick tasks.md on next session start` is the success
+  signal, not an error. (Per `fix-otaman-complete-task-drift`.)
 - **Lifecycle**: task-assignment received -> ack "read" -> implement -> `otaman complete` -> ack "resolved"
 - NEVER ack a task-assignment as "resolved" without first running `otaman complete`
 
