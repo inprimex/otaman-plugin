@@ -153,6 +153,31 @@ class TestPs1LauncherContract:
         # as the WindowName so the remote tmux window picks it up.
         assert "-WindowName $RepoName" in text
 
+    def test_wt_multitab_separator_is_plain_semicolon(self, text: str):
+        # Regression guard for the 2026-06-26 "command already specified"
+        # bug. The wt.exe multi-tab separator used to be `` `; `` (backtick
+        # + semicolon) — needed when the launch went through
+        # Invoke-Expression to prevent PS from splitting on `;`. Once the
+        # path moved to Start-Process (PR #45) the backtick became dead
+        # weight, AND wt.exe started leaving a trailing backtick on every
+        # tab except the last. The trailing backtick got passed to
+        # powershell.exe as an extra arg after `-EncodedCommand`, breaking
+        # every tab but the last. Fix: plain `;` separator.
+        assert '$wtCmd += " ; new-tab' in text, (
+            "wt.exe multi-tab separator must be plain `;` — the `` `; `` "
+            "form leaves a trailing backtick on every tab except the last"
+        )
+        # The broken backtick-prefixed form must not come back.
+        assert '$wtCmd += " ``; new-tab' not in text, (
+            "the backtick-escaped `` `; `` separator was the 2026-06-26 "
+            "trailing-backtick bug — do not revert"
+        )
+        # DryRun display must also use plain `;`.
+        assert '"       ; new-tab"' in text, (
+            "DryRun display must use plain `;`; the `` `; `` form is "
+            "inconsistent with the real launch path"
+        )
+
     def test_wrap_with_tmux_uses_process_substitution_not_stdin_pipe(self, text: str):
         # Regression guard for the 2026-06-26 "open terminal failed: not a
         # terminal" bug. The previous form was

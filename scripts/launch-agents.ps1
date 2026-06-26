@@ -2032,12 +2032,21 @@ for ($i = 0; $i -lt $valid.Count; $i++) {
 # Launch Windows Terminal tabs
 if ($wtTabs.Count -gt 0) {
     $wtCmd = "wt.exe new-tab $($wtTabs[0])"
-    for ($j = 1; $j -lt $wtTabs.Count; $j++) { $wtCmd += " ``; new-tab $($wtTabs[$j])" }
+    # Plain `;` as the wt.exe tab separator — Start-Process passes the arg
+    # string verbatim, so wt.exe's own parser splits on `;` correctly. The
+    # earlier `` `; `` form (escaped semicolon) was needed when this went
+    # through Invoke-Expression; in that path PowerShell would otherwise
+    # split on `;` as a statement separator. We moved to Start-Process in
+    # PR #45, but the backtick escape was left behind — and wt.exe then
+    # left a trailing backtick on every tab except the last, which got
+    # passed to powershell.exe as an extra arg after `-EncodedCommand`,
+    # producing "command already specified" on every tab but the last.
+    for ($j = 1; $j -lt $wtTabs.Count; $j++) { $wtCmd += " ; new-tab $($wtTabs[$j])" }
 
     if ($DryRun) {
         Write-Host "`n--- Windows Terminal command ---" -ForegroundColor DarkGray
         for ($j = 0; $j -lt $wtTabs.Count; $j++) {
-            $pfx = if ($j -eq 0) { "  wt.exe new-tab" } else { "       ``; new-tab" }
+            $pfx = if ($j -eq 0) { "  wt.exe new-tab" } else { "       ; new-tab" }
             Write-Host "$pfx $($wtTabs[$j])" -ForegroundColor DarkGray
         }
     } else {
