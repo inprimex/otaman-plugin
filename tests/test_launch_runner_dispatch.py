@@ -153,6 +153,28 @@ class TestPs1LauncherContract:
         # as the WindowName so the remote tmux window picks it up.
         assert "-WindowName $RepoName" in text
 
+    def test_wrap_with_tmux_uses_process_substitution_not_stdin_pipe(self, text: str):
+        # Regression guard for the 2026-06-26 "open terminal failed: not a
+        # terminal" bug. The previous form was
+        #     return "echo $outerB64 | base64 -d | bash"
+        # which makes bash inherit stdin = decode pipe; `exec tmux attach`
+        # then fails because tmux can't open a closed pipe as a terminal.
+        # The fix uses process substitution
+        #     return "bash <(echo $outerB64 | base64 -d)"
+        # so bash's stdin remains the SSH PTY and tmux attach works.
+        idx = text.index("function Wrap-WithTmux")
+        end = text.index("\n}\n", idx)
+        snippet = text[idx:end]
+        assert 'return "bash <(echo $outerB64 | base64 -d)"' in snippet, (
+            "Wrap-WithTmux must return the process-substitution form so "
+            "bash's stdin stays as the SSH PTY for tmux attach"
+        )
+        # The broken pipe-into-bash form must not come back.
+        assert '| base64 -d | bash"' not in snippet, (
+            "the `echo B64 | base64 -d | bash` form clobbers bash stdin "
+            "with the decode pipe and breaks tmux attach — do not revert"
+        )
+
     def test_wt_launch_uses_start_process_not_invoke_expression(self, text: str):
         # Regression guard for the 2026-06-09 multi-tab bug. Invoke-Expression
         # re-parses the wt.exe command string, splitting on PowerShell's `;`

@@ -1241,14 +1241,20 @@ function Wrap-WithTmux {
     $wrapperScript = "( tmux has-session -t $SessionName 2>/dev/null || tmux new-session $newSessionArgs bash -c 'echo $b64 | base64 -d | bash -l' ) && $tmuxOptions && exec tmux attach -t $SessionName"
 
     # Double-base64: encode the whole wrapper so the final SSH argument is just
-    #   echo OUTERB64 | base64 -d | bash
-    # This contains only [A-Za-z0-9+/=|. ] — no shell metacharacters at all.
-    # Eliminates the quoting issue that caused "unexpected EOF while looking for
-    # matching '" errors when single-quoted strings passed through the
-    # PowerShell -> Start-Process -> wt.exe -> ssh.exe -> sshd chain.
+    #   bash <(echo OUTERB64 | base64 -d)
+    # Process substitution keeps bash's stdin = SSH PTY (not the decode pipe).
+    # Without this, `echo B64 | base64 -d | bash` replaces bash stdin with the
+    # pipe; `exec tmux attach` then fails with "open terminal failed: not a
+    # terminal" because tmux inherits a closed pipe instead of the PTY.
+    # Requires bash as the login shell (already required by the
+    # `source ~/.nvm/nvm.sh` usage in platform.yaml launch commands).
+    #
+    # The encoded payload still contains only [A-Za-z0-9+/=] so the surrounding
+    # PowerShell -> Start-Process -> wt.exe -> ssh.exe -> sshd quoting chain
+    # remains safe (the original reason for the double-encoding).
     $wrapperBytes = [System.Text.Encoding]::UTF8.GetBytes($wrapperScript)
     $outerB64 = [Convert]::ToBase64String($wrapperBytes)
-    return "echo $outerB64 | base64 -d | bash"
+    return "bash <(echo $outerB64 | base64 -d)"
 }
 
 function Build-SshCommand {
@@ -1318,27 +1324,23 @@ function Build-SshCommand {
 
     switch ($client) {
         "ssh" {
-            # OpenSSH: runs in terminal, great for WT tabs.
-            # Wrap the SSH call in powershell.exe -EncodedCommand so that wt.exe's
-            # command line contains only [A-Za-z0-9+/=] — no quoting issues
-            # regardless of whether wt.exe routes through cmd.exe or PS first.
-            # Previously: ssh -t host "echo B64 | base64 -d | bash" — the pipes
-            # and double quotes were being mangled by the intermediate shell,
-            # causing "bash: -c: line 1: unexpected EOF while looking for
-            # matching '" on the remote. Encoding the PS command as UTF-16LE
-            # base64 makes the wt.exe argument opaque to any intermediate shell.
+            # OpenSSH: encode the full SSH invocation as a PowerShell -EncodedCommand so
+            # wt.exe's intermediate cmd.exe layer never sees the '|' pipe characters in
+            # the remote command. PowerShell treats '|' inside a double-quoted string
+            # as a literal character (not a pipeline operator), so ssh.exe receives the
+            # complete remote command as a single argument.
+            # Using -NoExit matches the local (powershell) shell path — keeps the tab
+            # open after SSH exits so the user can read any error messages.
             $keyFlag = ""
             if ($Settings["ssh_key"]) { $keyFlag = "-i $($Settings['ssh_key']) " }
-            # Escape any literal " in the remote command for embedding in PS "..."
+            # Escape any literal backtick-double-quote sequences in the remote command
             $remoteCmd = $chainedCmd -replace '"', '`"'
-            # Build the PowerShell command: ssh [key] -t host "REMOTE_CMD"
             $psCmd = "ssh " + $keyFlag + "-t $target " + '"' + $remoteCmd + '"'
-            # Encode as UTF-16LE (PS -EncodedCommand format) — produces safe base64
             $psCmdBytes = [System.Text.Encoding]::Unicode.GetBytes($psCmd)
             $psCmdEncoded = [Convert]::ToBase64String($psCmdBytes)
             return @{
                 type = "wt-tab"
-                args = "powershell.exe -NonInteractive -NoProfile -NoLogo -EncodedCommand $psCmdEncoded"
+                args = "powershell.exe -NoExit -EncodedCommand $psCmdEncoded"
             }
         }
         "plink" {
