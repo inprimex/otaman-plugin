@@ -25,6 +25,19 @@ build-backend = "hatchling.build"
 # exists only to satisfy `uv` workspace expectations.
 packages = ["src/otaman_plugin"]
 
+# Ship the helper shell scripts inside the wheel so `otaman init` (and
+# anything else that needs `<plugin>/scripts/*.sh` or `servers/run-server.sh`)
+# can find them when installed via pip/pipx — not just from the dev tree.
+# Without these, the post-pip-install code path emitted "WARNING: <foo>.sh
+# not found" because Path(__file__).parent.parent.parent / "scripts" resolves
+# to a directory that doesn't exist in installed mode.
+# See `_find_plugin_script()` in src/otaman_plugin/generate_agent_config.py.
+[tool.hatch.build.targets.wheel.force-include]
+"scripts/spec-change-hook.sh" = "src/otaman_plugin/scripts/spec-change-hook.sh"
+"scripts/post-commit-hook.sh" = "src/otaman_plugin/scripts/post-commit-hook.sh"
+"scripts/check-branch.sh"    = "src/otaman_plugin/scripts/check-branch.sh"
+"servers/run-server.sh"      = "src/otaman_plugin/servers/run-server.sh"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "../otaman-core/src"]
