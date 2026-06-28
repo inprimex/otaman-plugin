@@ -35,6 +35,39 @@ except ImportError:
     sys.exit(2)
 
 
+def _find_plugin_script(rel_path: str) -> Path | None:
+    """Locate a helper script that ships with otaman-plugin.
+
+    Hook + MCP-server shell scripts live at the plugin-tree top level in
+    source (`<plugin>/scripts/`, `<plugin>/servers/`). For wheel installs,
+    pyproject.toml force-includes them at the package-internal location
+    (`<package>/scripts/`, `<package>/servers/`) so they survive `pip install`.
+
+    This helper tries the package-internal path first (matches wheel/pipx
+    installs) and falls back to walking two levels up from this module
+    (matches the editable / dev-tree install where scripts are at the
+    plugin root).
+
+    Args:
+        rel_path: path relative to the plugin root, e.g. "scripts/post-commit-hook.sh"
+                  or "servers/run-server.sh"
+
+    Returns:
+        Path to the script, or None if neither location has it.
+    """
+    here = Path(__file__).resolve().parent
+    # Wheel/pipx install: scripts copied into the package via force-include
+    pkg_path = here / rel_path
+    if pkg_path.is_file():
+        return pkg_path
+    # Editable / dev-tree install: scripts at the plugin root
+    # (src/otaman_plugin/<this>.py → ../../<rel_path>)
+    dev_path = here.parent.parent / rel_path
+    if dev_path.is_file():
+        return dev_path
+    return None
+
+
 def _backup_existing(path: Path) -> Path | None:
     """Snapshot an existing file to <path>.bak before overwrite. Returns the
     .bak path if a backup was made, else None.
@@ -552,10 +585,10 @@ def install_spec_change_hook(project_root: Path, config: dict[str, Any]) -> str 
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
     hook_target = hooks_dir / "post-commit"
-    hook_source = Path(__file__).resolve().parent.parent.parent / "scripts" / "spec-change-hook.sh"
+    hook_source = _find_plugin_script("scripts/spec-change-hook.sh")
 
-    if not hook_source.exists():
-        return f"WARNING: spec-change-hook.sh not found at {hook_source}"
+    if hook_source is None:
+        return "WARNING: spec-change-hook.sh not found (looked in package + dev tree)"
 
     # If there's an existing post-commit hook, chain ours after it
     if hook_target.exists():
@@ -611,10 +644,10 @@ def install_repo_post_commit_hooks(project_root: Path, config: dict[str, Any]) -
     """
     results: list[str] = []
     specs_path = config.get("specs", {}).get("path", "")
-    hook_source = Path(__file__).resolve().parent.parent.parent / "scripts" / "post-commit-hook.sh"
+    hook_source = _find_plugin_script("scripts/post-commit-hook.sh")
 
-    if not hook_source.exists():
-        results.append(f"WARNING: post-commit-hook.sh not found at {hook_source}")
+    if hook_source is None:
+        results.append("WARNING: post-commit-hook.sh not found (looked in package + dev tree)")
         return results
 
     for repo in config["repos"]:
@@ -684,10 +717,10 @@ def install_pre_commit_hooks(project_root: Path, config: dict[str, Any]) -> list
     warns about non-standard branch naming.
     """
     results: list[str] = []
-    hook_source = Path(__file__).resolve().parent.parent.parent / "scripts" / "check-branch.sh"
+    hook_source = _find_plugin_script("scripts/check-branch.sh")
 
-    if not hook_source.exists():
-        results.append(f"WARNING: check-branch.sh not found at {hook_source}")
+    if hook_source is None:
+        results.append("WARNING: check-branch.sh not found (looked in package + dev tree)")
         return results
 
     source_posix = hook_source.as_posix()
@@ -753,8 +786,12 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
     making configs portable across machines and developers.
     """
     results: list[str] = []
-    plugin_root = Path(__file__).resolve().parent.parent.parent  # src/otaman_plugin/X.py → otaman-plugin/
-    run_server = plugin_root / "servers" / "run-server.sh"
+    # Plugin root: src/otaman_plugin/X.py → ../../ (dev) or `<package>` (wheel).
+    # Used only to identify the plugin's own repo and skip rewriting its
+    # canonical .mcp.json — the run-server.sh path itself comes from
+    # _find_plugin_script() below so it works in both layouts.
+    plugin_root = Path(__file__).resolve().parent.parent.parent
+    run_server = _find_plugin_script("servers/run-server.sh")
 
     # Skip if plugin is catalog-installed (CLAUDE_PLUGIN_ROOT is set by Claude Code)
     # In that case, the plugin's own .mcp.json with ${CLAUDE_PLUGIN_ROOT} works natively.
@@ -762,8 +799,8 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
         results.append("Skipping .mcp.json install (plugin loaded from catalog)")
         return results
 
-    if not run_server.exists():
-        results.append(f"WARNING: run-server.sh not found at {run_server}")
+    if run_server is None:
+        results.append("WARNING: run-server.sh not found (looked in package + dev tree)")
         return results
 
     for repo in config["repos"]:
