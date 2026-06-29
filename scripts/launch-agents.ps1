@@ -1911,25 +1911,33 @@ if (-not $NoRunner) {
             # session — so we MUST SSH-wrap before handing the body to WSL.
             # Without this wrap, every WT tab opens, tries to attach locally,
             # fails with "can't find session: <name>", and exits with code 1.
-            $wrappedAttach = $attachCmd
+            # For SSH connections: build a PowerShell-encoded ssh.exe invocation
+            # (mirrors the direct-SSH wt-tab path at line ~1338). This uses
+            # Windows-native ssh.exe so:
+            #   - The ssh_key can stay in Windows form (C:/Users/.../key) —
+            #     ssh.exe accepts native paths.
+            #   - Windows ACLs gate access; no need to copy the key into WSL
+            #     and chmod 600 just to satisfy Unix-style perm checks.
+            #   - Eliminates the WSL dependency from the runner-attach path
+            #     (the runner returns a single bare command — no bash meta-
+            #     characters that would justify a WSL wrap).
+            #
+            # For local connections, run the attach_command in WSL bash so any
+            # multi-token attach_command (e.g. `ssh user@host tmux a ...` that
+            # an aggregator-style runner might return) still executes natively.
             if ($activeConn['type'] -eq 'ssh' -and $activeConn['ssh_default_host']) {
                 $sshTarget = $activeConn['ssh_default_host']
                 $sshKey = $activeConn['ssh_key']
-                # The SSH inside WSL bash can't read Windows-style paths like
-                # `C:/Users/Roman/.ssh/id_rsa` — WSL mounts drives at /mnt/<letter>/.
-                # Translate `<letter>:/path` -> `/mnt/<letter>/path` so ssh inside
-                # WSL finds the key. Already-WSL-style paths (`/home/...`, `~/...`)
-                # pass through unchanged.
-                if ($sshKey -and $sshKey -match '^([A-Za-z]):[/\\](.*)$') {
-                    $drive = $matches[1].ToLower()
-                    $rest = $matches[2] -replace '\\', '/'
-                    $sshKey = "/mnt/$drive/$rest"
-                }
                 $sshKeyFlag = if ($sshKey) { "-i $sshKey " } else { "" }
-                $wrappedAttach = "ssh -t $sshKeyFlag$sshTarget -- $attachCmd"
+                $remoteCmd = $attachCmd -replace '"', '`"'
+                $psCmd = "ssh.exe " + $sshKeyFlag + "-t $sshTarget " + '"' + $remoteCmd + '"'
+                $psCmdBytes = [System.Text.Encoding]::Unicode.GetBytes($psCmd)
+                $psCmdEncoded = [Convert]::ToBase64String($psCmdBytes)
+                $runnerWtTabs += "--title `"$rTitle`" --suppressApplicationTitle --tabColor `"$rColor`" powershell.exe -NoExit -EncodedCommand $psCmdEncoded"
+            } else {
+                $escaped = $attachCmd -replace '"', '\"'
+                $runnerWtTabs += "--title `"$rTitle`" --suppressApplicationTitle --tabColor `"$rColor`" wsl.exe -d $effectiveWslDistro -- bash -ic `"$escaped`""
             }
-            $escaped = $wrappedAttach -replace '"', '\"'
-            $runnerWtTabs += "--title `"$rTitle`" --suppressApplicationTitle --tabColor `"$rColor`" wsl.exe -d $effectiveWslDistro -- bash -ic `"$escaped`""
             Write-Host "  spawned $rAgent@$($repo.name) -> $attachCmd" -ForegroundColor DarkGray
         }
         if ($runnerOk -and $runnerWtTabs.Count -gt 0) {
