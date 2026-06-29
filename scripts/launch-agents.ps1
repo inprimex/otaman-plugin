@@ -1915,6 +1915,16 @@ if (-not $NoRunner) {
             if ($activeConn['type'] -eq 'ssh' -and $activeConn['ssh_default_host']) {
                 $sshTarget = $activeConn['ssh_default_host']
                 $sshKey = $activeConn['ssh_key']
+                # The SSH inside WSL bash can't read Windows-style paths like
+                # `C:/Users/Roman/.ssh/id_rsa` — WSL mounts drives at /mnt/<letter>/.
+                # Translate `<letter>:/path` -> `/mnt/<letter>/path` so ssh inside
+                # WSL finds the key. Already-WSL-style paths (`/home/...`, `~/...`)
+                # pass through unchanged.
+                if ($sshKey -and $sshKey -match '^([A-Za-z]):[/\\](.*)$') {
+                    $drive = $matches[1].ToLower()
+                    $rest = $matches[2] -replace '\\', '/'
+                    $sshKey = "/mnt/$drive/$rest"
+                }
                 $sshKeyFlag = if ($sshKey) { "-i $sshKey " } else { "" }
                 $wrappedAttach = "ssh -t $sshKeyFlag$sshTarget -- $attachCmd"
             }
