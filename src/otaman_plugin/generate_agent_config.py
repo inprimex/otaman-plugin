@@ -782,16 +782,30 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
     per-repo config needed. This function is only needed for local development
     (--plugin-dir) where the plugin path isn't managed by Claude Code.
 
-    Uses relative paths from each repo to the plugin's server scripts,
-    making configs portable across machines and developers.
+    Writes absolute-Python invocations:
+
+        "otaman-bus": {
+            "command": "<sys.executable>",
+            "args": ["-m", "otaman_plugin.servers.bus_server"],
+            ...
+        }
+
+    The absolute path captures the Python interpreter that has otaman_plugin
+    installed at init time — typically the operator's pipx venv. This is
+    stable across cwds (claude reads .mcp.json from cwd; relative paths
+    broke when sessions launched from a different directory) and doesn't
+    depend on a shell wrapper. Replaces an earlier
+    `bash run-server.sh <module>.py` pattern that relied on per-repo
+    relative-path math + the wrapper's own Python-resolution heuristics —
+    both of which produced "2 MCP servers failed" symptoms when the venv
+    layout didn't match the wrapper's expectations (e.g. when the otaman
+    install is via pipx, not a repo-local .venv).
     """
     results: list[str] = []
     # Plugin root: src/otaman_plugin/X.py → ../../ (dev) or `<package>` (wheel).
     # Used only to identify the plugin's own repo and skip rewriting its
-    # canonical .mcp.json — the run-server.sh path itself comes from
-    # _find_plugin_script() below so it works in both layouts.
+    # canonical .mcp.json.
     plugin_root = Path(__file__).resolve().parent.parent.parent
-    run_server = _find_plugin_script("servers/run-server.sh")
 
     # Skip if plugin is catalog-installed (CLAUDE_PLUGIN_ROOT is set by Claude Code)
     # In that case, the plugin's own .mcp.json with ${CLAUDE_PLUGIN_ROOT} works natively.
@@ -799,8 +813,22 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
         results.append("Skipping .mcp.json install (plugin loaded from catalog)")
         return results
 
-    if run_server is None:
-        results.append("WARNING: run-server.sh not found (looked in package + dev tree)")
+    # The Python interpreter that's currently running otaman init — i.e. the
+    # one that has otaman_plugin importable. Captured as an absolute path so
+    # `.mcp.json` works regardless of the agent's cwd.
+    py_exe = sys.executable
+
+    # Pre-flight: confirm otaman_plugin is actually importable from this
+    # interpreter. If not, writing .mcp.json with this path would produce
+    # immediately-failing MCPs. Don't fail init — emit a warning + skip.
+    try:
+        import otaman_plugin  # noqa: F401
+    except ImportError:
+        results.append(
+            f"WARNING: otaman_plugin not importable from {py_exe}; "
+            f"skipping .mcp.json generation. Install otaman-plugin into "
+            f"the same venv as otaman-cli."
+        )
         return results
 
     for repo in config["repos"]:
@@ -810,30 +838,22 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
 
         # Skip the plugin's own repo: it ships its own canonical .mcp.json with
         # ${CLAUDE_PLUGIN_ROOT} paths (loaded when Claude Code reads it as a
-        # plugin config via --plugin-dir / catalog). Overwriting it with bare
-        # relative paths breaks the plugin-context load — "2 MCP servers failed"
-        # in every tab. (Backlog M-2.)
+        # plugin config via --plugin-dir / catalog). Overwriting it with the
+        # absolute-Python form would break the plugin-context load.
         if repo_dir == plugin_root.resolve():
             results.append(f"{repo['name']}: skipped (plugin repo ships its own .mcp.json)")
             continue
 
-        # Compute relative path from repo to run-server.sh
-        try:
-            rel = Path(os.path.relpath(run_server.resolve(), repo_dir)).as_posix()
-        except ValueError:
-            # Different drives on Windows — fall back to absolute
-            rel = run_server.resolve().as_posix()
-
         mcp_config = {
             "mcpServers": {
                 "otaman-bus": {
-                    "command": "bash",
-                    "args": [rel, "bus_server.py"],
+                    "command": py_exe,
+                    "args": ["-m", "otaman_plugin.servers.bus_server"],
                     "env": {"PYTHONUNBUFFERED": "1"},
                 },
                 "otaman-estimation": {
-                    "command": "bash",
-                    "args": [rel, "estimation_server.py"],
+                    "command": py_exe,
+                    "args": ["-m", "otaman_plugin.servers.estimation_server"],
                     "env": {"PYTHONUNBUFFERED": "1"},
                 },
             }
