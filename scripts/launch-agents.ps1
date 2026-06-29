@@ -1904,7 +1904,21 @@ if (-not $NoRunner) {
             # Wrap the opaque attach_command in WSL bash -ic so it runs in a
             # real shell (typical attach_command is `ssh user@host tmux a ...`
             # or `tmux a -t ...`). Mirrors the existing wsl-shell tab build.
-            $escaped = $attachCmd -replace '"', '\"'
+            #
+            # The runner is server-side and returns a server-local attach
+            # command (e.g. `/usr/bin/tmux attach -t <session>`). When the
+            # active connection is SSH, the local WSL tmux doesn't have that
+            # session — so we MUST SSH-wrap before handing the body to WSL.
+            # Without this wrap, every WT tab opens, tries to attach locally,
+            # fails with "can't find session: <name>", and exits with code 1.
+            $wrappedAttach = $attachCmd
+            if ($activeConn['type'] -eq 'ssh' -and $activeConn['ssh_default_host']) {
+                $sshTarget = $activeConn['ssh_default_host']
+                $sshKey = $activeConn['ssh_key']
+                $sshKeyFlag = if ($sshKey) { "-i $sshKey " } else { "" }
+                $wrappedAttach = "ssh -t $sshKeyFlag$sshTarget -- $attachCmd"
+            }
+            $escaped = $wrappedAttach -replace '"', '\"'
             $runnerWtTabs += "--title `"$rTitle`" --suppressApplicationTitle --tabColor `"$rColor`" wsl.exe -d $effectiveWslDistro -- bash -ic `"$escaped`""
             Write-Host "  spawned $rAgent@$($repo.name) -> $attachCmd" -ForegroundColor DarkGray
         }
