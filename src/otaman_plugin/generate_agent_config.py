@@ -774,6 +774,23 @@ fi
     return results
 
 
+def _is_plugin_repo(repo_dir: Path) -> bool:
+    """True if repo_dir is the otaman-plugin repo itself.
+
+    Checked via the on-disk .claude-plugin/plugin.json marker (name ==
+    "otaman"), not via __file__ path math — the latter reflects whichever
+    install of otaman_plugin is currently executing, which need not be the
+    dev checkout being configured.
+    """
+    plugin_json = repo_dir / ".claude-plugin" / "plugin.json"
+    if not plugin_json.is_file():
+        return False
+    try:
+        return json.loads(plugin_json.read_text(encoding="utf-8")).get("name") == "otaman"
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
 def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
     """Write .mcp.json in each repo so MCP tools are available.
 
@@ -802,10 +819,6 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
     install is via pipx, not a repo-local .venv).
     """
     results: list[str] = []
-    # Plugin root: src/otaman_plugin/X.py → ../../ (dev) or `<package>` (wheel).
-    # Used only to identify the plugin's own repo and skip rewriting its
-    # canonical .mcp.json.
-    plugin_root = Path(__file__).resolve().parent.parent.parent
 
     # Skip if plugin is catalog-installed (CLAUDE_PLUGIN_ROOT is set by Claude Code)
     # In that case, the plugin's own .mcp.json with ${CLAUDE_PLUGIN_ROOT} works natively.
@@ -840,7 +853,15 @@ def install_mcp_config(project_root: Path, config: dict[str, Any]) -> list[str]:
         # ${CLAUDE_PLUGIN_ROOT} paths (loaded when Claude Code reads it as a
         # plugin config via --plugin-dir / catalog). Overwriting it with the
         # absolute-Python form would break the plugin-context load.
-        if repo_dir == plugin_root.resolve():
+        #
+        # Identified by the on-disk .claude-plugin/plugin.json marker rather
+        # than by comparing __file__-derived paths: __file__ resolves to
+        # whichever install of otaman_plugin is executing `otaman init`
+        # (often a pipx venv), which is commonly a *different* path than the
+        # dev git checkout being configured here. Comparing those paths
+        # silently failed to skip in that setup and overwrote the plugin's
+        # own canonical .mcp.json.
+        if _is_plugin_repo(repo_dir):
             results.append(f"{repo['name']}: skipped (plugin repo ships its own .mcp.json)")
             continue
 
