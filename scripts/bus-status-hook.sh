@@ -48,34 +48,65 @@ fi
 [[ -z "$AGENT" ]] && exit 0
 
 # Count pending messages for this agent (fast: one pass over filenames + ack check)
+#
+# Pure-bash string handling below (no sed/head/tr/cat/basename forks) is
+# deliberate, not stylistic: bus/active/ accumulates every message ever
+# sent (resolving a message writes a .ack file; it never moves or prunes
+# the underlying .md), so this loop's iteration count is the project's
+# *entire* bus history, not just pending messages -- 1300+ files in a
+# lived-in project. The original per-file sed|head|tr pipeline forked
+# ~8 subprocesses per file (~11,000 forks at that scale), which is what
+# blew the 5s UserPromptSubmit timeout. Builtins turn each iteration into
+# in-process string ops with zero forks.
 PENDING=0
 URGENT=0
 
 for msg in "$BUS"/*.md; do
     [[ -f "$msg" ]] || continue
-    stem="$(basename "$msg" .md)"
+    stem="${msg##*/}"
+    stem="${stem%.md}"
 
     # Check ack — skip if resolved
-    [[ -f "$ACKS/${stem}.${AGENT}.ack" ]] && {
-        ack="$(cat "$ACKS/${stem}.${AGENT}.ack" 2>/dev/null)"
+    ackfile="$ACKS/${stem}.${AGENT}.ack"
+    if [[ -f "$ackfile" ]]; then
+        IFS= read -r ack < "$ackfile" || ack=""
         [[ "$ack" == *"resolved"* ]] && continue
-    }
+    fi
 
-    # Check if addressed to this agent or all (fast: first 15 lines only)
-    to="$(sed -n '1,15{s/^to:[[:space:]]*//p}' "$msg" | head -1 | tr -d '[:space:]')"
+    # Extract `to:` and `priority:` in one pass over the first 15 lines
+    # (matches the original sed '1,15' + first-match-wins + whitespace-
+    # strip semantics, including a stray trailing \r on CRLF files).
+    to=""
+    pri=""
+    lineno=0
+    while IFS= read -r line; do
+        lineno=$((lineno + 1))
+        if [[ -z "$to" && "$line" == to:* ]]; then
+            to="${line#to:}"
+            to="${to//[[:space:]]/}"
+        elif [[ -z "$pri" && "$line" == priority:* ]]; then
+            pri="${line#priority:}"
+            pri="${pri//[[:space:]]/}"
+        fi
+        { [[ -n "$to" && -n "$pri" ]] || [[ $lineno -ge 15 ]]; } && break
+    done < "$msg"
+
+    # Check if addressed to this agent or all
     [[ "$to" != "$AGENT" && "$to" != "all" ]] && continue
 
     PENDING=$((PENDING + 1))
-
-    # Check priority
-    pri="$(sed -n '1,15{s/^priority:[[:space:]]*//p}' "$msg" | head -1 | tr -d '[:space:]')"
     [[ "$pri" == "urgent" || "$pri" == "high" ]] && URGENT=$((URGENT + 1))
 done
 
-# Check blocked tasks
+# Check blocked tasks. `grep -c` exits 1 (no match) while still printing
+# "0" to stdout, so `"$(grep -c ... || echo 0)"` was concatenating BOTH
+# outputs into "0\n0" whenever the file existed with zero matches -- broke
+# the `-gt` comparison below with "0: syntax error in expression". Assign
+# first, then let `|| BLOCKED=0` overwrite on a genuine failure; it's a
+# separate statement, not captured inside the same command substitution.
 BLOCKED=0
 [[ -f "$ROOT/.agents/blocked/${AGENT}.md" ]] && {
-    BLOCKED="$(grep -c '^## Blocked:' "$ROOT/.agents/blocked/${AGENT}.md" 2>/dev/null || echo 0)"
+    BLOCKED="$(grep -c '^## Blocked:' "$ROOT/.agents/blocked/${AGENT}.md" 2>/dev/null)" || BLOCKED=0
 }
 
 # Only inject context if there's something noteworthy
