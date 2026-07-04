@@ -10,14 +10,18 @@
 #   tool_input   — object with the tool parameters (e.g. file_path)
 #
 # Output (JSON to stdout):
-#   On block: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"},"systemMessage":"..."}
+#   On block: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."},"systemMessage":"..."}
 #   On allow: exit 0 (no output needed)
 #
 # Claude Code validates hookSpecificOutput — `hookEventName` is required.
+# The deny reason MUST ride in permissionDecisionReason (surfaced to the
+# model) AND systemMessage (surfaced to the operator), with exit 0. Exit 2
+# makes Claude Code ignore stdout JSON and read (empty) stderr instead, so
+# the reason is lost and only a generic "denied" shows — the same opacity
+# bug fixed in check-blocked.sh (issue #73).
 #
 # Exit codes:
-#   0 — allow
-#   2 — block
+#   0 — always (allow = no output; deny = JSON on stdout via _deny)
 
 set -euo pipefail
 
@@ -43,6 +47,21 @@ json_get() {
     local json="$1"
     local key="$2"
     echo "$json" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
+}
+
+# --- Deny helper ---
+# Emit a PreToolUse deny with the reason in BOTH permissionDecisionReason
+# (to the model) and systemMessage (to the operator), then exit 0. Exit 0 —
+# NOT 2 — is what makes Claude Code honour the stdout JSON; exit 2 discards
+# it and surfaces only a generic "denied". Pass the RAW reason (with real
+# double-quotes); this helper JSON-escapes it (backslashes first, then
+# quotes; single-line).
+_deny() {
+    local reason="$1"
+    local esc
+    esc="$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"},"systemMessage":"%s"}\n' "$esc" "$esc"
+    exit 0
 }
 
 # --- Extract tool_name ---
@@ -100,9 +119,7 @@ check_spec_protection() {
     if [[ -n "$SPECS_ABS" && -n "$SPECS_OWNER" ]]; then
         if [[ "$CHECK_PATH" == "$SPECS_ABS"/* || "$CHECK_PATH" == "$SPECS_ABS" ]]; then
             if [[ "$CURRENT_AGENT" != "$SPECS_OWNER" ]]; then
-                local MSG="BLOCKED: Agent \\\"${CURRENT_AGENT}\\\" cannot write to specs (owned by ${SPECS_OWNER}). Use /otaman:propose to request spec changes${CONTEXT}"
-                echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\"},\"systemMessage\":\"${MSG}\"}"
-                exit 2
+                _deny "BLOCKED: Agent \"${CURRENT_AGENT}\" cannot write to specs (owned by ${SPECS_OWNER}). Use /otaman:propose to request spec changes${CONTEXT}"
             fi
         fi
     fi
@@ -125,9 +142,7 @@ check_spec_protection() {
                     return 0  # Repo owner can modify contracts in their own repo
                 fi
             done
-            local MSG="BLOCKED: Agent \\\"${CURRENT_AGENT}\\\" cannot modify contract files directly. Use /otaman:propose to request contract changes${CONTEXT}"
-            echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\"},\"systemMessage\":\"${MSG}\"}"
-            exit 2
+            _deny "BLOCKED: Agent \"${CURRENT_AGENT}\" cannot modify contract files directly. Use /otaman:propose to request contract changes${CONTEXT}"
             ;;
     esac
 
@@ -145,9 +160,7 @@ check_spec_protection() {
                     return 0  # Repo owner can modify contracts in their own repo
                 fi
             done
-            local MSG="BLOCKED: Agent \\\"${CURRENT_AGENT}\\\" cannot modify contract/schema files directly. Use /otaman:propose${CONTEXT}"
-            echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\"},\"systemMessage\":\"${MSG}\"}"
-            exit 2
+            _deny "BLOCKED: Agent \"${CURRENT_AGENT}\" cannot modify contract/schema files directly. Use /otaman:propose${CONTEXT}"
             ;;
     esac
 
@@ -173,9 +186,7 @@ check_path_ownership() {
                 return 0  # Allowed
             else
                 local REPO_NAME="$(basename "$REPO_ABS")"
-                local MSG="BLOCKED: Agent \\\"${CURRENT_AGENT}\\\" cannot write to ${REPO_NAME} (owned by ${REPO_OWNER})${CONTEXT}"
-                echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\"},\"systemMessage\":\"${MSG}\"}"
-                exit 2
+                _deny "BLOCKED: Agent \"${CURRENT_AGENT}\" cannot write to ${REPO_NAME} (owned by ${REPO_OWNER})${CONTEXT}"
             fi
         fi
     done
