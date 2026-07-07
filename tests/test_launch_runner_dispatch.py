@@ -322,8 +322,9 @@ runner_spawn_one 127.0.0.1 {port} test-token \
     assert body["human"] == "alice"
 
 
-def test_runner_spawn_one_returns_attach_command(mock_runner):
-    """The function must echo the attach_command on success."""
+def test_runner_spawn_one_returns_session_name(mock_runner):
+    """F072: the function must echo the structured session_name (NOT the
+    runner's attach_command string, which the caller used to eval)."""
     port = mock_runner["port"]
     script = f"""
 set -eu
@@ -340,8 +341,8 @@ runner_spawn_one 127.0.0.1 {port} test-token \
         timeout=15,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "true", (
-        f"expected attach_command 'true' on stdout, got: {result.stdout!r}"
+    assert result.stdout.strip() == "test:test-agent", (
+        f"expected session_name 'test:test-agent' on stdout, got: {result.stdout!r}"
     )
 
 

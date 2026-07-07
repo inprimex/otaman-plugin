@@ -62,9 +62,14 @@ read_runner_endpoint() {
     return 0
 }
 
-# Spawn one repo via runner HTTP API. Echoes the attach_command on
+# Spawn one repo via runner HTTP API. Echoes the validated session_name on
 # success, returns non-zero on any error. Builds and parses JSON via
 # small Python helpers (avoids a jq dependency).
+#
+# F072: the /spawn reply comes back over the network. We return only the
+# structured `attach.session_name` (never the runner's `attach_command`
+# string, which the caller used to `eval`). The name is charset-validated
+# here so the caller can use it as a literal tmux target with no shell eval.
 runner_spawn_one() {
     local host="$1" port="$2" token="$3"
     local agent="$4" repo="$5" project_root="$6" account="${7:-}" human="${8:-}"
@@ -96,12 +101,18 @@ print(json.dumps({
         return 1
     }
     ${PYTHON} -c '
-import json, sys
+import json, re, sys
 data = json.loads(sys.argv[1])
 attach = data.get("attach")
 if not attach:
     sys.exit("runner_spawn_one: no attach info in response: " + repr(data))
-print(attach["attach_command"])
+# F072: return the structured session name, not the runner-supplied
+# attach_command. Enforce a strict charset so the caller can attach via
+# argv (tmux exact-match target) instead of eval-ing network text.
+session = attach.get("session_name")
+if not session or not re.match(r"^[A-Za-z0-9._:=-]+$", session):
+    sys.exit("runner_spawn_one: missing or invalid session_name: " + repr(session))
+print(session)
 ' "$resp"
 }
 
@@ -346,27 +357,31 @@ for r in cfg.get("repos", []) or []:
     print(f"{name}|{owner}")
 EOF
                 )
-                _attach_first=""
+                _session_first=""
                 for _row in "${_repo_rows[@]}"; do
                     _repo_name="${_row%%|*}"
                     _agent_name="${_row#*|}"
                     if [[ -n "$REPO_FILTER" && "$_repo_name" != "$REPO_FILTER" ]]; then
                         continue
                     fi
-                    _attach=$(runner_spawn_one "$_host" "$_port" "$_token" \
+                    _session=$(runner_spawn_one "$_host" "$_port" "$_token" \
                         "$_agent_name" "$_repo_name" "$MAESTRO_ROOT" \
                         "${MAESTRO_ACTIVE_ACCOUNT:-}" "$_human") || {
                         echo "runner: spawn failed for $_repo_name; falling back to direct tmux spawn" >&2
                         VIA_RUNNER=0
                         break
                     }
-                    echo "  spawned $_agent_name@$_repo_name → $_attach" >&2
-                    [[ -z "$_attach_first" ]] && _attach_first="$_attach"
+                    echo "  spawned $_agent_name@$_repo_name → session $_session" >&2
+                    [[ -z "$_session_first" ]] && _session_first="$_session"
                 done
-                if [[ "$VIA_RUNNER" -eq 1 && -n "$_attach_first" ]]; then
+                if [[ "$VIA_RUNNER" -eq 1 && -n "$_session_first" ]]; then
                     echo "" >&2
-                    echo "attaching to first session: $_attach_first" >&2
-                    eval "exec $_attach_first"
+                    echo "attaching to first session: $_session_first" >&2
+                    # F072: attach via argv — never eval runner-supplied text.
+                    # runner_spawn_one already validated the session-name
+                    # charset; tmux receives '=<session>' as a single literal
+                    # exact-match target (the '=' guards the ':' in the name).
+                    exec tmux attach -t "=$_session_first"
                 fi
             else
                 echo "runner: no endpoint file at ~/.otaman/runner.endpoint; falling back to direct tmux spawn (start the runner daemon or pass --no-runner to silence)" >&2

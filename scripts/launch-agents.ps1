@@ -81,9 +81,15 @@ function Read-RunnerEndpoint {
 }
 
 function Invoke-RunnerSpawn {
-    # POST /spawn against the runner daemon. Returns the attach_command on
-    # success; throws on HTTP / payload error so the caller can catch and
-    # trigger the local-fallback path.
+    # POST /spawn against the runner daemon. Returns the validated
+    # session_name on success; throws on HTTP / payload error so the caller
+    # can catch and trigger the local-fallback path.
+    #
+    # F072: the /spawn reply comes back over the network. We return only the
+    # structured `attach.session_name` (never the runner's `attach_command`
+    # string, which the caller used to run as a shell command). The name is
+    # charset-validated here so the caller can embed it as a literal tmux
+    # target, no shell interpolation of network text.
     #
     # Body shape per auto-session-spawn-implementation proposal §4: agent +
     # repo + project_root + mode are required; account + human are forwarded
@@ -108,10 +114,16 @@ function Invoke-RunnerSpawn {
     $uri = "http://$($Endpoint.Host):$($Endpoint.Port)/spawn"
     $headers = @{ Authorization = "Bearer $($Endpoint.Token)"; "Content-Type" = "application/json" }
     $resp = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -TimeoutSec 30
-    if (-not $resp.attach -or -not $resp.attach.attach_command) {
-        throw "no attach info in response: $($resp | ConvertTo-Json -Compress)"
+    if (-not $resp.attach -or -not $resp.attach.session_name) {
+        throw "no session_name in spawn response: $($resp | ConvertTo-Json -Compress)"
     }
-    return [string]$resp.attach.attach_command
+    $session = [string]$resp.attach.session_name
+    # F072: accept only a strict session-name charset so the value can be
+    # embedded as a literal tmux target. Reject anything else (fail closed).
+    if ($session -notmatch '^[A-Za-z0-9._:=-]+$') {
+        throw "refusing runner session name with unexpected characters (F072 guard): '$session'"
+    }
+    return $session
 }
 
 # Size-based log rotation. Called before append-only writes so launcher.log
@@ -1895,36 +1907,34 @@ if (-not $NoRunner) {
             if (-not $rColor.StartsWith('#')) { $rColor = "#$rColor" }
             $rAgent = if ($repo.owner) { $repo.owner } else { $repo.name }
             try {
-                $attachCmd = Invoke-RunnerSpawn -Endpoint $endpoint -Agent $rAgent -Repo $repo.name -ProjectRoot $cfgParent -Account $activeAccountName -Human $human
+                $sessionName = Invoke-RunnerSpawn -Endpoint $endpoint -Agent $rAgent -Repo $repo.name -ProjectRoot $cfgParent -Account $activeAccountName -Human $human
             } catch {
                 Write-Warn "runner: spawn failed for $($repo.name): $_"
                 $runnerOk = $false
                 break
             }
-            # Wrap the opaque attach_command in WSL bash -ic so it runs in a
-            # real shell (typical attach_command is `ssh user@host tmux a ...`
-            # or `tmux a -t ...`). Mirrors the existing wsl-shell tab build.
+            # F072: build the attach command LOCALLY from the validated
+            # session name — never execute the runner's attach_command string
+            # (it comes back over the network and used to be interpolated into
+            # a shell command here). Invoke-RunnerSpawn already rejected any
+            # session name outside ^[A-Za-z0-9._:=-]+$, so '=<session>' is a
+            # safe literal tmux target ('=' forces exact match, guarding the
+            # ':' in `<project>:<owner>`).
+            $attachCmd = "tmux attach -t '=$sessionName'"
             #
-            # The runner is server-side and returns a server-local attach
-            # command (e.g. `/usr/bin/tmux attach -t <session>`). When the
-            # active connection is SSH, the local WSL tmux doesn't have that
-            # session — so we MUST SSH-wrap before handing the body to WSL.
-            # Without this wrap, every WT tab opens, tries to attach locally,
-            # fails with "can't find session: <name>", and exits with code 1.
+            # The runner creates the session server-side; when the active
+            # connection is SSH, the local WSL tmux doesn't have it, so we
+            # SSH-wrap the attach before handing it to a tab. Without the wrap
+            # every WT tab tries to attach locally, fails "can't find session",
+            # and exits 1.
             # For SSH connections: build a PowerShell-encoded ssh.exe invocation
-            # (mirrors the direct-SSH wt-tab path at line ~1338). This uses
-            # Windows-native ssh.exe so:
+            # (mirrors the direct-SSH wt-tab path). Windows-native ssh.exe so:
             #   - The ssh_key can stay in Windows form (C:/Users/.../key) —
             #     ssh.exe accepts native paths.
             #   - Windows ACLs gate access; no need to copy the key into WSL
             #     and chmod 600 just to satisfy Unix-style perm checks.
-            #   - Eliminates the WSL dependency from the runner-attach path
-            #     (the runner returns a single bare command — no bash meta-
-            #     characters that would justify a WSL wrap).
-            #
-            # For local connections, run the attach_command in WSL bash so any
-            # multi-token attach_command (e.g. `ssh user@host tmux a ...` that
-            # an aggregator-style runner might return) still executes natively.
+            #   - Eliminates the WSL dependency from the runner-attach path.
+            # For local connections, run the (launcher-built) attach in WSL bash.
             if ($activeConn['type'] -eq 'ssh' -and $activeConn['ssh_default_host']) {
                 $sshTarget = $activeConn['ssh_default_host']
                 $sshKey = $activeConn['ssh_key']
@@ -1938,7 +1948,7 @@ if (-not $NoRunner) {
                 $escaped = $attachCmd -replace '"', '\"'
                 $runnerWtTabs += "--title `"$rTitle`" --suppressApplicationTitle --tabColor `"$rColor`" wsl.exe -d $effectiveWslDistro -- bash -ic `"$escaped`""
             }
-            Write-Host "  spawned $rAgent@$($repo.name) -> $attachCmd" -ForegroundColor DarkGray
+            Write-Host "  spawned $rAgent@$($repo.name) -> session $sessionName" -ForegroundColor DarkGray
         }
         if ($runnerOk -and $runnerWtTabs.Count -gt 0) {
             $wtTabs = $runnerWtTabs
