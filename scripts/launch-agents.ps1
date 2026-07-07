@@ -38,7 +38,8 @@ param(
     [switch]$Restart,             # Kill then re-launch (combination of -Close + normal launch)
     [switch]$Yes,                 # Skip confirmation prompts (for -Close / -Restart automation)
     [switch]$ViaRunner,           # Deprecated no-op (runner is now the default in tmux mode per auto-session-spawn-implementation task 4.3). Kept for back-compat.
-    [switch]$NoRunner             # Skip otaman-runner; spawn wt.exe tabs directly. Use when the runner daemon isn't installed or for offline dev.
+    [switch]$NoRunner,            # Skip otaman-runner; spawn wt.exe tabs directly. Use when the runner daemon isn't installed or for offline dev.
+    [switch]$AllowDirectFallback  # Required to degrade to direct SSH when a *configured* runner (runner_uri or ~/.otaman/runner.endpoint) is unreachable. Not required when no runner is configured at all -- that path degrades quietly as before. Per runner-endpoint-discovery/spec.md.
 )
 
 # ============================================================
@@ -63,11 +64,15 @@ function Write-Err  { param($m) Write-Host "  [X]  $m" -ForegroundColor Red }
 # logged as `[degraded mode: runner unavailable; using local fallback]` so the
 # user knows which spawn path actually ran.
 
-function Read-RunnerEndpoint {
-    $path = Join-Path $HOME ".otaman/runner.endpoint"
-    if (-not (Test-Path $path)) { return $null }
+# Extracts host/port/token from the 4-line endpoint-file format
+# (host=/port=/token=/pid=). Shared by Read-RunnerEndpoint (local file) and
+# Get-TokenFromEndpointText (ssh-cat: remote read) so both parse identically
+# -- runner-endpoint-via-launch-settings/spec.md requires ssh-cat's
+# extraction to be byte-for-byte equivalent to the local-file parser.
+function Get-EndpointFieldsFromText {
+    param([Parameter(Mandatory)][string[]]$Lines)
     $host_ = $null; $port = $null; $token = $null
-    foreach ($line in (Get-Content $path -Encoding UTF8)) {
+    foreach ($line in $Lines) {
         $kv = $line -split '=', 2
         if ($kv.Length -ne 2) { continue }
         switch ($kv[0].Trim()) {
@@ -76,8 +81,223 @@ function Read-RunnerEndpoint {
             'token' { $token = $kv[1].Trim() }
         }
     }
-    if (-not $host_ -or -not $port -or -not $token) { return $null }
     return @{ Host = $host_; Port = $port; Token = $token }
+}
+
+function Read-RunnerEndpoint {
+    $path = Join-Path $HOME ".otaman/runner.endpoint"
+    if (-not (Test-Path $path)) { return $null }
+    $fields = Get-EndpointFieldsFromText -Lines (Get-Content $path -Encoding UTF8)
+    if (-not $fields.Host -or -not $fields.Port -or -not $fields.Token) { return $null }
+    # Tls is always false for the endpoint-file path -- the file format has
+    # no TLS field; today's behaviour (plain http) is unchanged.
+    return @{ Host = $fields.Host; Port = $fields.Port; Token = $fields.Token; Tls = $false }
+}
+
+# Extracts just the token= line from arbitrary endpoint-file-shaped text
+# (e.g. the stdout of a remote `cat`), via the same field parser Read-
+# RunnerEndpoint uses for the local file.
+function Get-TokenFromEndpointText {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $lines = $Text -split "`r?`n"
+    return (Get-EndpointFieldsFromText -Lines $lines).Token
+}
+
+# ------------------------------------------------------------------
+# runner_uri / runner_token_source discovery (runner-endpoint-discovery
+# and runner-endpoint-via-launch-settings specs, multi-program-runner-impl
+# tasks 3.2-3.6)
+# ------------------------------------------------------------------
+
+# Resolves a `runner_uri` string into a {Host, Port, Tls} triple. Accepts
+# both explicit http(s)://host:port (canonical, always honoured as given)
+# and convenience runner://[host]:port (ssh connections only; an omitted
+# host is derived from ssh_default_host, stripping any `user@` prefix).
+function Resolve-RunnerUri {
+    param(
+        [Parameter(Mandatory)][string]$RunnerUri,
+        [Parameter(Mandatory)][hashtable]$Settings
+    )
+    if ($RunnerUri -match '^(https?)://([^:/]+):(\d+)/?$') {
+        return @{ Host = $Matches[2]; Port = [int]$Matches[3]; Tls = ($Matches[1] -eq 'https') }
+    }
+    if ($RunnerUri -match '^runner://([^:]*):(\d+)$') {
+        $h = $Matches[1]
+        if (-not $h) {
+            $sshHost = $Settings['ssh_default_host']
+            if (-not $sshHost) {
+                throw "runner_uri '$RunnerUri' omits the host but the connection has no ssh_default_host to derive it from"
+            }
+            $h = $sshHost.Split('@')[-1]
+        }
+        $tls = $Settings['runner_tls'] -match '^(?i:true|1|yes)$'
+        return @{ Host = $h; Port = [int]$Matches[2]; Tls = $tls }
+    }
+    throw "runner_uri '$RunnerUri' is not a recognized form (expected http(s)://host:port or runner://[host]:port)"
+}
+
+# 3-state discovery precedence: FromBlock (runner_uri configured on the
+# connection) > FromFile (~/.otaman/runner.endpoint) > None. Returns which
+# source applied so callers can distinguish "configured but unreachable"
+# (requires -AllowDirectFallback) from "not configured at all" (degrades
+# quietly). FromBlock's Endpoint has no Token yet -- that's resolved
+# separately via Resolve-RunnerToken/Get-CachedRunnerToken.
+function Resolve-RunnerEndpointForConnection {
+    param([Parameter(Mandatory)][hashtable]$Settings)
+    $uri = $Settings['runner_uri']
+    if ($uri) {
+        $resolved = Resolve-RunnerUri -RunnerUri $uri -Settings $Settings
+        return @{
+            Source   = 'FromBlock'
+            Endpoint = @{ Host = $resolved.Host; Port = $resolved.Port; Tls = $resolved.Tls; Token = $null }
+        }
+    }
+    $fileEndpoint = Read-RunnerEndpoint
+    if ($fileEndpoint) {
+        return @{ Source = 'FromFile'; Endpoint = $fileEndpoint }
+    }
+    return @{ Source = 'None'; Endpoint = $null }
+}
+
+# Resolves the {Exe, KeyArgs, Target} triple for native ssh.exe invocation
+# against a connection -- the same client/key/host shape the runner-attach
+# tab-spawn path uses (ab8780c: native ssh.exe, no WSL; ssh_key stays
+# Windows-form, no /mnt/<drive>/ translation, since ssh.exe itself runs on
+# Windows, not inside WSL). Both the runner-attach site and Resolve-
+# RunnerToken's ssh-cat: scheme go through this function so a future fix to
+# client/key/host resolution lands in both places at once instead of
+# risking the two drifting apart and reintroducing a hardened bug.
+function Get-NativeSshInvocation {
+    param([Parameter(Mandatory)][hashtable]$Settings)
+    $target = $Settings['ssh_default_host']
+    if (-not $target) { throw "connection has no ssh_default_host" }
+    $key = $Settings['ssh_key']
+    $keyArgs = if ($key) { @('-i', $key) } else { @() }
+    return @{ Exe = 'ssh.exe'; KeyArgs = $keyArgs; Target = $target }
+}
+
+# ssh-cat: reads a remote file over the connection's own already-resolved
+# SSH invocation (Get-NativeSshInvocation) -- never a fresh, independently
+# constructed `ssh -i <key> <host> cat <path>` built from raw connection
+# fields. See runner-endpoint-via-launch-settings/spec.md's SSH-reuse
+# requirement (task 3.5).
+function Invoke-SshCatRemoteFile {
+    param(
+        [Parameter(Mandatory)][hashtable]$Settings,
+        [Parameter(Mandatory)][string]$RemotePath
+    )
+    $inv = Get-NativeSshInvocation -Settings $Settings
+    # $RemotePath is typically remote-home-relative (e.g. `~/.otaman/runner.endpoint`)
+    # -- the `~` is meant to be expanded by the REMOTE shell, not resolved
+    # locally. PowerShell's native-command argument binder tilde-expands any
+    # variable-sourced argument whose value *starts* with `~` to the LOCAL
+    # $HOME before the native process ever sees it (confirmed on pwsh 7;
+    # passing $RemotePath as its own argv element would silently send ssh a
+    # corrupted, locally-expanded path). Joining "cat $RemotePath" into one
+    # string sidesteps this: the joined argument starts with "cat ", not
+    # `~`, so no local expansion happens, and it also matches how every
+    # other remote command in this file is built (single string, not
+    # separate argv tokens) -- see Build-SshCommand's $chainedCmd.
+    $remoteCmd = "cat $RemotePath"
+    $sshArgs = @() + $inv.KeyArgs + @($inv.Target, $remoteCmd)
+    $output = & $inv.Exe @sshArgs 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "ssh-cat: 'cat $RemotePath' on $($inv.Target) failed (exit $LASTEXITCODE)"
+    }
+    return ($output -join "`n")
+}
+
+# Resolves a bearer token per `runner_token_source`'s grammar (ssh-cat: /
+# env: / dotenv: / static: / keyring:). When runner_token_source is absent,
+# defaults to ssh-cat:~/.otaman/runner.endpoint for ssh/mesh connections --
+# the same path the FromFile precedence branch already reads locally.
+function Resolve-RunnerToken {
+    param([Parameter(Mandatory)][hashtable]$Settings)
+
+    $source = $Settings['runner_token_source']
+    if (-not $source) {
+        $connType = if ($Settings['type']) { $Settings['type'] } else { 'ssh' }
+        if ($connType -eq 'ssh' -or $connType -eq 'mesh') {
+            $source = 'ssh-cat:~/.otaman/runner.endpoint'
+        } else {
+            throw "runner_token_source not set and connection type '$connType' has no default token source"
+        }
+    }
+
+    $colonIdx = $source.IndexOf(':')
+    if ($colonIdx -lt 0) { throw "runner_token_source '$source' is malformed (expected <scheme>:<value>)" }
+    $scheme = $source.Substring(0, $colonIdx)
+    $rest = $source.Substring($colonIdx + 1)
+
+    switch ($scheme) {
+        'ssh-cat' {
+            $text = Invoke-SshCatRemoteFile -Settings $Settings -RemotePath $rest
+            $token = Get-TokenFromEndpointText -Text $text
+            if (-not $token) { throw "ssh-cat: no 'token=' line found in remote '$rest'" }
+            return $token
+        }
+        'env' {
+            $val = [Environment]::GetEnvironmentVariable($rest)
+            if (-not $val) { throw "env: environment variable '$rest' is not set or empty" }
+            return $val
+        }
+        'dotenv' {
+            # rest = "<path>:<KEY>" -- split on the LAST colon so Windows
+            # drive-letter paths (C:/Users/.../.env:MY_TOKEN) parse correctly.
+            $lastColon = $rest.LastIndexOf(':')
+            if ($lastColon -lt 0) { throw "dotenv: expected '<path>:<KEY>', got '$rest'" }
+            $dpath = $rest.Substring(0, $lastColon)
+            $dkey = $rest.Substring($lastColon + 1)
+            if (-not (Test-Path $dpath)) { throw "dotenv: file not found: $dpath" }
+            foreach ($line in (Get-Content $dpath -Encoding UTF8)) {
+                $t = $line.Trim()
+                if (-not $t -or $t.StartsWith('#')) { continue }
+                $eq = $t.IndexOf('=')
+                if ($eq -lt 1) { continue }
+                $k = $t.Substring(0, $eq).Trim()
+                if ($k -ne $dkey) { continue }
+                $v = $t.Substring($eq + 1).Trim()
+                if ($v.Length -ge 2) {
+                    $first = $v[0]; $last = $v[$v.Length - 1]
+                    if ( ($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'") ) {
+                        $v = $v.Substring(1, $v.Length - 2)
+                    }
+                }
+                return $v
+            }
+            throw "dotenv: key '$dkey' not found in $dpath"
+        }
+        'static' {
+            return $rest
+        }
+        'keyring' {
+            # Interface specified now, implementation deferred (mirrors the
+            # runner-side keyring: scheme). Fail loudly rather than silently
+            # falling through to another source.
+            throw "keyring: token source not yet implemented (interface-only) -- '$source'"
+        }
+        default {
+            throw "runner_token_source: unknown scheme '$scheme' (expected ssh-cat|env|dotenv|static|keyring)"
+        }
+    }
+}
+
+# Per-connection token cache: resolved once per launch batch and reused for
+# every spawn in that batch (task 3.6). A launch spanning multiple
+# connections resolves and caches each independently.
+$script:RunnerTokenCache = @{}
+
+function Get-CachedRunnerToken {
+    param(
+        [Parameter(Mandatory)][string]$ConnectionName,
+        [Parameter(Mandatory)][hashtable]$Settings
+    )
+    if ($script:RunnerTokenCache.ContainsKey($ConnectionName)) {
+        return $script:RunnerTokenCache[$ConnectionName]
+    }
+    $token = Resolve-RunnerToken -Settings $Settings
+    $script:RunnerTokenCache[$ConnectionName] = $token
+    return $token
 }
 
 function Invoke-RunnerSpawn {
@@ -111,7 +331,8 @@ function Invoke-RunnerSpawn {
         account      = if ($Account) { $Account } else { $null }
         human        = if ($Human)   { $Human }   else { $null }
     } | ConvertTo-Json -Compress
-    $uri = "http://$($Endpoint.Host):$($Endpoint.Port)/spawn"
+    $scheme = if ($Endpoint.Tls) { "https" } else { "http" }
+    $uri = "${scheme}://$($Endpoint.Host):$($Endpoint.Port)/spawn"
     $headers = @{ Authorization = "Bearer $($Endpoint.Token)"; "Content-Type" = "application/json" }
     $resp = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -TimeoutSec 30
     if (-not $resp.attach -or -not $resp.attach.session_name) {
@@ -1889,16 +2110,40 @@ $effectiveWslDistro = if ($WslDistro) { $WslDistro } elseif ($activeConn['wsl_di
 # implementation task 4.3). Each repo's spawn goes through otaman-runner's
 # HTTP /spawn endpoint; the runner returns an attach_command which we render
 # as a wt.exe tab body (run inside WSL so the bash one-liner executes
-# natively). If the endpoint file is missing or any /spawn fails we fall
-# through to the existing per-shell tab build below with a
-# `[degraded mode: ...]` notice so the user knows which spawn path actually
-# ran. Pass -NoRunner to skip the runner entirely (offline / dev mode).
+# natively).
+#
+# Endpoint discovery follows the 3-state precedence in runner-endpoint-
+# discovery/spec.md: FromBlock (runner_uri on the active connection) >
+# FromFile (~/.otaman/runner.endpoint) > None. A *configured* runner
+# (FromBlock/FromFile) that turns out unreachable is treated as a probable
+# operator error, not an intended degradation -- it requires
+# -AllowDirectFallback before falling back to direct SSH, and fails the
+# launch loudly without it. An *unconfigured* runner (None) degrades
+# quietly as before, no flag required. Pass -NoRunner to skip the runner
+# entirely (offline / dev mode).
 $useRunnerTabs = $false
 if (-not $NoRunner) {
-    $endpoint = Read-RunnerEndpoint
+    $discovery = Resolve-RunnerEndpointForConnection -Settings $activeConn
+    $runnerSource = $discovery.Source
+    $endpoint = $discovery.Endpoint
+    $configuredSource = $runnerSource -in @('FromBlock', 'FromFile')
+
+    # FromFile's endpoint already carries a token (parsed from the local
+    # file). FromBlock doesn't -- resolve + cache it now, once for the
+    # whole batch (task 3.6), via runner_token_source's grammar.
+    if ($endpoint -and $runnerSource -eq 'FromBlock') {
+        try {
+            $endpoint.Token = Get-CachedRunnerToken -ConnectionName $activeName -Settings $activeConn
+        } catch {
+            Write-Err "runner: token resolution failed for connection '$activeName': $_"
+            $endpoint = $null
+        }
+    }
+
     if ($endpoint) {
         $human = $env:USERNAME
-        Write-Host "runner: spawning via http://$($endpoint.Host):$($endpoint.Port) (human=$(if ($human) { $human } else { '<unset>' }))" -ForegroundColor DarkGray
+        $scheme = if ($endpoint.Tls) { 'https' } else { 'http' }
+        Write-Host "runner: spawning via ${scheme}://$($endpoint.Host):$($endpoint.Port) (human=$(if ($human) { $human } else { '<unset>' }))" -ForegroundColor DarkGray
         $runnerWtTabs = @()
         $runnerOk = $true
         foreach ($repo in $valid) {
@@ -1928,7 +2173,12 @@ if (-not $NoRunner) {
             # every WT tab tries to attach locally, fails "can't find session",
             # and exits 1.
             # For SSH connections: build a PowerShell-encoded ssh.exe invocation
-            # (mirrors the direct-SSH wt-tab path). Windows-native ssh.exe so:
+            # (mirrors the direct-SSH wt-tab path at line ~1338), via the same
+            # Get-NativeSshInvocation resolution the ssh-cat: token source
+            # uses -- one client/key/host resolution shared by both call
+            # sites, not two independently maintained copies that could drift
+            # and reintroduce a hardened bug. This uses Windows-native
+            # ssh.exe so:
             #   - The ssh_key can stay in Windows form (C:/Users/.../key) —
             #     ssh.exe accepts native paths.
             #   - Windows ACLs gate access; no need to copy the key into WSL
@@ -1936,11 +2186,10 @@ if (-not $NoRunner) {
             #   - Eliminates the WSL dependency from the runner-attach path.
             # For local connections, run the (launcher-built) attach in WSL bash.
             if ($activeConn['type'] -eq 'ssh' -and $activeConn['ssh_default_host']) {
-                $sshTarget = $activeConn['ssh_default_host']
-                $sshKey = $activeConn['ssh_key']
-                $sshKeyFlag = if ($sshKey) { "-i $sshKey " } else { "" }
+                $inv = Get-NativeSshInvocation -Settings $activeConn
+                $sshKeyFlag = if ($inv.KeyArgs.Count -gt 0) { "$($inv.KeyArgs[0]) $($inv.KeyArgs[1]) " } else { "" }
                 $remoteCmd = $attachCmd -replace '"', '`"'
-                $psCmd = "ssh.exe " + $sshKeyFlag + "-t $sshTarget " + '"' + $remoteCmd + '"'
+                $psCmd = "$($inv.Exe) " + $sshKeyFlag + "-t $($inv.Target) " + '"' + $remoteCmd + '"'
                 $psCmdBytes = [System.Text.Encoding]::Unicode.GetBytes($psCmd)
                 $psCmdEncoded = [Convert]::ToBase64String($psCmdBytes)
                 $runnerWtTabs += "--title `"$rTitle`" --suppressApplicationTitle --tabColor `"$rColor`" powershell.exe -NoExit -EncodedCommand $psCmdEncoded"
@@ -1953,12 +2202,27 @@ if (-not $NoRunner) {
         if ($runnerOk -and $runnerWtTabs.Count -gt 0) {
             $wtTabs = $runnerWtTabs
             $useRunnerTabs = $true
+        } elseif ($configuredSource -and -not $AllowDirectFallback) {
+            $target = if ($runnerSource -eq 'FromBlock') { $activeConn['runner_uri'] } else { "$($endpoint.Host):$($endpoint.Port) (from ~/.otaman/runner.endpoint)" }
+            Write-Err "runner: configured runner ($runnerSource) at $target did not respond to spawn."
+            Write-Err "Pass -AllowDirectFallback to proceed via direct SSH, or fix the runner configuration."
+            exit 1
         } else {
             Write-Warn "[degraded mode: runner unavailable; using local fallback]"
         }
+    } elseif ($configuredSource) {
+        # Endpoint resolved but token resolution failed (see the Write-Err
+        # above for the underlying cause) -- same loud-warn + explicit-flag
+        # rule as an unreachable spawn.
+        if (-not $AllowDirectFallback) {
+            Write-Err "runner: configured runner ($runnerSource) on connection '$activeName' could not be used (token resolution failed -- see above)."
+            Write-Err "Pass -AllowDirectFallback to proceed via direct SSH."
+            exit 1
+        }
+        Write-Warn "[degraded mode: runner unavailable; using local fallback]"
     } else {
         Write-Warn "[degraded mode: runner unavailable; using local fallback]"
-        Write-Host "  (no endpoint file at ~/.otaman/runner.endpoint; start the runner daemon or pass -NoRunner to silence)" -ForegroundColor DarkGray
+        Write-Host "  (no runner_uri configured and no endpoint file at ~/.otaman/runner.endpoint; start the runner daemon, configure runner_uri, or pass -NoRunner to silence)" -ForegroundColor DarkGray
     }
 }
 
