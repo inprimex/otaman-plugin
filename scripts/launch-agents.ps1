@@ -300,6 +300,33 @@ function Get-CachedRunnerToken {
     return $token
 }
 
+function Resolve-RunnerProjectRoot {
+    # Bug fix (2026-07-09, flagged by deploy-agent while re-verifying R2/R3
+    # on greenbin): a runner-mediated /spawn's `project_root` field must be
+    # a path on the RUNNER's own filesystem, not the launcher's local config
+    # folder. otaman-runner's spawner.py takes `project_root` at face value
+    # and sets it directly as `OTAMAN_ROOT` in the spawned session's env, so
+    # handing it $cfgParent (a local, possibly-Windows path) produced a
+    # stale/wrong OTAMAN_ROOT on every remote-runner session — confirmed via
+    # `ps` showing `-e OTAMAN_ROOT=C:\work\launchers\greenbin-runner` on a
+    # Linux tmux session.
+    #
+    # Prefer the active connection's `ssh_remote_root` (the same field the
+    # direct-SSH path already uses for remote paths, e.g. lines computing
+    # $remoteCfg/$remoteRoot). Falls back to the local config folder only
+    # when the connection has no remote root configured at all — e.g. a
+    # runner co-located with the launcher itself, where the local path IS
+    # the correct project root.
+    param(
+        [hashtable] $ActiveConn,
+        [string] $LocalConfigParent
+    )
+    if ($ActiveConn -and $ActiveConn['ssh_remote_root']) {
+        return $ActiveConn['ssh_remote_root']
+    }
+    return $LocalConfigParent
+}
+
 function Invoke-RunnerSpawn {
     # POST /spawn against the runner daemon. Returns the validated
     # session_name on success; throws on HTTP / payload error so the caller
@@ -2152,7 +2179,8 @@ if (-not $NoRunner) {
             if (-not $rColor.StartsWith('#')) { $rColor = "#$rColor" }
             $rAgent = if ($repo.owner) { $repo.owner } else { $repo.name }
             try {
-                $sessionName = Invoke-RunnerSpawn -Endpoint $endpoint -Agent $rAgent -Repo $repo.name -ProjectRoot $cfgParent -Account $activeAccountName -Human $human
+                $runnerProjectRoot = Resolve-RunnerProjectRoot -ActiveConn $activeConn -LocalConfigParent $cfgParent
+                $sessionName = Invoke-RunnerSpawn -Endpoint $endpoint -Agent $rAgent -Repo $repo.name -ProjectRoot $runnerProjectRoot -Account $activeAccountName -Human $human
             } catch {
                 Write-Warn "runner: spawn failed for $($repo.name): $_"
                 $runnerOk = $false
