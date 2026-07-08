@@ -42,8 +42,10 @@ source "$SCRIPT_DIR/_resolve.sh"
 
 PROJECT_ROOT="$(find_maestro_root 2>/dev/null)" || exit 0
 
-# Resolve agent identity via priority chain: OTAMAN_AGENT env > .otaman agent: field > current-agent fallback
-AGENT="$(resolve_agent_identity "$PROJECT_ROOT")" || exit 0
+# Resolve agent identity for enforcement (F013): only the per-directory
+# .otaman agent: marker is trusted — see resolve_enforcement_identity in
+# _resolve.sh for why OTAMAN_AGENT env / current-agent are excluded here.
+AGENT="$(resolve_enforcement_identity)" || exit 0
 [[ -n "$AGENT" ]] || exit 0
 
 # Check blocked tasks file

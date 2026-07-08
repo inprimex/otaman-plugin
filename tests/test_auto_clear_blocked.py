@@ -254,9 +254,19 @@ def integration_workspace(tmp_path, monkeypatch):
 
 
 def test_full_propose_approve_tombstone_lifecycle(integration_workspace):
-    """End-to-end: propose creates a blocked entry; sending a spec-change-
-    approved message that references the proposal stem auto-tombstones
-    the entry and the file no longer reads as a `## Blocked:` header."""
+    """End-to-end: propose creates a blocked entry; an approval referencing
+    the proposal stem auto-tombstones the entry and the file no longer
+    reads as a `## Blocked:` header.
+
+    F012 (2026-07-08): `spec-change-approved` is a PRIVILEGED_TYPES message
+    — otaman_send now categorically refuses to send it over MCP (no
+    interactive human confirmation is possible there); real approvals go
+    through the CLI's human-confirmed `otaman approve` instead (see
+    test_otaman_send_refuses_privileged_approval below). This test now
+    exercises `_auto_tombstone_blocked` directly with the same body that a
+    CLI-written approval message would carry, to keep the tombstone-
+    matching logic itself under regression coverage.
+    """
     propose_result = otaman_propose.fn(
         cwd=str(integration_workspace["plugin"]),
         title="my new feature",
@@ -275,18 +285,11 @@ def test_full_propose_approve_tombstone_lifecycle(integration_workspace):
         "The spec-change-request from **plugin-agent** has been **approved**.\n\n"
         f"**Original proposal**: {proposal_stem}\n"
     )
-    send_result = otaman_send.fn(
-        cwd=str(integration_workspace["human"]),
-        to="plugin-agent",
-        subject="Approved: my new feature",
-        body=approval_body,
-        msg_type="spec-change-approved",
-        priority="high",
+    tombstoned = _auto_tombstone_blocked(
+        integration_workspace["otaman"], "spec-change-approved", approval_body
     )
-    assert send_result["sent"] is True
-    assert "auto_tombstoned" in send_result
-    assert len(send_result["auto_tombstoned"]) == 1
-    assert send_result["auto_tombstoned"][0]["agent"] == "plugin-agent"
+    assert len(tombstoned) == 1
+    assert tombstoned[0]["agent"] == "plugin-agent"
 
     post = blocked_file.read_text()
     # Line-leading active header is gone (would be matched by check-blocked.sh)
@@ -294,6 +297,28 @@ def test_full_propose_approve_tombstone_lifecycle(integration_workspace):
     # Tombstone wrapper + reason trailer present
     assert "<!-- ## Blocked: my new feature" in post
     assert "— approved -->" in post
+
+
+def test_otaman_send_refuses_privileged_approval(integration_workspace):
+    """F012: otaman_send must refuse spec-change-approved outright — this is
+    exactly the MCP path that would otherwise let any agent self-approve
+    its own proposal, bypassing HITL. No blocked-entry file is touched."""
+    otaman_propose.fn(
+        cwd=str(integration_workspace["plugin"]),
+        title="self-approval attempt",
+        what_needs_to_change=".",
+        why_needed=".",
+    )
+    send_result = otaman_send.fn(
+        cwd=str(integration_workspace["human"]),
+        to="plugin-agent",
+        subject="Approved: self-approval attempt",
+        body="**Original proposal**: fake-stem\n",
+        msg_type="spec-change-approved",
+        priority="high",
+    )
+    assert "error" in send_result
+    assert "sent" not in send_result
 
 
 def test_task_assignment_uses_change_field(integration_workspace):

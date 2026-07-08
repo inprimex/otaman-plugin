@@ -36,8 +36,10 @@ PROJECT_ROOT="$(find_maestro_root 2>/dev/null)" || exit 0
 
 OWNERSHIP_FILE="$PROJECT_ROOT/.agents/ownership.json"
 
-# Resolve agent identity via priority chain: OTAMAN_AGENT env > .otaman agent: field > current-agent fallback
-CURRENT_AGENT="$(resolve_agent_identity "$PROJECT_ROOT")" || exit 0
+# Resolve agent identity for enforcement (F013): only the per-directory
+# .otaman agent: marker is trusted — see resolve_enforcement_identity in
+# _resolve.sh for why OTAMAN_AGENT env / current-agent are excluded here.
+CURRENT_AGENT="$(resolve_enforcement_identity)" || exit 0
 [[ -n "$CURRENT_AGENT" ]] || exit 0
 
 # --- Portable JSON value extraction (no grep -P, no python) ---

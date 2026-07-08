@@ -407,46 +407,30 @@ def _extract_cc_recipient_from_stem(
 
 
 def _get_agent_identity(root: Path, cwd: str | None = None) -> str | None:
-    """Determine agent name from CLAUDE.md, .otaman marker, or current-agent fallback.
+    """Determine agent identity for enforcement-relevant MCP bus operations.
 
-    Resolution order (first match wins):
+    F013 fix (security GAP finding, 2026-07-08): delegates to
+    ``otaman_core.identity.resolve_enforcement_identity()``, the single
+    canonical enforcement-identity resolver, instead of this function's own
+    priority chain. That prior chain (CLAUDE.md's `` You are `X` `` line,
+    then the ``.otaman`` marker, then a global ``.agents/current-agent``
+    fallback) is exactly the kind of independently-maintained resolver that
+    caused a real incident: this function misattributed every
+    ``otaman_send`` call to ``plugin-agent`` regardless of actual caller
+    (2026-06-08). See the ``otaman_core.identity`` module docstring for the
+    full rationale — only the per-directory ``.otaman`` ``agent:`` marker is
+    trusted now; the env var and current-agent fallback are excluded
+    because both are agent-writable.
 
-    1. ``CLAUDE.md`` in ``cwd`` — regex ``You are `<name>``` (per-repo, most
-       specific). Many repos' CLAUDE.md don't carry this exact phrasing, so
-       step 2 is the load-bearing identity source in practice.
-    2. ``.otaman`` marker in ``cwd`` — ``agent:`` field (per-repo canonical
-       identity, per the agent-identity-per-directory spec). Walks up the
-       directory tree from ``cwd`` via ``otaman_core._resolve.read_agent``.
-    3. ``.agents/current-agent`` at the project root (global fallback).
-       Project root resolves to the otaman folder, so this returns whatever
-       identity was last written there — typically wrong when ``cwd`` is
-       inside another agent's repo. Kept as a defensive last resort.
+    ``root`` is unused now that resolution no longer falls back to a
+    project-root file, but is kept in the signature to avoid touching the
+    (many) call sites.
     """
-    # 1. Try CLAUDE.md in cwd (most specific — per-repo identity)
-    if cwd:
-        claude_md = _normalize_path(cwd) / "CLAUDE.md"
-        if claude_md.exists():
-            text = claude_md.read_text(encoding="utf-8")
-            m = re.search(r"You are `([^`]+)`", text)
-            if m:
-                return m.group(1)
-    # 2. Try .otaman marker agent: field via the CWD ancestry walk.
-    # This is the canonical per-repo identity source; almost every managed
-    # repo carries a .otaman with `agent: <name>`. Importing inside the
-    # function keeps the otaman_core dependency lazy (matches the pattern
-    # already used by _find_project_root).
-    if cwd:
-        from otaman_core._resolve import read_agent
-        name = read_agent(_normalize_path(cwd))
-        if name:
-            return name
-    # 3. Fall back to global current-agent file (last resort).
-    agent_file = root / ".agents" / "current-agent"
-    if agent_file.exists():
-        name = agent_file.read_text(encoding="utf-8").strip()
-        if name:
-            return name
-    return None
+    if not cwd:
+        return None
+    from otaman_core.identity import resolve_enforcement_identity
+
+    return resolve_enforcement_identity(_normalize_path(cwd)).agent
 
 
 def _timestamp_id() -> str:
@@ -790,6 +774,25 @@ def otaman_send(
     root = _find_project_root(cwd)
     if not root:
         return {"error": "No otaman project found"}
+
+    # F012 (security GAP finding, 2026-07-08): privileged types assert a
+    # human made a decision (spec-change-approved/-rejected, human-decision,
+    # emergency-halt). otaman_send is always agent-driven — there is no
+    # interactive human confirmation possible over MCP — so it must refuse
+    # these categorically, regardless of what `from:` would resolve to.
+    # The CLI's `otaman send`/`otaman approve` path (cli-agent, PR #117)
+    # is the only route with a real interactive confirmation step.
+    from otaman_core.validate_message import PRIVILEGED_TYPES
+
+    if msg_type in PRIVILEGED_TYPES:
+        return {
+            "error": (
+                f"otaman_send cannot send type '{msg_type}': it is privileged "
+                "(asserts a human decision) and MCP calls have no interactive "
+                "human confirmation. Use the CLI's `otaman approve` / "
+                "`otaman send --type emergency-halt` (human-confirmed) instead."
+            )
+        }
 
     agent = _get_agent_identity(root, cwd)
     if not agent:

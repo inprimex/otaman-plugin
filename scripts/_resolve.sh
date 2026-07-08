@@ -298,6 +298,13 @@ expand_config_dir() {
 #   2. .otaman agent: field — CWD walk up, both file-shape and directory-shape
 #   3. current-agent file at $project_root/.agents/current-agent (deprecated fallback)
 #
+# NOTE (F013, 2026-07-08): this chain is for DISPLAY / convenience use only
+# (status lines, non-enforcement bus tooling) — it trusts two signals any
+# agent's own tool calls can freely set (OTAMAN_AGENT env, the shared
+# current-agent file). PreToolUse enforcement hooks (check-ownership.sh,
+# check-blocked.sh) must NOT use this function for their allow/deny
+# decision; use resolve_enforcement_identity below instead.
+#
 # Usage: resolve_agent_identity [project_root]
 # Echoes agent name and returns 0 on success; returns 1 if identity cannot be determined.
 resolve_agent_identity() {
@@ -347,6 +354,47 @@ resolve_agent_identity() {
     return 1
 }
 
+# Resolve agent identity for an ENFORCEMENT decision (F013 security fix,
+# 2026-07-08). Delegates to the single canonical enforcement-identity
+# resolver — otaman_core.identity.resolve_enforcement_identity() — via the
+# CLI's thin wrapper `otaman whoami --resolve-only`, instead of
+# reimplementing the priority chain here. Prior drift between this file's
+# own chain, otaman-cli's identity.py, and bus_server.py's MCP resolver
+# caused a real misattribution incident (2026-06-08) — see the otaman-core
+# module docstring for the full history.
+#
+# Deliberately narrower than resolve_agent_identity above: it does NOT
+# trust OTAMAN_AGENT env or .agents/current-agent (both agent-writable —
+# exactly the spoofing surface this fix closes). Only the per-directory
+# .otaman `agent:` marker is honored, resolved from $PWD.
+#
+# Hardened against a stale/mismatched otaman-cli install: an older build
+# without --resolve-only silently falls through to the full human-readable
+# `otaman whoami` banner instead of erroring, which — if naively captured —
+# would corrupt CURRENT_AGENT with a multi-line box-drawing block and cause
+# every ownership check to fail closed. Output is accepted only if it is a
+# single line that looks like a bare identifier.
+#
+# Usage: resolve_enforcement_identity
+# Echoes agent name and returns 0 on success; returns 1 (no output) if
+# identity cannot be resolved, the `otaman` CLI is unavailable, or its
+# output doesn't look like a bare agent name.
+resolve_enforcement_identity() {
+    command -v otaman >/dev/null 2>&1 || return 1
+
+    local out
+    out="$(otaman whoami --resolve-only 2>/dev/null)" || return 1
+
+    # Must be exactly one line and a bare identifier — rejects multi-line
+    # banners, blank output, and anything containing whitespace/box-drawing
+    # characters.
+    if [[ "$out" != *$'\n'* && "$out" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        echo "$out"
+        return 0
+    fi
+    return 1
+}
+
 # Routing resolution (formerly "account", briefly "profile" — see
 # otaman-core/_resolve.py docstring for full history).
 # read_expected_routing prefers expected_routing:, falls back to expected_account:.
@@ -362,5 +410,41 @@ read_expected_routing() {
         val="$(grep -E '^expected_account:' "$marker" 2>/dev/null | head -1 | sed 's/^expected_account:[[:space:]]*//')"
     fi
     [[ -n "$val" ]] && echo "$val"
+}
+
+# Resolve a Python interpreter capable of importing otaman_core, mirroring
+# servers/run-server.sh's resolution chain (otaman uv-workspace venv →
+# system python3/py/python). Hooks that need to call into otaman_core
+# (e.g. F012's bus-message validator) should use this instead of a bare
+# `command -v python3` — a bare system python3 frequently lacks
+# otaman_core even when the otaman workspace's own venv has it installed.
+#
+# Usage: PY="$(resolve_otaman_python "$plugin_root_dir")" || exit 0
+#   plugin_root_dir: the otaman-plugin repo root (workspace venv is
+#   assumed to live one level up from it, per the uv-workspace layout).
+resolve_otaman_python() {
+    local plugin_root="${1:-$PWD}"
+
+    local workspace_venv="$plugin_root/../.venv"
+    if [[ -x "$workspace_venv/bin/python" ]]; then
+        echo "$workspace_venv/bin/python"
+        return 0
+    elif [[ -x "$workspace_venv/Scripts/python.exe" ]]; then
+        echo "$workspace_venv/Scripts/python.exe"
+        return 0
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        echo "python3"
+        return 0
+    elif command -v py >/dev/null 2>&1; then
+        echo "py"
+        return 0
+    elif command -v python >/dev/null 2>&1; then
+        echo "python"
+        return 0
+    fi
+
+    return 1
 }
 
