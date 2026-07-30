@@ -60,4 +60,4 @@ To wire the hooks, add the `hooks.json` entries from `hooks/hooks.json` to your 
 
 ## License
 
-AGPL-3.0 (community edition). Commercial license available for teams that cannot ship source — see [otaman.dev](https://otaman.dev).
+AGPL-3.0 (community edition). Commercial license available for teams that cannot ship source — see [otaman.ai](https://otaman.ai).
