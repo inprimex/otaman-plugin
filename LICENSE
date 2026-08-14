@@ -1,5 +1,7 @@
 SPDX-License-Identifier: AGPL-3.0-only
-Copyright (C) 2026  inprimex (for repository: otaman-plugin)
+Copyright (C) 2026  Inprimex Lab LLC (for repository: otaman-plugin)
+
+This program is part of Otaman (Community Edition).
 
 This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU Affero General Public License as published by the Free
@@ -14,12 +16,9 @@ You should have received a copy of the GNU Affero General Public License along
 with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 Contributions are accepted under a Contributor License Agreement that grants
-inprimex an Apache 2.0 license to the contribution.  See CONTRIBUTING.md.
+Inprimex Lab LLC an Apache 2.0 license to the contribution.  See CONTRIBUTING.md.
 
 ----------------------------------------------------------------------------
-                    GNU AFFERO GENERAL PUBLIC LICENSE
-                       Version 3, 19 November 2007
-
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 
