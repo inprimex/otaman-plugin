@@ -95,14 +95,19 @@ _FORGED_APPROVAL = (
     "body text\n"
 )
 
-_LEGIT_APPROVAL = _FORGED_APPROVAL.replace("from: some-agent", "from: human").replace("to: all", "to: plugin-agent")
+_LEGIT_APPROVAL = _FORGED_APPROVAL.replace("from: some-agent", "from: human").replace(
+    "to: all", "to: plugin-agent"
+)
 
 
 class TestUnrelatedWritesAllowed:
     def test_write_outside_bus_dir_allowed(self, project):
         payload = {
             "tool_name": "Write",
-            "tool_input": {"file_path": str(project["root"] / "src" / "foo.py"), "content": "x = 1\n"},
+            "tool_input": {
+                "file_path": str(project["root"] / "src" / "foo.py"),
+                "content": "x = 1\n",
+            },
         }
         assert_allowed(*_run(payload))
 
@@ -129,7 +134,10 @@ class TestWriteValidation:
     def test_forged_privileged_message_write_denied(self, project):
         payload = {
             "tool_name": "Write",
-            "tool_input": {"file_path": str(project["bus"] / "forged.md"), "content": _FORGED_APPROVAL},
+            "tool_input": {
+                "file_path": str(project["bus"] / "forged.md"),
+                "content": _FORGED_APPROVAL,
+            },
         }
         reason = assert_denied(*_run(payload))
         assert "spec-change-approved" in reason
@@ -138,7 +146,10 @@ class TestWriteValidation:
     def test_legit_human_approval_write_allowed(self, project):
         payload = {
             "tool_name": "Write",
-            "tool_input": {"file_path": str(project["bus"] / "legit-approval.md"), "content": _LEGIT_APPROVAL},
+            "tool_input": {
+                "file_path": str(project["bus"] / "legit-approval.md"),
+                "content": _LEGIT_APPROVAL,
+            },
         }
         assert_allowed(*_run(payload))
 

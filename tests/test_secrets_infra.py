@@ -6,9 +6,7 @@ sets up the maestro folder's secrets infrastructure during ``maestro init``.
 
 from __future__ import annotations
 
-import importlib.util
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -16,6 +14,7 @@ import pytest
 def _load_install_secrets_infra():
     """install_secrets_infra is now a package symbol."""
     from otaman_plugin.generate_agent_config import install_secrets_infra
+
     return install_secrets_infra
 
 
@@ -87,10 +86,7 @@ class TestGitignoreEntries:
     def test_does_not_duplicate_existing_entries(self, maestro_folder):
         gi = maestro_folder / ".gitignore"
         gi.write_text(
-            "# Existing\n"
-            ".otaman/secrets.env\n"
-            ".otaman/bridge-*.endpoint\n"
-            ".otaman/afk\n",
+            "# Existing\n.otaman/secrets.env\n.otaman/bridge-*.endpoint\n.otaman/afk\n",
             encoding="utf-8",
         )
         install_secrets_infra(maestro_folder, {})
@@ -123,12 +119,11 @@ class TestGitignoreEntries:
 
 
 class TestSecretsEnvPermissions:
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="chmod 0600 only meaningful on POSIX"
-    )
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod 0600 only meaningful on POSIX")
     def test_chmods_existing_secrets_env_to_0600(self, maestro_folder):
         import os
         import stat
+
         runtime = maestro_folder / ".otaman"
         runtime.mkdir()
         secrets = runtime / "secrets.env"

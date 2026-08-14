@@ -22,7 +22,6 @@ test_f072_attach_no_eval.py.
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -97,4 +96,7 @@ class TestDispatchSiteUsesResolver:
             "runner-mediated spawn must not hand the runner a local launcher path"
         )
         assert "-ProjectRoot $runnerProjectRoot" in text
-        assert "Resolve-RunnerProjectRoot -ActiveConn $activeConn -LocalConfigParent $cfgParent" in text
+        assert (
+            "Resolve-RunnerProjectRoot -ActiveConn $activeConn -LocalConfigParent $cfgParent"
+            in text
+        )

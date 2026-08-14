@@ -56,15 +56,27 @@ def workspace(tmp_path, monkeypatch):
     (specs / "openspec" / "changes").mkdir(parents=True)
     # init a git repo so `_git_metadata` doesn't blow up
     import subprocess
+
     subprocess.run(["git", "init", "-q"], cwd=specs, check=False)
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
-                    "commit", "--allow-empty", "-m", "init", "-q"],
-                   cwd=specs, check=False)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+            "-q",
+        ],
+        cwd=specs,
+        check=False,
+    )
 
     # An agent identity for the bus_server's _get_agent_identity path
-    (project / ".otaman").write_text(
-        f"otaman_root: .\nagent: plugin-agent\n", encoding="utf-8"
-    )
+    (project / ".otaman").write_text("otaman_root: .\nagent: plugin-agent\n", encoding="utf-8")
 
     return {"project": project, "specs": specs}
 
@@ -81,6 +93,7 @@ def _write_change(specs: Path, name: str, tasks_md: str | None = None) -> Path:
 # ---------------------------------------------------------------------------
 # (a) Successful invocation forwards the summary dict and exit code
 # ---------------------------------------------------------------------------
+
 
 class TestSuccessfulInvocation:
     def test_returns_summary_with_exit_code(self, workspace):
@@ -131,6 +144,7 @@ class TestSuccessfulInvocation:
 # (b) Unknown / missing project
 # ---------------------------------------------------------------------------
 
+
 class TestNoProject:
     def test_missing_platform_yaml_returns_error(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -143,6 +157,7 @@ class TestNoProject:
 # ---------------------------------------------------------------------------
 # (c) Non-existent change directory
 # ---------------------------------------------------------------------------
+
 
 class TestNonexistentChange:
     def test_unknown_change_surfaces_exit_code_1_and_error(self, workspace):
@@ -160,6 +175,7 @@ class TestNonexistentChange:
 # (d) Recipient fallback rules
 # ---------------------------------------------------------------------------
 
+
 class TestRecipientFallbacks:
     def test_no_tasks_md_falls_back_to_spec_agent_only(self, workspace):
         _write_change(workspace["specs"], "no-tasks-yet")  # no tasks.md
@@ -169,9 +185,7 @@ class TestRecipientFallbacks:
         )
         assert result["recipients"] == ["spec-agent"]
 
-    def test_tasks_md_without_annotations_falls_back_to_spec_agent_human(
-        self, workspace
-    ):
+    def test_tasks_md_without_annotations_falls_back_to_spec_agent_human(self, workspace):
         _write_change(
             workspace["specs"],
             "no-annotations",
@@ -201,6 +215,7 @@ class TestRecipientFallbacks:
 # ---------------------------------------------------------------------------
 # (e) map-tasks.py graceful degradation
 # ---------------------------------------------------------------------------
+
 
 class TestMapTasksGracefulDegradation:
     def test_missing_map_tasks_does_not_break_invocation(self, workspace):

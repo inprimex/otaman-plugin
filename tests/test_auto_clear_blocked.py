@@ -23,7 +23,6 @@ from otaman_plugin.servers.bus_server import (  # noqa: E402
     otaman_send,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture — project root with a couple of agent blocked files
 # ---------------------------------------------------------------------------
@@ -60,12 +59,10 @@ def project(tmp_path, monkeypatch):
 # _extract_proposal_stems
 # ---------------------------------------------------------------------------
 
+
 class TestExtractProposalStems:
     def test_finds_canonical_stem(self):
-        body = (
-            "**Original proposal**: "
-            "20260610T161500-plugin-agent-to-human-spec-change-request"
-        )
+        body = "**Original proposal**: 20260610T161500-plugin-agent-to-human-spec-change-request"
         assert _extract_proposal_stems(body) == [
             "20260610T161500-plugin-agent-to-human-spec-change-request"
         ]
@@ -90,6 +87,7 @@ class TestExtractProposalStems:
 # ---------------------------------------------------------------------------
 # _auto_tombstone_blocked — 7 unit cases per task 1.6
 # ---------------------------------------------------------------------------
+
 
 class TestAutoTombstoneBlocked:
     # a) approval tombstones matching entry
@@ -172,8 +170,7 @@ class TestAutoTombstoneBlocked:
         result = _auto_tombstone_blocked(
             project,
             "spec-change-approved",
-            "Original proposal "
-            "20260610T161500-other-agent-to-human-spec-change-request approved",
+            "Original proposal 20260610T161500-other-agent-to-human-spec-change-request approved",
         )
         assert result == []
         assert path.read_text() == before
@@ -228,6 +225,7 @@ class TestAutoTombstoneBlocked:
 # Integration test (task 1.7) — propose → approve → verify tombstoned
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def integration_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -247,9 +245,7 @@ def integration_workspace(tmp_path, monkeypatch):
     # human "repo" — purely a cwd to send approval from
     human = tmp_path / "repo-human"
     human.mkdir()
-    (human / ".otaman").write_text(
-        "otaman_root: ../my-otaman\nagent: human\n", encoding="utf-8"
-    )
+    (human / ".otaman").write_text("otaman_root: ../my-otaman\nagent: human\n", encoding="utf-8")
     return {"root": tmp_path, "otaman": otaman, "plugin": plugin, "human": human}
 
 
@@ -331,9 +327,7 @@ def test_task_assignment_uses_change_field(integration_workspace):
         what_needs_to_change=".",
         why_needed=".",
     )
-    blocked_file = (
-        integration_workspace["otaman"] / ".agents" / "blocked" / "plugin-agent.md"
-    )
+    blocked_file = integration_workspace["otaman"] / ".agents" / "blocked" / "plugin-agent.md"
     assert "## Blocked: another feature" in blocked_file.read_text()
 
     send_result = otaman_send.fn(

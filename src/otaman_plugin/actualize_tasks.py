@@ -150,18 +150,22 @@ def parse_tasks_from_message(message_path: Path) -> dict[str, Any]:
     if not isinstance(fm, dict):
         return {"error": "Invalid frontmatter"}
 
-    body = content[fm_match.end():].strip()
+    body = content[fm_match.end() :].strip()
 
     # Extract change name from subject or frontmatter
     change_name = fm.get("change", "")
     if not change_name:
         # Try subject line
-        subj_match = re.search(r"##\s*Subject:.*?(?:complete|done|finished).*?[:\-]\s*(\S+)", body, re.IGNORECASE)
+        subj_match = re.search(
+            r"##\s*Subject:.*?(?:complete|done|finished).*?[:\-]\s*(\S+)", body, re.IGNORECASE
+        )
         if subj_match:
-            change_name = subj_match.group(1).strip('"\'')
+            change_name = subj_match.group(1).strip("\"'")
         else:
             # Try "for change X" pattern
-            for_match = re.search(r'(?:for|in)\s+(?:change\s+)?"?([a-z0-9][\w-]*)"?', body, re.IGNORECASE)
+            for_match = re.search(
+                r'(?:for|in)\s+(?:change\s+)?"?([a-z0-9][\w-]*)"?', body, re.IGNORECASE
+            )
             if for_match:
                 change_name = for_match.group(1)
 
@@ -259,7 +263,9 @@ def update_tasks_md(
             line,
             re.IGNORECASE,
         )
-        if status_match and (mark_all or _line_matches_task_context(lines, updated_lines, task_ids)):
+        if status_match and (
+            mark_all or _line_matches_task_context(lines, updated_lines, task_ids)
+        ):
             prefix = status_match.group(1)
             new_line = f"{prefix}**Status**: done{agent_tag}"
             updated_count += 1

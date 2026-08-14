@@ -47,9 +47,9 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from _models_resolve import resolve_tier  # noqa: E402
 from _resolve import expand_config_dir, find_maestro_root  # noqa: E402
 from _secrets import load_dotenv  # noqa: E402
-from _models_resolve import resolve_tier  # noqa: E402
 
 
 def _bash_single_quote(value: str) -> str:
@@ -63,9 +63,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data or {}
 
 
-def _resolve_extends(
-    connections: dict[str, Any], name: str, depth: int = 0
-) -> dict[str, Any]:
+def _resolve_extends(connections: dict[str, Any], name: str, depth: int = 0) -> dict[str, Any]:
     """Resolve an ``extends:`` chain. Child fields override parent."""
     if depth > 10:
         raise ValueError(f"extends: cycle at connection '{name}'")
@@ -111,9 +109,7 @@ def resolve(
 
     effective_conn_name = connection_name or active_from_file or ""
     if effective_conn_name and connections and effective_conn_name not in connections:
-        warnings.append(
-            f"connection '{effective_conn_name}' not found in launch-settings.yaml"
-        )
+        warnings.append(f"connection '{effective_conn_name}' not found in launch-settings.yaml")
         effective_conn_name = ""
 
     conn_resolved: dict[str, Any] = {}
@@ -131,8 +127,7 @@ def resolve(
     if account_name:
         if account_name not in accounts:
             warnings.append(
-                f"connection '{effective_conn_name}' references unknown account "
-                f"'{account_name}'"
+                f"connection '{effective_conn_name}' references unknown account '{account_name}'"
             )
         else:
             acct = accounts[account_name] or {}
@@ -194,8 +189,10 @@ def resolve_for_repo(
     """
     tier = resolve_tier(
         maestro_root,
-        repo=repo, agent=agent,
-        cli_model=cli_model, cli_effort=cli_effort,
+        repo=repo,
+        agent=agent,
+        cli_model=cli_model,
+        cli_effort=cli_effort,
     )
     return tier.to_dict()
 
@@ -210,9 +207,9 @@ def emit_exports(state: dict[str, Any]) -> str:
     same value here.
     """
     lines: list[str] = []
-    conn = _bash_single_quote(state['connection_name'])
-    acct = _bash_single_quote(state['account_name'])
-    conn_type = _bash_single_quote(state['connection_type'])
+    conn = _bash_single_quote(state["connection_name"])
+    acct = _bash_single_quote(state["account_name"])
+    conn_type = _bash_single_quote(state["connection_type"])
     lines.append(f"export OTAMAN_ACTIVE_CONNECTION={conn}")
     lines.append(f"export OTAMAN_ACTIVE_ROUTING={acct}")
     lines.append(f"export OTAMAN_ACTIVE_ACCOUNT={acct}")
@@ -229,9 +226,7 @@ def emit_exports(state: dict[str, Any]) -> str:
     if state.get("effort"):
         lines.append(f"export CLAUDE_CODE_EFFORT_LEVEL={_bash_single_quote(state['effort'])}")
     if state["config_dir_expanded"]:
-        lines.append(
-            f"export CLAUDE_CONFIG_DIR={_bash_single_quote(state['config_dir_expanded'])}"
-        )
+        lines.append(f"export CLAUDE_CONFIG_DIR={_bash_single_quote(state['config_dir_expanded'])}")
     for k, v in state["secrets"].items():
         lines.append(f"export {k}={_bash_single_quote(v)}")
     lines.append(f"# repos: {','.join(state['repos'])}")
@@ -301,8 +296,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.repo or args.agent or args.model or args.effort:
         tier = resolve_tier(
             root,
-            repo=args.repo, agent=args.agent,
-            cli_model=args.model, cli_effort=args.effort,
+            repo=args.repo,
+            agent=args.agent,
+            cli_model=args.model,
+            cli_effort=args.effort,
         )
         state["model"] = tier.model
         state["effort"] = tier.effort

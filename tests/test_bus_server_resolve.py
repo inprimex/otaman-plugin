@@ -9,13 +9,9 @@ process is launched from the repo Claude Code is open in.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
 # _resolve now imported from otaman_core (sibling repo on pytest pythonpath)
-
 from otaman_plugin.servers.bus_server import _find_project_root
 
 
@@ -50,11 +46,15 @@ def sibling_layout(tmp_path, monkeypatch):
 
     repo_a = tmp_path / "repo-a"
     repo_a.mkdir()
-    (repo_a / ".maestro").write_text("../my-maestro\n")  # legacy: marker filename + relative path target
+    (repo_a / ".maestro").write_text(
+        "../my-maestro\n"
+    )  # legacy: marker filename + relative path target
 
     repo_b = tmp_path / "repo-b"
     repo_b.mkdir()
-    (repo_b / ".maestro").write_text("../my-maestro\n")  # legacy: marker filename + relative path target
+    (repo_b / ".maestro").write_text(
+        "../my-maestro\n"
+    )  # legacy: marker filename + relative path target
 
     return {"maestro": maestro.resolve(), "repo_a": repo_a, "repo_b": repo_b}
 

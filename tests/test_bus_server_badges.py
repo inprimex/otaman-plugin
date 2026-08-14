@@ -9,12 +9,10 @@ Per inter-agent-request-response-contract tasks 3.2 + 3.3:
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
 
 from otaman_plugin.servers.bus_server import (
     _collect_outbound_reply_ids,
@@ -22,10 +20,10 @@ from otaman_plugin.servers.bus_server import (
     _parse_iso8601,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def bus_dir(tmp_path: Path) -> Path:
@@ -51,6 +49,7 @@ NOW = datetime(2026, 6, 4, 12, 0, 0, tzinfo=timezone.utc)
 # ---------------------------------------------------------------------------
 # _parse_iso8601
 # ---------------------------------------------------------------------------
+
 
 class TestParseIso8601:
     def test_z_suffix_is_accepted(self):
@@ -78,37 +77,54 @@ class TestParseIso8601:
 # _collect_outbound_reply_ids
 # ---------------------------------------------------------------------------
 
+
 class TestCollectOutboundReplyIds:
     def test_empty_dir_returns_empty_set(self, tmp_path: Path):
         # bus dir doesn't exist
         assert _collect_outbound_reply_ids("plugin-agent", tmp_path / "missing") == set()
 
     def test_returns_reply_to_targets_for_agent(self, bus_dir: Path):
-        _write_msg(bus_dir, "20260604T120000-plugin-agent-reply-a", {
-            "id": "20260604T120000-reply-a",
-            "from": "plugin-agent",
-            "to": "cli-agent",
-            "reply-to": "20260603T140000-orig-a",
-        })
-        _write_msg(bus_dir, "20260604T120001-plugin-agent-reply-b", {
-            "id": "20260604T120001-reply-b",
-            "from": "plugin-agent",
-            "to": "spec-agent",
-            "reply-to": "20260603T140100-orig-b",
-        })
+        _write_msg(
+            bus_dir,
+            "20260604T120000-plugin-agent-reply-a",
+            {
+                "id": "20260604T120000-reply-a",
+                "from": "plugin-agent",
+                "to": "cli-agent",
+                "reply-to": "20260603T140000-orig-a",
+            },
+        )
+        _write_msg(
+            bus_dir,
+            "20260604T120001-plugin-agent-reply-b",
+            {
+                "id": "20260604T120001-reply-b",
+                "from": "plugin-agent",
+                "to": "spec-agent",
+                "reply-to": "20260603T140100-orig-b",
+            },
+        )
         # Different agent — should not contribute
-        _write_msg(bus_dir, "20260604T120002-other-agent-reply", {
-            "id": "20260604T120002-reply-c",
-            "from": "other-agent",
-            "to": "plugin-agent",
-            "reply-to": "20260603T140200-orig-c",
-        })
+        _write_msg(
+            bus_dir,
+            "20260604T120002-other-agent-reply",
+            {
+                "id": "20260604T120002-reply-c",
+                "from": "other-agent",
+                "to": "plugin-agent",
+                "reply-to": "20260603T140200-orig-c",
+            },
+        )
         # No reply-to at all — should not contribute
-        _write_msg(bus_dir, "20260604T120003-plugin-agent-original", {
-            "id": "20260604T120003-orig-d",
-            "from": "plugin-agent",
-            "to": "spec-agent",
-        })
+        _write_msg(
+            bus_dir,
+            "20260604T120003-plugin-agent-original",
+            {
+                "id": "20260604T120003-orig-d",
+                "from": "plugin-agent",
+                "to": "spec-agent",
+            },
+        )
         ids = _collect_outbound_reply_ids("plugin-agent", bus_dir)
         assert ids == {"20260603T140000-orig-a", "20260603T140100-orig-b"}
 
@@ -116,6 +132,7 @@ class TestCollectOutboundReplyIds:
 # ---------------------------------------------------------------------------
 # _compute_response_badges — awaiting-response
 # ---------------------------------------------------------------------------
+
 
 class TestAwaitingResponseBadge:
     def test_expects_response_true_no_reply_gets_badge(self):
@@ -155,6 +172,7 @@ class TestAwaitingResponseBadge:
 # ---------------------------------------------------------------------------
 # _compute_response_badges — deadline badges
 # ---------------------------------------------------------------------------
+
 
 class TestDeadlineBadges:
     def test_deadline_within_2h_is_approaching(self):
@@ -208,6 +226,7 @@ class TestDeadlineBadges:
 # ---------------------------------------------------------------------------
 # _compute_response_badges — combinations
 # ---------------------------------------------------------------------------
+
 
 class TestBadgeCombinations:
     def test_expects_response_plus_deadline_passed_both_badges(self):

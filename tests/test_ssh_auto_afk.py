@@ -37,7 +37,8 @@ def _find_bash() -> str | None:
 
 BASH = _find_bash()
 pytestmark = pytest.mark.skipif(
-    BASH is None, reason="bash not available",
+    BASH is None,
+    reason="bash not available",
 )
 
 
@@ -63,8 +64,13 @@ def _run(
 ) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     # Start clean — remove any pre-existing SSH/AFK vars.
-    for k in ("SSH_CONNECTION", "SSH_TTY", "OTAMAN_AFK_AUTO",
-              "OTAMAN_LAUNCHER_SSH", "OTAMAN_UNATTENDED"):
+    for k in (
+        "SSH_CONNECTION",
+        "SSH_TTY",
+        "OTAMAN_AFK_AUTO",
+        "OTAMAN_LAUNCHER_SSH",
+        "OTAMAN_UNATTENDED",
+    ):
         env.pop(k, None)
     if env_extra:
         env.update(env_extra)
@@ -72,8 +78,11 @@ def _run(
         env.pop(k, None)
     return subprocess.run(
         [BASH, str(script)],
-        capture_output=True, text=True, timeout=10,
-        cwd=cwd, env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=cwd,
+        env=env,
     )
 
 
@@ -93,7 +102,8 @@ class TestAutoEnable:
 
     def test_unattended_triggers_afk(self, ssh_workspace):
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         assert result.returncode == 0
@@ -108,7 +118,8 @@ class TestAutoEnable:
         """SSH_CONNECTION by itself is no longer enough — the user may be
         actively driving the session from the other end."""
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"SSH_CONNECTION": "1.2.3.4 5678 9.10.11.12 22"},
         )
         assert result.returncode == 0
@@ -117,7 +128,8 @@ class TestAutoEnable:
     def test_ssh_tty_alone_does_not_trigger(self, ssh_workspace):
         """SSH_TTY (ssh -t) alone also doesn't trigger anymore."""
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"SSH_TTY": "/dev/pts/0"},
         )
         assert result.returncode == 0
@@ -127,7 +139,8 @@ class TestAutoEnable:
         """OTAMAN_LAUNCHER_SSH=1 remains a diagnostic-only signal —
         does NOT trigger auto-AFK on its own."""
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_LAUNCHER_SSH": "1"},
         )
         assert result.returncode == 0
@@ -136,7 +149,8 @@ class TestAutoEnable:
     def test_unattended_zero_does_not_trigger(self, ssh_workspace):
         """OTAMAN_UNATTENDED=0 (anything other than '1') is a no-op."""
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "0"},
         )
         assert result.returncode == 0
@@ -145,7 +159,8 @@ class TestAutoEnable:
     def test_unattended_works_even_without_ssh_env(self, ssh_workspace):
         """Local unattended sessions (e.g. cron on this box) also benefit."""
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         assert result.returncode == 0
@@ -154,7 +169,8 @@ class TestAutoEnable:
     def test_opt_out_via_afk_auto_env(self, ssh_workspace):
         """OTAMAN_AFK_AUTO=0 remains the global kill switch."""
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={
                 "OTAMAN_UNATTENDED": "1",
                 "OTAMAN_AFK_AUTO": "0",
@@ -175,7 +191,8 @@ class TestAutoEnable:
         )
         (maestro / ".otaman" / "afk").write_text(existing, encoding="utf-8")
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         assert result.returncode == 0
@@ -186,7 +203,8 @@ class TestAutoEnable:
         orphan = tmp_path / "orphan"
         orphan.mkdir()
         result = _run(
-            START_HOOK, cwd=orphan,
+            START_HOOK,
+            cwd=orphan,
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         assert result.returncode == 0
@@ -194,7 +212,8 @@ class TestAutoEnable:
     def test_message_on_stderr(self, ssh_workspace):
         """The informative message must go to stderr, not pollute stdout."""
         result = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         assert result.stdout == ""
@@ -207,7 +226,8 @@ class TestAutoEnable:
 
         # Case 1: no OTAMAN_UNATTENDED → log says "skipped: OTAMAN_UNATTENDED!=1"
         _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"SSH_CONNECTION": "1.2.3.4 5678 9.10.11.12 22"},
         )
         assert log_file.is_file()
@@ -216,7 +236,8 @@ class TestAutoEnable:
 
         # Case 2: explicit unattended → log says "ENABLED"
         _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         content = log_file.read_text(encoding="utf-8")
@@ -231,7 +252,8 @@ class TestAutoEnable:
         """Opt-out via OTAMAN_AFK_AUTO=0 is recorded with the reason."""
         log_file = ssh_workspace["maestro"] / ".otaman" / "ssh-auto-afk.log"
         _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={
                 "OTAMAN_UNATTENDED": "1",
                 "OTAMAN_AFK_AUTO": "0",
@@ -251,8 +273,7 @@ class TestAutoDisable:
         maestro = ssh_workspace["maestro"]
         (maestro / ".otaman").mkdir(exist_ok=True)
         (maestro / ".otaman" / "afk").write_text(
-            "enabled_at: 2026-04-23T00:00:00+00:00\n"
-            "source: unattended\n",
+            "enabled_at: 2026-04-23T00:00:00+00:00\nsource: unattended\n",
             encoding="utf-8",
         )
         result = _run(END_HOOK, cwd=ssh_workspace["repo"])
@@ -265,8 +286,7 @@ class TestAutoDisable:
         maestro = ssh_workspace["maestro"]
         (maestro / ".otaman").mkdir(exist_ok=True)
         (maestro / ".otaman" / "afk").write_text(
-            "enabled_at: 2026-04-23T00:00:00+00:00\n"
-            "source: ssh-auto\n",
+            "enabled_at: 2026-04-23T00:00:00+00:00\nsource: ssh-auto\n",
             encoding="utf-8",
         )
         result = _run(END_HOOK, cwd=ssh_workspace["repo"])
@@ -278,8 +298,7 @@ class TestAutoDisable:
         maestro = ssh_workspace["maestro"]
         (maestro / ".otaman").mkdir(exist_ok=True)
         (maestro / ".otaman" / "afk").write_text(
-            "enabled_at: 2026-04-23T00:00:00+00:00\n"
-            "source: idle-auto\n",
+            "enabled_at: 2026-04-23T00:00:00+00:00\nsource: idle-auto\n",
             encoding="utf-8",
         )
         result = _run(END_HOOK, cwd=ssh_workspace["repo"])
@@ -298,8 +317,7 @@ class TestAutoDisable:
         (maestro / ".otaman" / "afk").write_text(manual_content, encoding="utf-8")
         result = _run(END_HOOK, cwd=ssh_workspace["repo"])
         assert result.returncode == 0
-        assert (maestro / ".otaman" / "afk").read_text(encoding="utf-8") \
-            == manual_content
+        assert (maestro / ".otaman" / "afk").read_text(encoding="utf-8") == manual_content
 
     def test_no_afk_file_is_noop(self, ssh_workspace):
         result = _run(END_HOOK, cwd=ssh_workspace["repo"])
@@ -323,7 +341,8 @@ class TestRoundTrip:
 
         # Start of unattended session
         r = _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         assert r.returncode == 0
@@ -341,7 +360,8 @@ class TestRoundTrip:
 
         # Auto-enable first
         _run(
-            START_HOOK, cwd=ssh_workspace["repo"],
+            START_HOOK,
+            cwd=ssh_workspace["repo"],
             env_extra={"OTAMAN_UNATTENDED": "1"},
         )
         # User overrides to manual

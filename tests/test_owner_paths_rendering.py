@@ -24,8 +24,6 @@ import importlib
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 gen_config = importlib.import_module("otaman_plugin.generate_agent_config")
 
@@ -51,6 +49,7 @@ def _generate(tmp_path: Path, repo: dict) -> str:
 # Case 1 — full-repo owner: no owner-paths key
 # ---------------------------------------------------------------------------
 
+
 class TestFullRepoOwnerOmitsSection:
     def test_no_owner_paths_no_section(self, tmp_path):
         content = _generate(
@@ -66,6 +65,7 @@ class TestFullRepoOwnerOmitsSection:
 # ---------------------------------------------------------------------------
 # Case 2 — owner-paths declared but current agent not named
 # ---------------------------------------------------------------------------
+
 
 class TestCatchAllOwnerOmitsSection:
     def test_catch_all_not_in_globs_skips_section(self, tmp_path):
@@ -94,6 +94,7 @@ class TestCatchAllOwnerOmitsSection:
 # Case 3 — agent named in owner-paths gets the section
 # ---------------------------------------------------------------------------
 
+
 class TestNamedOwnerGetsSection:
     def test_single_glob_renders(self, tmp_path):
         content = _generate(
@@ -110,10 +111,7 @@ class TestNamedOwnerGetsSection:
         assert "### Owned paths in mono" in content
         assert "You own the following paths inside `mono`:" in content
         assert "- `apps/web/**`" in content
-        assert (
-            "Changes outside these paths require coordination with the owning agent."
-            in content
-        )
+        assert "Changes outside these paths require coordination with the owning agent." in content
 
     def test_multiple_globs_render_as_bullet_list(self, tmp_path):
         content = _generate(
@@ -138,6 +136,7 @@ class TestNamedOwnerGetsSection:
 # ---------------------------------------------------------------------------
 # Case 4 — both YAML key spellings work
 # ---------------------------------------------------------------------------
+
 
 class TestKeySpellings:
     """Guards the transition window: today the YAML round-trips as
@@ -175,6 +174,7 @@ class TestKeySpellings:
 # ---------------------------------------------------------------------------
 # Edge cases — defensive shapes
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     def test_empty_owner_paths_dict_omits_section(self, tmp_path):
@@ -219,6 +219,7 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 # Multi-agent monorepo — each agent's CLAUDE.md sees only their globs
 # ---------------------------------------------------------------------------
+
 
 class TestMultiAgentMonorepo:
     def test_each_agent_sees_only_their_globs(self, tmp_path):

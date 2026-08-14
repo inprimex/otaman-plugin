@@ -33,17 +33,15 @@ This is a Mode 1 resolver. Mode 2+ enforcement lives in ``otaman-bridge``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover — install-time failure
-    raise RuntimeError(
-        "PyYAML is required to use otaman_plugin.skill_packs"
-    ) from exc
+    raise RuntimeError("PyYAML is required to use otaman_plugin.skill_packs") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +65,7 @@ def _otaman_meta_pack(pack_id: str):
     proposal §2 this is the canonical location for skill packs because
     otaman-meta is already a per-program writable repo.
     """
+
     def locate(project_root: Path) -> Path:
         return project_root / "skill-packs" / pack_id
 
@@ -99,6 +98,7 @@ _PROFILE_TO_PACK: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class SkillRef:
@@ -133,6 +133,7 @@ class ResolveResult:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_yaml(path: Path) -> Mapping[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
@@ -160,9 +161,7 @@ def load_pack_manifest(pack_root: Path) -> Mapping[str, Any]:
     return _read_yaml(manifest)
 
 
-def _iter_pack_skills(
-    pack_root: Path, manifest: Mapping[str, Any]
-) -> Iterable[SkillRef]:
+def _iter_pack_skills(pack_root: Path, manifest: Mapping[str, Any]) -> Iterable[SkillRef]:
     for entry in manifest.get("skills") or []:
         if not isinstance(entry, Mapping):
             continue
@@ -202,6 +201,7 @@ def _normalize_active_skills(active_skills: Any) -> set[str]:
 # Main resolver (tasks 2.2 + 2.3 + 2.4)
 # ---------------------------------------------------------------------------
 
+
 def resolve_active_skills(
     platform: Mapping[str, Any],
     project_root: Path,
@@ -222,9 +222,7 @@ def resolve_active_skills(
     Returns a :class:`ResolveResult` with the post-filter skill set and
     the per-skill skip reasons.
     """
-    skills_cfg = (
-        ((platform.get("program") or {}).get("processes") or {}).get("skills") or {}
-    )
+    skills_cfg = ((platform.get("program") or {}).get("processes") or {}).get("skills") or {}
     if not isinstance(skills_cfg, Mapping):
         return ResolveResult(skills=[], skipped=[])
 

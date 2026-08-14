@@ -30,6 +30,7 @@ actualize = importlib.import_module("otaman_plugin.actualize_tasks")
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """Create a minimal maestro project with specs structure."""
@@ -51,10 +52,12 @@ def project(tmp_path: Path) -> Path:
     # .agents structure
     agents = root / ".agents"
     agents.mkdir()
-    ownership = {"repos": [
-        {"name": "backend", "owner": "backend-agent"},
-        {"name": "frontend", "owner": "frontend-agent"},
-    ]}
+    ownership = {
+        "repos": [
+            {"name": "backend", "owner": "backend-agent"},
+            {"name": "frontend", "owner": "frontend-agent"},
+        ]
+    }
     (agents / "ownership.json").write_text(json.dumps(ownership), encoding="utf-8")
     (agents / "current-agent").write_text("backend-agent", encoding="utf-8")
     (agents / "bus" / "active" / "acks").mkdir(parents=True)
@@ -83,15 +86,20 @@ def make_bus_message(project: Path, filename: str, content: str) -> Path:
 # Test 1: Single task completion
 # ---------------------------------------------------------------------------
 
+
 class TestSingleTaskCompletion:
     def test_single_task_checked(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "add-pagination", """\
+        tasks_file = make_tasks_md(
+            project,
+            "add-pagination",
+            """\
 # Phase 2: Implementation
 
 - [ ] 2.1 Implement pagination endpoint
 - [ ] 2.2 Add query parameters
 - [ ] 2.3 Update response wrapper
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, {"2.1"})
 
@@ -102,9 +110,13 @@ class TestSingleTaskCompletion:
         assert result["updated"] == 1
 
     def test_single_task_with_agent_attribution(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "add-auth", """\
+        tasks_file = make_tasks_md(
+            project,
+            "add-auth",
+            """\
 - [ ] 1.1 Add login endpoint
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, {"1.1"}, agent_name="backend-agent")
 
@@ -117,9 +129,13 @@ class TestSingleTaskCompletion:
 # Test 2: Bulk task completion (range)
 # ---------------------------------------------------------------------------
 
+
 class TestBulkTaskCompletion:
     def test_range_tasks_checked(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "multi-radar", """\
+        tasks_file = make_tasks_md(
+            project,
+            "multi-radar",
+            """\
 # Phase 3
 
 - [ ] 3.1 Task one
@@ -127,7 +143,8 @@ class TestBulkTaskCompletion:
 - [ ] 3.3 Task three
 - [ ] 3.4 Task four
 - [ ] 3.5 Task five
-""")
+""",
+        )
 
         task_ids = actualize.parse_task_ids("3.1-3.5")
         result = actualize.update_tasks_md(tasks_file, task_ids)
@@ -138,11 +155,15 @@ class TestBulkTaskCompletion:
         assert result["updated"] == 5
 
     def test_mark_all(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "config-cleanup", """\
+        tasks_file = make_tasks_md(
+            project,
+            "config-cleanup",
+            """\
 - [ ] 1.1 Clean config A
 - [ ] 1.2 Clean config B
 - [ ] 2.1 Validate configs
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, set(), mark_all=True)
 
@@ -156,15 +177,20 @@ class TestBulkTaskCompletion:
 # Test 3: Partial completion
 # ---------------------------------------------------------------------------
 
+
 class TestPartialCompletion:
     def test_only_specified_tasks_updated(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "tactiq-map", """\
+        tasks_file = make_tasks_md(
+            project,
+            "tactiq-map",
+            """\
 - [ ] 4.1 First task
 - [ ] 4.2 Second task
 - [ ] 4.3 Third task
 - [ ] 4.4 Fourth task
 - [ ] 4.5 Fifth task
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, {"4.1", "4.3"})
 
@@ -177,9 +203,13 @@ class TestPartialCompletion:
         assert result["updated"] == 2
 
     def test_not_found_ids_reported(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "test-change", """\
+        tasks_file = make_tasks_md(
+            project,
+            "test-change",
+            """\
 - [ ] 1.1 Existing task
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, {"1.1", "9.9"})
         assert "9.9" in result["not_found"]
@@ -190,9 +220,13 @@ class TestPartialCompletion:
 # Test 4: Status format variant
 # ---------------------------------------------------------------------------
 
+
 class TestStatusFormatVariant:
     def test_status_pending_to_done_with_mark_all(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "status-format", """\
+        tasks_file = make_tasks_md(
+            project,
+            "status-format",
+            """\
 ## Task 1.1: Implement feature
 
 - **Status**: pending
@@ -202,7 +236,8 @@ class TestStatusFormatVariant:
 
 - **Status**: pending
 - **Assignee**: backend-agent
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(
             tasks_file, set(), mark_all=True, agent_name="backend-agent"
@@ -215,7 +250,10 @@ class TestStatusFormatVariant:
 
     def test_mixed_formats(self, project: Path) -> None:
         """Tasks.md with both checkbox and status formats."""
-        tasks_file = make_tasks_md(project, "mixed", """\
+        tasks_file = make_tasks_md(
+            project,
+            "mixed",
+            """\
 # Tasks
 
 - [ ] 1.1 Checkbox task A
@@ -228,7 +266,8 @@ class TestStatusFormatVariant:
 
 ## 1.2 Checkbox task B
 - **Status**: pending
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, set(), mark_all=True)
 
@@ -242,12 +281,17 @@ class TestStatusFormatVariant:
 # Test 5: Idempotency (already done tasks)
 # ---------------------------------------------------------------------------
 
+
 class TestIdempotency:
     def test_already_checked_not_recounted(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "already-done", """\
+        tasks_file = make_tasks_md(
+            project,
+            "already-done",
+            """\
 - [x] 1.1 Already done task
 - [ ] 1.2 Still pending task
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, {"1.1", "1.2"})
 
@@ -255,10 +299,14 @@ class TestIdempotency:
         assert result["already_done"] == 1
 
     def test_double_update_is_safe(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "double-update", """\
+        tasks_file = make_tasks_md(
+            project,
+            "double-update",
+            """\
 - [ ] 1.1 Task one
 - [ ] 1.2 Task two
-""")
+""",
+        )
 
         # First update
         actualize.update_tasks_md(tasks_file, {"1.1"})
@@ -274,6 +322,7 @@ class TestIdempotency:
 # ---------------------------------------------------------------------------
 # Test 6: End-to-end (message parsing + update)
 # ---------------------------------------------------------------------------
+
 
 class TestEndToEnd:
     def test_parse_task_complete_message(self, project: Path) -> None:
@@ -360,7 +409,10 @@ All tasks complete for this change.
     def test_full_e2e_message_to_update(self, project: Path) -> None:
         """Full flow: parse message -> find tasks.md -> update checkboxes."""
         # Create tasks.md
-        make_tasks_md(project, "e2e-test", """\
+        make_tasks_md(
+            project,
+            "e2e-test",
+            """\
 # Phase 1
 
 - [ ] 1.1 Setup project
@@ -371,7 +423,8 @@ All tasks complete for this change.
 - [ ] 2.1 Implement API
 - [ ] 2.2 Write tests
 - [ ] 2.3 Documentation
-""")
+""",
+        )
 
         # Create completion message
         msg_file = make_bus_message(
@@ -422,6 +475,7 @@ Completed tasks:
 # Task ID parsing
 # ---------------------------------------------------------------------------
 
+
 class TestParseTaskIds:
     def test_single_id(self) -> None:
         assert actualize.parse_task_ids("2.1") == {"2.1"}
@@ -448,6 +502,7 @@ class TestParseTaskIds:
 # ---------------------------------------------------------------------------
 # find_tasks_md discovery
 # ---------------------------------------------------------------------------
+
 
 class TestFindTasksMd:
     def test_finds_in_openspec_changes(self, project: Path) -> None:
@@ -476,12 +531,17 @@ class TestFindTasksMd:
 # Repo hint preservation
 # ---------------------------------------------------------------------------
 
+
 class TestRepoHintPreservation:
     def test_repo_prefix_preserved(self, project: Path) -> None:
-        tasks_file = make_tasks_md(project, "multi-repo", """\
+        tasks_file = make_tasks_md(
+            project,
+            "multi-repo",
+            """\
 - [ ] **backend**: 1.1 Implement endpoint
 - [ ] **frontend**: 1.2 Add UI component
-""")
+""",
+        )
 
         result = actualize.update_tasks_md(tasks_file, {"1.1"})
 

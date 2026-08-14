@@ -26,7 +26,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 _TASK_LINE_RE = re.compile(r"^\s*-\s*\[[ xX]\]")
 _ANNOTATION_RE = re.compile(r"@otaman-([a-z0-9-]+)", re.IGNORECASE)
 _MAX_WALK_UP = 8
@@ -43,9 +42,7 @@ def _find_project_root(start: Path) -> Path:
         if parent == current:
             break
         current = parent
-    raise FileNotFoundError(
-        f"platform.yaml not found within {_MAX_WALK_UP} levels above {start}"
-    )
+    raise FileNotFoundError(f"platform.yaml not found within {_MAX_WALK_UP} levels above {start}")
 
 
 def _lookup_owners(platform_yaml: Path) -> dict[str, str]:

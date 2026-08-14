@@ -11,7 +11,6 @@ runs ``_log.sh`` on Windows, so skipping the matrix entry is correct.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -27,7 +26,9 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 LOG_SH = PLUGIN_ROOT / "scripts" / "_log.sh"
 
 
-def _run_rotate(log_file: Path, *extra_args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+def _run_rotate(
+    log_file: Path, *extra_args: str, env: dict | None = None
+) -> subprocess.CompletedProcess:
     """Source _log.sh and call rotate_log; returns the completed process."""
     args = " ".join(f"'{a}'" for a in extra_args)
     log_posix = Path(log_file).as_posix()

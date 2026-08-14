@@ -30,16 +30,14 @@ Implements:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 try:
     import yaml
 except ImportError as exc:
-    raise ImportError(
-        "doctor_checks requires PyYAML; install with: pip install pyyaml"
-    ) from exc
+    raise ImportError("doctor_checks requires PyYAML; install with: pip install pyyaml") from exc
 
 
 Severity = Literal["info", "warn", "error"]
@@ -58,6 +56,7 @@ class DoctorWarning:
         repo: Repo name from ``platform.yaml`` this finding is about, if any.
         hint: Optional one-line suggested action.
     """
+
     severity: Severity
     code: str
     message: str

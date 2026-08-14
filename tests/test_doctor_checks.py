@@ -6,8 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-import pytest
-
 from otaman_plugin.doctor_checks import (
     DoctorWarning,
     check_launch_commands_have_continue_flag,
@@ -63,9 +61,11 @@ class TestPluginDirConsistency:
     def test_matching_plugin_dir_no_warning(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "platform.yaml",
-            _platform_yaml([
-                "claude --plugin-dir /home/u/otaman/otaman-plugin '/otaman:check'",
-            ]),
+            _platform_yaml(
+                [
+                    "claude --plugin-dir /home/u/otaman/otaman-plugin '/otaman:check'",
+                ]
+            ),
         )
         _write(tmp_path / "launch-settings.yaml", _launch_settings())
         warnings = check_plugin_dir_consistency(tmp_path)
@@ -74,9 +74,11 @@ class TestPluginDirConsistency:
     def test_drift_warns(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "platform.yaml",
-            _platform_yaml([
-                "claude --plugin-dir /home/u/legacy-maestro-plugin '/otaman:check'",
-            ]),
+            _platform_yaml(
+                [
+                    "claude --plugin-dir /home/u/legacy-maestro-plugin '/otaman:check'",
+                ]
+            ),
         )
         _write(tmp_path / "launch-settings.yaml", _launch_settings())
         warnings = check_plugin_dir_consistency(tmp_path)
@@ -113,9 +115,11 @@ class TestPluginDirConsistency:
     def test_wsl_path_under_ssh_warns(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "platform.yaml",
-            _platform_yaml([
-                "claude --plugin-dir /mnt/c/work/otaman/otaman-plugin '/otaman:check'",
-            ]),
+            _platform_yaml(
+                [
+                    "claude --plugin-dir /mnt/c/work/otaman/otaman-plugin '/otaman:check'",
+                ]
+            ),
         )
         _write(tmp_path / "launch-settings.yaml", _launch_settings())
         warnings = check_plugin_dir_consistency(tmp_path)
@@ -185,9 +189,11 @@ class TestContinueFlagCheck:
     def test_missing_c_warns(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "platform.yaml",
-            _platform_yaml([
-                "source ~/.nvm/nvm.sh && claude --plugin-dir /p '/otaman:check'",
-            ]),
+            _platform_yaml(
+                [
+                    "source ~/.nvm/nvm.sh && claude --plugin-dir /p '/otaman:check'",
+                ]
+            ),
         )
         warnings = check_launch_commands_have_continue_flag(tmp_path)
         missing = [w for w in warnings if w.code == "M13B_MISSING_CONTINUE_FLAG"]
@@ -211,9 +217,11 @@ class TestContinueFlagCheck:
         # Without -c on the real call → warn
         _write(
             tmp_path / "platform.yaml",
-            _platform_yaml([
-                "claude --version >/dev/null 2>&1 || true; claude '/otaman:check'",
-            ]),
+            _platform_yaml(
+                [
+                    "claude --version >/dev/null 2>&1 || true; claude '/otaman:check'",
+                ]
+            ),
         )
         warnings = check_launch_commands_have_continue_flag(tmp_path)
         assert any(w.code == "M13B_MISSING_CONTINUE_FLAG" for w in warnings)
@@ -221,9 +229,11 @@ class TestContinueFlagCheck:
         # With -c on the real call → no warn
         _write(
             tmp_path / "platform.yaml",
-            _platform_yaml([
-                "claude --version >/dev/null 2>&1 || true; claude -c '/otaman:check'",
-            ]),
+            _platform_yaml(
+                [
+                    "claude --version >/dev/null 2>&1 || true; claude -c '/otaman:check'",
+                ]
+            ),
         )
         warnings = check_launch_commands_have_continue_flag(tmp_path)
         assert [w for w in warnings if w.code == "M13B_MISSING_CONTINUE_FLAG"] == []
@@ -260,9 +270,11 @@ class TestRunAllChecks:
     def test_returns_list_of_doctor_warnings(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "platform.yaml",
-            _platform_yaml([
-                "claude --plugin-dir /legacy/path '/otaman:check'",
-            ]),
+            _platform_yaml(
+                [
+                    "claude --plugin-dir /legacy/path '/otaman:check'",
+                ]
+            ),
         )
         _write(tmp_path / "launch-settings.yaml", _launch_settings())
         warnings = run_all_checks(tmp_path)

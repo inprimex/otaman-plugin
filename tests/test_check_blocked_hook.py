@@ -38,7 +38,7 @@ def project(tmp_path):
     root = tmp_path / "proj"
     (root / ".agents" / "blocked").mkdir(parents=True)
     (root / ".agents" / "bus" / "active" / "acks").mkdir(parents=True)
-    (root / "platform.yaml").write_text("project: test\nversion: \"1.0\"\n", encoding="utf-8")
+    (root / "platform.yaml").write_text('project: test\nversion: "1.0"\n', encoding="utf-8")
     # Bare line ("." → maestro_root, for find_maestro_root) plus an
     # `agent:` field — the F013 enforcement resolver reads this via a CWD
     # ancestry walk starting at the hook subprocess's cwd (== root).
@@ -76,7 +76,9 @@ def set_blocked(project, content: str) -> None:
     project["blocked_path"].write_text(content, encoding="utf-8")
 
 
-def run_hook(project, target: Path, *, ownership: bool = True, path=None) -> tuple[int, dict | None]:
+def run_hook(
+    project, target: Path, *, ownership: bool = True, path=None
+) -> tuple[int, dict | None]:
     """Run the hook for a Write to `target`. Returns (returncode, parsed_json
     or None if allow/no-output)."""
     root = project["root"]
@@ -156,30 +158,32 @@ class TestAllowPaths:
 
     def test_missing_ownership_json_allows(self, project, otaman_stub_bin):
         set_blocked(project, _ACTIVE_ENTRY)
-        assert_allowed(*run_hook(project, project["owned_file"], ownership=False, path=otaman_stub_bin))
+        assert_allowed(
+            *run_hook(project, project["owned_file"], ownership=False, path=otaman_stub_bin)
+        )
 
 
 class TestSelfHeal:
     def test_approved_proposal_self_heals(self, project, otaman_stub_bin):
         set_blocked(project, _ACTIVE_ENTRY)
-        (project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack").write_text(
-            "approved\n", encoding="utf-8"
-        )
+        (
+            project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack"
+        ).write_text("approved\n", encoding="utf-8")
         assert_allowed(*run_hook(project, project["owned_file"], path=otaman_stub_bin))
 
     def test_rejected_proposal_self_heals(self, project, otaman_stub_bin):
         set_blocked(project, _ACTIVE_ENTRY)
-        (project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack").write_text(
-            "rejected\n", encoding="utf-8"
-        )
+        (
+            project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack"
+        ).write_text("rejected\n", encoding="utf-8")
         assert_allowed(*run_hook(project, project["owned_file"], path=otaman_stub_bin))
 
     def test_read_ack_does_not_self_heal(self, project, otaman_stub_bin):
         # A "read" ack is not a resolution — the block stays active.
         set_blocked(project, _ACTIVE_ENTRY)
-        (project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack").write_text(
-            "read\n", encoding="utf-8"
-        )
+        (
+            project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack"
+        ).write_text("read\n", encoding="utf-8")
         assert_denied(*run_hook(project, project["owned_file"], path=otaman_stub_bin))
 
 
@@ -201,9 +205,9 @@ class TestDenyPaths:
             "## Blocked: Still pending\n"
             "- **Proposal**: 20260202T000000-test-agent-to-human-spec-change-request\n",
         )
-        (project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack").write_text(
-            "approved\n", encoding="utf-8"
-        )
+        (
+            project["acks"] / "20260101T000000-test-agent-to-human-spec-change-request.human.ack"
+        ).write_text("approved\n", encoding="utf-8")
         rc, parsed = run_hook(project, project["owned_file"], path=otaman_stub_bin)
         assert_denied(rc, parsed)
         # Only the still-pending entry should be counted / named.
@@ -252,7 +256,11 @@ class TestF013EnforcementIdentity:
             text=True,
             timeout=15,
             cwd=str(root),
-            env={"PATH": f"{otaman_stub_bin}:/usr/bin:/bin", "HOME": str(root), "OTAMAN_AGENT": "someone-else"},
+            env={
+                "PATH": f"{otaman_stub_bin}:/usr/bin:/bin",
+                "HOME": str(root),
+                "OTAMAN_AGENT": "someone-else",
+            },
         )
         out = proc.stdout.strip()
         parsed = json.loads(out) if out else None

@@ -41,7 +41,9 @@ except ImportError:
     sys.exit(2)
 
 
-def _run(cmd: list[str], cwd: str | None = None, timeout: int = 120, env: dict | None = None) -> tuple[int, str, str]:
+def _run(
+    cmd: list[str], cwd: str | None = None, timeout: int = 120, env: dict | None = None
+) -> tuple[int, str, str]:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd, env=env)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
@@ -69,7 +71,12 @@ def fetch_config(source: str, target_dir: Path) -> Path | None:
         return None
 
     # Case 2: Git URL (ends with .git or contains github/gitlab)
-    if source.endswith(".git") or "github.com" in source or "gitlab.com" in source or "bitbucket.org" in source:
+    if (
+        source.endswith(".git")
+        or "github.com" in source
+        or "gitlab.com" in source
+        or "bitbucket.org" in source
+    ):
         _progress(f"Cloning maestro repo: {source}")  # legacy: pre-rebrand reference
         # Extract repo name for local dir
         repo_name = source.rstrip("/").split("/")[-1].replace(".git", "")
@@ -110,7 +117,9 @@ def fetch_config(source: str, target_dir: Path) -> Path | None:
         config_path.write_text(content, encoding="utf-8")
 
         # Also fetch .gitignore if exists
-        rc2, gi_content, _ = _run(["ssh", host_part, f"cat {remote_path.rstrip('/')}/.gitignore"], timeout=10)
+        rc2, gi_content, _ = _run(
+            ["ssh", host_part, f"cat {remote_path.rstrip('/')}/.gitignore"], timeout=10
+        )
         if rc2 == 0:
             (maestro_dir / ".gitignore").write_text(gi_content, encoding="utf-8")
 
@@ -140,7 +149,7 @@ def clone_repos(config: dict[str, Any], maestro_dir: Path) -> dict[str, Any]:
 
         # Skip if already exists
         if target.is_dir() and (target / ".git").is_dir():
-            _progress(f"    Already exists, skipping")
+            _progress("    Already exists, skipping")
             report["skipped"].append(name)
             continue
 
@@ -155,7 +164,7 @@ def clone_repos(config: dict[str, Any], maestro_dir: Path) -> dict[str, Any]:
                 remote = f"git@gitlab.com:{org}/{repo.get('dir_name', name)}.git"
 
         if not remote:
-            _progress(f"    No remote URL, skipping")
+            _progress("    No remote URL, skipping")
             report["failed"].append({"name": name, "error": "No remote URL"})
             continue
 
@@ -175,7 +184,9 @@ def clone_repos(config: dict[str, Any], maestro_dir: Path) -> dict[str, Any]:
                 if key_candidate.exists():
                     # Use forward slashes for SSH (Windows backslashes break it)
                     key_posix = str(key_candidate).replace("\\", "/")
-                    clone_env["GIT_SSH_COMMAND"] = f'ssh -i "{key_posix}" -o StrictHostKeyChecking=no'
+                    clone_env["GIT_SSH_COMMAND"] = (
+                        f'ssh -i "{key_posix}" -o StrictHostKeyChecking=no'
+                    )
                     break
         rc, out, err = _run(["git", "clone", remote, str(target)], timeout=300, env=clone_env)
         if rc != 0:
@@ -226,6 +237,7 @@ def main() -> int:
         maestro_dir.mkdir(parents=True, exist_ok=True)
         # Copy config to maestro folder  # legacy: pre-rebrand reference
         import shutil
+
         dest_config = maestro_dir / "platform.yaml"
         if config_path.resolve() != dest_config.resolve():
             shutil.copy2(str(config_path), str(dest_config))
@@ -267,11 +279,14 @@ def main() -> int:
     specs = config.get("specs", {})
     if specs.get("format") == "openspec":
         import shutil as _shutil
+
         if not _shutil.which("openspec"):
             _progress("\n=== Installing OpenSpec CLI ===")
             npm_path = _shutil.which("npm")
             if npm_path:
-                rc, out, err = _run([npm_path, "install", "-g", "@fission-ai/openspec@latest"], timeout=120)
+                rc, out, err = _run(
+                    [npm_path, "install", "-g", "@fission-ai/openspec@latest"], timeout=120
+                )
                 if rc == 0:
                     _progress("  OpenSpec CLI installed globally")
                     clone_report["openspec_installed"] = True
@@ -281,7 +296,9 @@ def main() -> int:
                     clone_report["openspec_installed"] = False
             else:
                 _progress("  WARNING: npm not found — cannot install openspec")
-                _progress("  Install Node.js first, then: npm install -g @fission-ai/openspec@latest")
+                _progress(
+                    "  Install Node.js first, then: npm install -g @fission-ai/openspec@latest"
+                )
                 clone_report["openspec_installed"] = False
         else:
             _progress("\n=== OpenSpec CLI already installed ===")

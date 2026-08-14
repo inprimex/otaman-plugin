@@ -26,7 +26,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "map-tasks.py"
 
 
@@ -81,6 +80,7 @@ def _run(tasks_md: Path) -> subprocess.CompletedProcess:
 # (a) correct agent-task mapping
 # ---------------------------------------------------------------------------
 
+
 class TestAgentTaskMapping:
     def test_multi_agent_mapping(self, workspace):
         tasks_md = _write_tasks_md(
@@ -101,9 +101,7 @@ class TestAgentTaskMapping:
         assert "notified plugin-agent: 1 task(s)" in r.stdout
         assert "notified core-agent: 1 task(s)" in r.stdout
 
-    def test_same_line_with_multiple_annotations_does_not_double_count(
-        self, workspace
-    ):
+    def test_same_line_with_multiple_annotations_does_not_double_count(self, workspace):
         # A single task line carrying the same annotation twice must still
         # count once for that agent.
         tasks_md = _write_tasks_md(
@@ -120,13 +118,13 @@ class TestAgentTaskMapping:
 # (b) unknown annotation silently skipped
 # ---------------------------------------------------------------------------
 
+
 class TestUnknownAnnotationSkipped:
     def test_unknown_repo_does_not_error(self, workspace):
         tasks_md = _write_tasks_md(
             workspace,
             "ghost-change",
-            "- [ ] 1.1 @otaman-cli Real task\n"
-            "- [ ] 1.2 @otaman-nonexistent Ghost task\n",
+            "- [ ] 1.1 @otaman-cli Real task\n- [ ] 1.2 @otaman-nonexistent Ghost task\n",
         )
         r = _run(tasks_md)
         assert r.returncode == 0
@@ -138,8 +136,7 @@ class TestUnknownAnnotationSkipped:
         tasks_md = _write_tasks_md(
             workspace,
             "specless",
-            "- [ ] 1.1 Plain task with no annotation\n"
-            "- [ ] 1.2 @otaman-nonexistent Unknown only\n",
+            "- [ ] 1.1 Plain task with no annotation\n- [ ] 1.2 @otaman-nonexistent Unknown only\n",
         )
         r = _run(tasks_md)
         assert r.returncode == 0
@@ -150,13 +147,13 @@ class TestUnknownAnnotationSkipped:
 # (c) bus message written with correct frontmatter shape
 # ---------------------------------------------------------------------------
 
+
 class TestBusMessageShape:
     def test_message_file_layout_and_frontmatter(self, workspace):
         tasks_md = _write_tasks_md(
             workspace,
             "msg-shape",
-            "- [ ] 1.1 @otaman-cli Refactor the thing\n"
-            "- [ ] 1.2 @otaman-cli Test the refactor\n",
+            "- [ ] 1.1 @otaman-cli Refactor the thing\n- [ ] 1.2 @otaman-cli Test the refactor\n",
         )
         r = _run(tasks_md)
         assert r.returncode == 0
@@ -182,6 +179,7 @@ class TestBusMessageShape:
 # (d) exits 0 on missing platform.yaml
 # ---------------------------------------------------------------------------
 
+
 class TestGracefulExits:
     def test_missing_platform_yaml_exits_0(self, tmp_path):
         # Create a tasks.md with no platform.yaml anywhere above it.
@@ -189,9 +187,7 @@ class TestGracefulExits:
         bare = tmp_path / "lonely" / "openspec" / "changes" / "x"
         bare.mkdir(parents=True)
         tasks_md = bare / "tasks.md"
-        tasks_md.write_text(
-            "- [ ] 1.1 @otaman-cli Task\n", encoding="utf-8"
-        )
+        tasks_md.write_text("- [ ] 1.1 @otaman-cli Task\n", encoding="utf-8")
         r = _run(tasks_md)
         assert r.returncode == 0  # graceful exit
         # No stdout — nothing was dispatched
@@ -200,14 +196,20 @@ class TestGracefulExits:
     def test_missing_tasks_md_exits_0(self, workspace):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), str(workspace / "no-such.md")],
-            capture_output=True, text=True, check=False, timeout=15,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
         )
         assert r.returncode == 0
 
     def test_no_args_exits_0(self):
         r = subprocess.run(
             [sys.executable, str(SCRIPT)],
-            capture_output=True, text=True, check=False, timeout=15,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
         )
         assert r.returncode == 0
         assert "usage:" in r.stderr
@@ -216,6 +218,7 @@ class TestGracefulExits:
 # ---------------------------------------------------------------------------
 # Pure-function unit tests for parse_annotations
 # ---------------------------------------------------------------------------
+
 
 class TestParseAnnotationsPure:
     def test_ignores_non_checklist_lines(self, tmp_path):
@@ -235,8 +238,7 @@ class TestParseAnnotationsPure:
     def test_checked_and_unchecked_both_included(self, tmp_path):
         f = tmp_path / "t.md"
         f.write_text(
-            "- [ ] 1.1 @otaman-cli Open\n"
-            "- [x] 1.2 @otaman-cli Done\n",
+            "- [ ] 1.1 @otaman-cli Open\n- [x] 1.2 @otaman-cli Done\n",
             encoding="utf-8",
         )
         mod = _load_module()
@@ -249,6 +251,7 @@ class TestParseAnnotationsPure:
 # tasks.md (not a fixture). This is the real cross-change check.
 # ---------------------------------------------------------------------------
 
+
 class TestIntegrationAgainstLiveFanoutParity:
     """The spec says: invoke against ``cli-send-cc-fanout-parity/tasks.md``;
     assert cli-agent receives 1.1-1.7 and core-agent receives 2.1.
@@ -257,8 +260,11 @@ class TestIntegrationAgainstLiveFanoutParity:
     def _live_tasks_path(self) -> Path:
         return (
             Path(__file__).resolve().parent.parent.parent
-            / "otaman-specs" / "openspec" / "changes"
-            / "cli-send-cc-fanout-parity" / "tasks.md"
+            / "otaman-specs"
+            / "openspec"
+            / "changes"
+            / "cli-send-cc-fanout-parity"
+            / "tasks.md"
         )
 
     def test_dispatches_to_cli_agent_and_core_agent(self, tmp_path):
@@ -291,7 +297,10 @@ class TestIntegrationAgainstLiveFanoutParity:
 
         r = subprocess.run(
             [sys.executable, str(SCRIPT), str(staged_tasks)],
-            capture_output=True, text=True, check=False, timeout=15,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
         )
         assert r.returncode == 0, f"stderr: {r.stderr}"
 
@@ -299,7 +308,9 @@ class TestIntegrationAgainstLiveFanoutParity:
         # in section 1 of cli-send-cc-fanout-parity)
         bus = ws / ".agents" / "bus" / "active"
         cli_msg = list(bus.glob("*-map-tasks-to-cli-agent-cli-send-cc-fanout-parity.md"))
-        assert len(cli_msg) == 1, f"expected one cli-agent msg, got {[p.name for p in bus.iterdir()]}"
+        assert len(cli_msg) == 1, (
+            f"expected one cli-agent msg, got {[p.name for p in bus.iterdir()]}"
+        )
         cli_body = cli_msg[0].read_text(encoding="utf-8")
         for i in range(1, 8):  # 1.1 ... 1.7
             assert f"1.{i} @otaman-cli" in cli_body, f"missing task 1.{i} in cli-agent msg"

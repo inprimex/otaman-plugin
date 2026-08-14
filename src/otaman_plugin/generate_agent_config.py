@@ -78,7 +78,6 @@ def _backup_existing(path: Path) -> Path | None:
     """
     if not path.exists() or not path.is_file():
         return None
-    import shutil
     bak = path.with_suffix(path.suffix + ".bak")
     shutil.copy2(path, bak)
     return bak
@@ -236,8 +235,11 @@ def generate_repo_claude_md(project_root: Path, config: dict[str, Any]) -> list[
             existing = claude_md_path.read_text(encoding="utf-8")
             # Recognize both new (otaman:) and legacy (maestro:) markers so  # legacy: pre-rebrand reference
             # existing in-the-wild CLAUDE.md files migrate cleanly on next init.
-            if "<!-- otaman:begin -->" in existing or "<!-- maestro:begin -->" in existing:  # legacy: pre-rebrand reference
+            if (
+                "<!-- otaman:begin -->" in existing or "<!-- maestro:begin -->" in existing
+            ):  # legacy: pre-rebrand reference
                 import re
+
                 pattern = r"<!-- (?:otaman|maestro):begin -->.*?<!-- (?:otaman|maestro):end -->"  # legacy: pre-rebrand reference
                 updated = re.sub(pattern, maestro_block, existing, flags=re.DOTALL)
                 claude_md_path.write_text(updated, encoding="utf-8")
@@ -308,8 +310,7 @@ def _build_maestro_block(
             # Build specific spec paths for this agent
             if specs_dirs:
                 my_specs_lines = "\n".join(
-                    f"  - `{specs_path}/openspec/specs/{d}/spec.md`"
-                    for d in specs_dirs
+                    f"  - `{specs_path}/openspec/specs/{d}/spec.md`" for d in specs_dirs
                 )
                 my_specs = f"- **Your specs** (read these before implementing):\n{my_specs_lines}"
             else:
@@ -329,7 +330,7 @@ def _build_maestro_block(
 - **Never implement against a spec that doesn't exist yet** — wait for human approval + spec commit
 - After proposing, switch to other tasks. Run `/otaman:check` periodically to see if your proposal was approved
 - Resume the blocked task only after you see BOTH `spec-change-approved` AND `spec-change` messages
-- Check `{m}/.agents/blocked/{repo['owner']}.md` for your currently blocked tasks"""
+- Check `{m}/.agents/blocked/{repo["owner"]}.md` for your currently blocked tasks"""
         else:
             specs_section = f"""
 ### Specs
@@ -342,7 +343,7 @@ def _build_maestro_block(
 - **Never implement against a spec that doesn't exist yet** — wait for human approval + spec commit
 - After proposing, switch to other tasks. Run `/otaman:check` periodically to see if your proposal was approved
 - Resume the blocked task only after you see BOTH `spec-change-approved` AND `spec-change` messages
-- Check `{m}/.agents/blocked/{repo['owner']}.md` for your currently blocked tasks"""
+- Check `{m}/.agents/blocked/{repo["owner"]}.md` for your currently blocked tasks"""
 
     # Build standards section for this repo
     standards_section = ""
@@ -355,7 +356,9 @@ def _build_maestro_block(
         if repo_stds.get("framework"):
             lines.append(f"- **Framework**: {repo_stds['framework']}")
         if repo_stds.get("package_manager"):
-            lines.append(f"- **Package manager**: {repo_stds['package_manager']} (use this exclusively)")
+            lines.append(
+                f"- **Package manager**: {repo_stds['package_manager']} (use this exclusively)"
+            )
         if repo_stds.get("styling"):
             lines.append(f"- **Styling**: {repo_stds['styling']}")
         if repo_stds.get("iac"):
@@ -386,7 +389,9 @@ def _build_maestro_block(
     domain = config.get("domain", "")
     if domain:
         # Try to load domain-specific path rules
-        plugin_root = Path(__file__).resolve().parent.parent.parent  # src/otaman_plugin/X.py → otaman-plugin/
+        plugin_root = (
+            Path(__file__).resolve().parent.parent.parent
+        )  # src/otaman_plugin/X.py → otaman-plugin/
         for rule_domain in (domain, "general"):
             rules_file = plugin_root / "references" / "path-rules" / f"{rule_domain}.yaml"
             if rules_file.exists():
@@ -406,11 +411,15 @@ def _build_maestro_block(
     # Knowledge gaps (soft blocks)
     knowledge_section = ""
     knowledge_items = config.get("knowledge", [])
-    blocked_items = [k for k in knowledge_items if k.get("status") in ("needs_docs", "needs_full_docs")]
+    blocked_items = [
+        k for k in knowledge_items if k.get("status") in ("needs_docs", "needs_full_docs")
+    ]
     if blocked_items:
-        lines = ["\n### Knowledge Gaps (CRITICAL)",
-                 "The following technologies have LOW or NO knowledge confidence.",
-                 "**DO NOT write implementation code for these without reading the docs first.**\n"]
+        lines = [
+            "\n### Knowledge Gaps (CRITICAL)",
+            "The following technologies have LOW or NO knowledge confidence.",
+            "**DO NOT write implementation code for these without reading the docs first.**\n",
+        ]
         for item in blocked_items:
             pack = item.get("pack", "unknown")
             path = item.get("path", f".agents/knowledge/{pack}/")
@@ -436,20 +445,20 @@ def _build_maestro_block(
     return f"""<!-- otaman:begin -->
 ## Otaman Orchestration Rules
 
-**You are `{repo['owner']}`**. You own this repository: **{repo['name']}**.
+**You are `{repo["owner"]}`**. You own this repository: **{repo["name"]}**.
 
 Otaman folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 
 ### First Session Checklist
 1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
-2. Read `{m}/.agents/queue/{repo['owner']}.md` — see your active/queued/blocked tasks
+2. Read `{m}/.agents/queue/{repo["owner"]}.md` — see your active/queued/blocked tasks
 3. Read specs relevant to your repo (specs_dir paths below)
 4. Run `git log --oneline -10` — understand recent changes
 5. If `{m}/.agents/knowledge/` exists, check for tech docs relevant to your work
 6. Then: resume active task, or pick highest-priority queued task, or act on bus messages
 
 ### Ownership
-- This repo (`{repo['path']}`) is YOURS — you may read and write freely here
+- This repo (`{repo["path"]}`) is YOURS — you may read and write freely here
 - Other repos (READ-ONLY, do not write to them):
 {other_repos_list}
 - You may read other repos' source code, configs, and CLAUDE.md to understand their APIs
@@ -531,7 +540,7 @@ otaman set-status idle
 This is a single CLI call — no file editing, no token overhead. It lets the human see live fleet state in `otaman status` and in `otaman check`. Per `agent-status-presence` design Q3.
 
 ### Task Queue
-- Your queue file: `{m}/.agents/queue/{repo['owner']}.md`
+- Your queue file: `{m}/.agents/queue/{repo["owner"]}.md`
 - Max 1 active task at a time — finish or pause before switching
 - When a `task-assignment` arrives while you're busy: ack as `read`, add to Queued section
 - When you finish a task: check bus, then pick highest-priority queued item
@@ -557,7 +566,7 @@ This is a single CLI call — no file editing, no token overhead. It lets the hu
 {knowledge_section}
 
 ### Git Workflow
-- Work in branches: `agent/{repo['owner']}/{{feature-name}}`
+- Work in branches: `agent/{repo["owner"]}/{{feature-name}}`
 - All changes go through PRs
 - Write clear commit messages for the audit trail
 <!-- otaman:end -->"""
@@ -597,6 +606,7 @@ def install_spec_change_hook(project_root: Path, config: dict[str, Any]) -> str 
         if marker in existing:
             # Already installed, update in place
             import re
+
             pattern = rf"{re.escape(marker)}:begin.*?{re.escape(marker)}:end"
             hook_call = _spec_hook_call_block(hook_source, marker)
             if re.search(pattern, existing, re.DOTALL):
@@ -676,6 +686,7 @@ def install_repo_post_commit_hooks(project_root: Path, config: dict[str, Any]) -
             if marker in existing:
                 # Already installed, update in place
                 import re
+
                 pattern = rf"{re.escape(marker)}:begin.*?{re.escape(marker)}:end"
                 if re.search(pattern, existing, re.DOTALL):
                     updated = re.sub(pattern, hook_call, existing, flags=re.DOTALL)
@@ -686,7 +697,9 @@ def install_repo_post_commit_hooks(project_root: Path, config: dict[str, Any]) -
                 # Append our hook call
                 with open(hook_target, "a", encoding="utf-8") as f:
                     f.write("\n" + hook_call + "\n")
-                results.append(f"Appended post-commit hook to existing {repo['name']}/.git/hooks/post-commit")
+                results.append(
+                    f"Appended post-commit hook to existing {repo['name']}/.git/hooks/post-commit"
+                )
         else:
             content = f"#!/usr/bin/env bash\nset -euo pipefail\n\n{hook_call}\n"
             hook_target.write_text(content, encoding="utf-8")
@@ -753,6 +766,7 @@ fi
             existing = hook_target.read_text(encoding="utf-8")
             if marker in existing:
                 import re
+
                 pattern = rf"{re.escape(marker)}:begin.*?{re.escape(marker)}:end"
                 if re.search(pattern, existing, re.DOTALL):
                     updated = re.sub(pattern, hook_call, existing, flags=re.DOTALL)
@@ -919,7 +933,6 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
     Preserves any existing permissions the user has already configured.
     """
     results: list[str] = []
-    bus_path_rel = config.get("communication", {}).get("bus_path", ".agents/bus")
 
     # Common safe permission patterns (read-only bus ops + git + maestro CLI).  # legacy: pre-rebrand reference
     # The maestro CLI entries are what /otaman:check and friends rely on after  # legacy: pre-rebrand reference
@@ -976,7 +989,9 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
             with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, indent=2)
                 f.write("\n")
-            results.append(f"{repo['name']}: added {added} permission(s) to .claude/settings.local.json")
+            results.append(
+                f"{repo['name']}: added {added} permission(s) to .claude/settings.local.json"
+            )
 
     return results
 
@@ -992,7 +1007,9 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
     for repo in config["repos"]:
         repo_dir = (project_root / repo["path"]).resolve()
         if not repo_dir.is_dir():
-            results.append(f"WARNING: Repo not found: {repo['path']}, skipping .maestro marker")  # legacy: pre-rebrand reference
+            results.append(
+                f"WARNING: Repo not found: {repo['path']}, skipping .maestro marker"
+            )  # legacy: pre-rebrand reference
             continue
 
         # Compute relative path from repo to maestro folder  # legacy: pre-rebrand reference
@@ -1029,7 +1046,9 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
                 with open(gitignore, "a", encoding="utf-8") as f:
                     if not content.endswith("\n"):
                         f.write("\n")
-                    f.write(f"\n# Maestro marker file (local pointer to maestro folder)\n")  # legacy: pre-rebrand reference
+                    f.write(
+                        "\n# Maestro marker file (local pointer to maestro folder)\n"
+                    )  # legacy: pre-rebrand reference
                     f.write(f"{marker_entry}\n")
                 results.append(f"Updated: {repo['name']}/.gitignore (added .otaman)")
         else:
@@ -1096,28 +1115,29 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
     ]
     gitignore = project_root / ".gitignore"
     if gitignore.exists():
-        existing_lines = {
-            ln.strip() for ln in gitignore.read_text(encoding="utf-8").splitlines()
-        }
+        existing_lines = {ln.strip() for ln in gitignore.read_text(encoding="utf-8").splitlines()}
         missing = [e for e in entries_needed if e not in existing_lines]
         if missing:
             with open(gitignore, "a", encoding="utf-8") as f:
                 existing = gitignore.read_text(encoding="utf-8")
                 if existing and not existing.endswith("\n"):
                     f.write("\n")
-                f.write("\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n")  # legacy: pre-rebrand reference
+                f.write(
+                    "\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"
+                )  # legacy: pre-rebrand reference
                 for e in missing:
                     f.write(f"{e}\n")
-            results.append(
-                f"Updated: .gitignore (+{len(missing)} entries for .otaman/ runtime)"
-            )
+            results.append(f"Updated: .gitignore (+{len(missing)} entries for .otaman/ runtime)")
     else:
         gitignore.write_text(
             "# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"  # legacy: pre-rebrand reference
-            + "\n".join(entries_needed) + "\n",
+            + "\n".join(entries_needed)
+            + "\n",
             encoding="utf-8",
         )
-        results.append("Created: .gitignore (maestro runtime entries)")  # legacy: pre-rebrand reference
+        results.append(
+            "Created: .gitignore (maestro runtime entries)"
+        )  # legacy: pre-rebrand reference
 
     return results
 
@@ -1125,6 +1145,7 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
 def main() -> int:
     # 2B.2-A: dry-run early return. Full per-write gating in 2B.2-B.
     import sys as _sys
+
     if "--dry-run" in _sys.argv:
         print("  [dry-run] generate-agent-config: skipping all writes")
         print("  [dry-run] would generate: .agents/, ownership.json, queue files,")
@@ -1146,9 +1167,12 @@ def main() -> int:
 
     # Python version check
     import platform as plat
+
     py_ver = tuple(int(x) for x in plat.python_version().split(".")[:2])
     if py_ver < (3, 10):
-        print(f"WARNING: Python 3.10+ recommended (you have {plat.python_version()})", file=sys.stderr)
+        print(
+            f"WARNING: Python 3.10+ recommended (you have {plat.python_version()})", file=sys.stderr
+        )
 
     # Create directories
     created_dirs = create_directories(project_root, config)
@@ -1192,7 +1216,9 @@ def main() -> int:
     for r in mcp_results:
         print(r)
 
-    _phase("Updating per-repo .claude/settings.local.json (permissions)", count=len(config["repos"]))
+    _phase(
+        "Updating per-repo .claude/settings.local.json (permissions)", count=len(config["repos"])
+    )
     settings_results = generate_repo_settings(project_root, config)
     for r in settings_results:
         print(r)
@@ -1218,7 +1244,9 @@ def main() -> int:
     bus_dir = project_root / bus_path
     if bus_dir.is_dir():
         # cleanup-bus.py was carved into otaman-cli during Stage 4E.
-        from otaman_cli.cleanup_bus import migrate_flat_to_active, cleanup as _cleanup_run
+        from otaman_cli.cleanup_bus import cleanup as _cleanup_run
+        from otaman_cli.cleanup_bus import migrate_flat_to_active
+
         migrated = migrate_flat_to_active(bus_dir)
         if migrated:
             print(f"Migrated {migrated} bus message(s) to {bus_path}/active/")

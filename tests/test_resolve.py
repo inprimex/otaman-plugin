@@ -1,13 +1,11 @@
 """Tests for scripts/_resolve.py — maestro root resolution."""
 
-import os
-import textwrap
+# Add scripts/ to path so we can import _resolve
+import sys
 from pathlib import Path
 
 import pytest
 
-# Add scripts/ to path so we can import _resolve
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from _resolve import (
@@ -56,9 +54,7 @@ class TestMarkerFile:
         repo = workspace["repo"]
         maestro = workspace["maestro"]
         (repo / ".maestro").write_text(
-            "# Path to maestro folder\n"
-            "# Written by maestro init\n"
-            "../my-maestro\n"
+            "# Path to maestro folder\n# Written by maestro init\n../my-maestro\n"
         )
         assert find_maestro_root(repo) == maestro.resolve()
 
@@ -171,74 +167,84 @@ class TestConfigDirExpansion:
         assert expand_config_dir("", "bash") == ""
 
     def test_bash_tilde_expands(self):
-        assert expand_config_dir("~/.claude-personal", "bash", home="/home/foo") \
+        assert (
+            expand_config_dir("~/.claude-personal", "bash", home="/home/foo")
             == "/home/foo/.claude-personal"
+        )
 
     def test_bash_bare_tilde(self):
         assert expand_config_dir("~", "bash", home="/home/foo") == "/home/foo"
 
     def test_zsh_fish_same_as_bash(self):
         for shell in ("zsh", "fish"):
-            assert expand_config_dir("~/.claude-personal", shell, home="/home/foo") \
+            assert (
+                expand_config_dir("~/.claude-personal", shell, home="/home/foo")
                 == "/home/foo/.claude-personal"
+            )
 
     def test_powershell_native_backslashes(self):
-        assert expand_config_dir(
-            "~/.claude-personal", "powershell", home="C:\\Users\\roman"
-        ) == "C:\\Users\\roman\\.claude-personal"
+        assert (
+            expand_config_dir("~/.claude-personal", "powershell", home="C:\\Users\\roman")
+            == "C:\\Users\\roman\\.claude-personal"
+        )
 
     def test_powershell_normalizes_forward_slash_home(self):
         """If HOME has forward slashes (e.g. from env), output still backslash."""
-        assert expand_config_dir(
-            "~/.claude-personal", "powershell", home="C:/Users/roman"
-        ) == "C:\\Users\\roman\\.claude-personal"
+        assert (
+            expand_config_dir("~/.claude-personal", "powershell", home="C:/Users/roman")
+            == "C:\\Users\\roman\\.claude-personal"
+        )
 
     def test_wsl_defers_expansion(self):
         """WSL target: pass through unchanged so remote shell expands."""
-        assert expand_config_dir(
-            "~/.claude-personal", "wsl", home="/does/not/matter"
-        ) == "~/.claude-personal"
+        assert (
+            expand_config_dir("~/.claude-personal", "wsl", home="/does/not/matter")
+            == "~/.claude-personal"
+        )
 
     def test_ssh_defers_expansion(self):
-        assert expand_config_dir(
-            "~/.claude-personal", "ssh", home="/does/not/matter"
-        ) == "~/.claude-personal"
+        assert (
+            expand_config_dir("~/.claude-personal", "ssh", home="/does/not/matter")
+            == "~/.claude-personal"
+        )
 
     def test_wsl_normalizes_backslashes_to_forward(self):
         """Input with backslashes still emits POSIX slashes for WSL/ssh."""
-        assert expand_config_dir(
-            "~\\.claude-personal", "wsl"
-        ) == "~/.claude-personal"
+        assert expand_config_dir("~\\.claude-personal", "wsl") == "~/.claude-personal"
 
     def test_env_var_home_expansion(self):
-        assert expand_config_dir("$HOME/.claude-foo", "bash", home="/home/foo") \
+        assert (
+            expand_config_dir("$HOME/.claude-foo", "bash", home="/home/foo")
             == "/home/foo/.claude-foo"
+        )
 
     def test_env_var_braced_home_expansion(self):
-        assert expand_config_dir("${HOME}/.claude-foo", "bash", home="/home/foo") \
+        assert (
+            expand_config_dir("${HOME}/.claude-foo", "bash", home="/home/foo")
             == "/home/foo/.claude-foo"
+        )
 
     def test_userprofile_expansion_for_powershell(self):
-        assert expand_config_dir(
-            "$USERPROFILE/.claude-foo", "powershell", home="C:\\Users\\roman"
-        ) == "C:\\Users\\roman\\.claude-foo"
+        assert (
+            expand_config_dir("$USERPROFILE/.claude-foo", "powershell", home="C:\\Users\\roman")
+            == "C:\\Users\\roman\\.claude-foo"
+        )
 
     def test_userprofile_braced_expansion_for_powershell(self):
-        assert expand_config_dir(
-            "${USERPROFILE}/.claude-foo", "powershell", home="C:\\Users\\roman"
-        ) == "C:\\Users\\roman\\.claude-foo"
+        assert (
+            expand_config_dir("${USERPROFILE}/.claude-foo", "powershell", home="C:\\Users\\roman")
+            == "C:\\Users\\roman\\.claude-foo"
+        )
 
     def test_absolute_path_passes_through_bash(self):
         assert expand_config_dir("/opt/claude-config", "bash") == "/opt/claude-config"
 
     def test_absolute_windows_path_normalizes_for_powershell(self):
-        assert expand_config_dir("C:/Users/roman/cfg", "powershell") \
-            == "C:\\Users\\roman\\cfg"
+        assert expand_config_dir("C:/Users/roman/cfg", "powershell") == "C:\\Users\\roman\\cfg"
 
     def test_unknown_shell_defaults_to_posix(self):
         """Shells we don't recognize get POSIX-style output (safe default)."""
-        assert expand_config_dir("~/.claude", "kornshell", home="/home/x") \
-            == "/home/x/.claude"
+        assert expand_config_dir("~/.claude", "kornshell", home="/home/x") == "/home/x/.claude"
 
 
 class TestParseMarkerFields:
@@ -251,11 +257,7 @@ class TestParseMarkerFields:
 
     def test_legacy_with_comments(self, tmp_path):
         marker = tmp_path / ".maestro"
-        marker.write_text(
-            "# Path to maestro folder\n"
-            "# Written by maestro init\n"
-            "../my-maestro\n"
-        )
+        marker.write_text("# Path to maestro folder\n# Written by maestro init\n../my-maestro\n")
         assert parse_marker_fields(marker) == {"maestro_root": "../my-maestro"}
 
     def test_extended_format(self, tmp_path):
@@ -269,10 +271,7 @@ class TestParseMarkerFields:
     def test_explicit_maestro_root_key(self, tmp_path):
         """maestro_root: <path> as an explicit key also works."""
         marker = tmp_path / ".maestro"
-        marker.write_text(
-            "maestro_root: ../my-maestro\n"
-            "expected_account: riseapps\n"
-        )
+        marker.write_text("maestro_root: ../my-maestro\nexpected_account: riseapps\n")
         assert parse_marker_fields(marker) == {
             "maestro_root": "../my-maestro",
             "expected_account": "riseapps",
@@ -287,11 +286,7 @@ class TestParseMarkerFields:
     def test_unknown_key_ignored(self, tmp_path):
         """Unknown key: value lines don't pollute the result."""
         marker = tmp_path / ".maestro"
-        marker.write_text(
-            "../my-maestro\n"
-            "custom_field: something\n"
-            "expected_account: riseapps\n"
-        )
+        marker.write_text("../my-maestro\ncustom_field: something\nexpected_account: riseapps\n")
         assert parse_marker_fields(marker) == {
             "maestro_root": "../my-maestro",
             "expected_account": "riseapps",
@@ -346,9 +341,7 @@ class TestReadExpectedAccount:
     """read_expected_account — convenience over find_marker + parse."""
 
     def test_returns_account(self, tmp_path):
-        (tmp_path / ".maestro").write_text(
-            "../my-maestro\nexpected_account: riseapps\n"
-        )
+        (tmp_path / ".maestro").write_text("../my-maestro\nexpected_account: riseapps\n")
         assert read_expected_account(tmp_path) == "riseapps"
 
     def test_returns_none_for_legacy_marker(self, tmp_path):
@@ -357,9 +350,7 @@ class TestReadExpectedAccount:
         assert read_expected_account(tmp_path) is None
 
     def test_returns_none_for_empty_value(self, tmp_path):
-        (tmp_path / ".maestro").write_text(
-            "../my-maestro\nexpected_account:\n"
-        )
+        (tmp_path / ".maestro").write_text("../my-maestro\nexpected_account:\n")
         assert read_expected_account(tmp_path) is None
 
     def test_returns_none_when_no_marker(self, tmp_path):
@@ -372,15 +363,11 @@ class TestFindMaestroRootWithExtendedMarker:
     def test_extended_marker_resolves(self, workspace):
         repo = workspace["repo"]
         maestro = workspace["maestro"]
-        (repo / ".maestro").write_text(
-            "../my-maestro\nexpected_account: riseapps\n"
-        )
+        (repo / ".maestro").write_text("../my-maestro\nexpected_account: riseapps\n")
         assert find_maestro_root(repo) == maestro.resolve()
 
     def test_explicit_key_form_resolves(self, workspace):
         repo = workspace["repo"]
         maestro = workspace["maestro"]
-        (repo / ".maestro").write_text(
-            "maestro_root: ../my-maestro\nexpected_account: riseapps\n"
-        )
+        (repo / ".maestro").write_text("maestro_root: ../my-maestro\nexpected_account: riseapps\n")
         assert find_maestro_root(repo) == maestro.resolve()

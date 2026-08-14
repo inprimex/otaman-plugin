@@ -13,24 +13,22 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import sys
+# Add scripts/ to path so we can import discover-repos
+# discover_repos + validate_platform now resolved as package modules
+# (otaman_plugin via package; otaman_core via pyproject pythonpath / dep)
+# Import with hyphen workaround
+import importlib
 from pathlib import Path
 
 import pytest
 
-# Add scripts/ to path so we can import discover-repos
-# discover_repos + validate_platform now resolved as package modules
-# (otaman_plugin via package; otaman_core via pyproject pythonpath / dep)
-
-# Import with hyphen workaround
-import importlib
 discover = importlib.import_module("otaman_plugin.discover_repos")
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def project_dir(tmp_path: Path) -> Path:
@@ -55,6 +53,7 @@ def make_non_git_project(path: Path, indicator: str = "pyproject.toml") -> Path:
 # ---------------------------------------------------------------------------
 # _looks_like_project
 # ---------------------------------------------------------------------------
+
 
 class TestLooksLikeProject:
     def test_empty_dir_is_not_project(self, tmp_path: Path) -> None:
@@ -137,6 +136,7 @@ class TestLooksLikeProject:
 # scan_directory — git vs non-git detection
 # ---------------------------------------------------------------------------
 
+
 class TestScanDirectory:
     def test_git_repos_detected(self, project_dir: Path) -> None:
         make_git_repo(project_dir / "repo-api")
@@ -208,7 +208,9 @@ class TestScanDirectory:
         """Simulate the watchtower project layout with mixed git/non-git."""
         # Git repos
         make_git_repo(project_dir / "detectmod")
-        (project_dir / "detectmod" / "requirements.txt").write_text("torch\nnumpy", encoding="utf-8")
+        (project_dir / "detectmod" / "requirements.txt").write_text(
+            "torch\nnumpy", encoding="utf-8"
+        )
         (project_dir / "detectmod" / "CLAUDE.md").write_text("# Detectmod", encoding="utf-8")
 
         make_git_repo(project_dir / "pfobos")
@@ -216,8 +218,12 @@ class TestScanDirectory:
         (project_dir / "pfobos" / "CLAUDE.md").write_text("# Pfobos", encoding="utf-8")
 
         make_git_repo(project_dir / "watchtower-sdr-probe")
-        (project_dir / "watchtower-sdr-probe" / "requirements.txt").write_text("pandas\nscikit-learn", encoding="utf-8")
-        (project_dir / "watchtower-sdr-probe" / "Dockerfile").write_text("FROM python:3.12", encoding="utf-8")
+        (project_dir / "watchtower-sdr-probe" / "requirements.txt").write_text(
+            "pandas\nscikit-learn", encoding="utf-8"
+        )
+        (project_dir / "watchtower-sdr-probe" / "Dockerfile").write_text(
+            "FROM python:3.12", encoding="utf-8"
+        )
 
         # Non-git projects
         edge = project_dir / "watchtower-edge"
@@ -252,8 +258,12 @@ class TestScanDirectory:
 
         names = {r["name"] for r in report["repos"]}
         assert names == {
-            "detectmod", "pfobos", "watchtower-sdr-probe",
-            "watchtower-edge", "watchtower-specs", "watchtower-synthetic",
+            "detectmod",
+            "pfobos",
+            "watchtower-sdr-probe",
+            "watchtower-edge",
+            "watchtower-specs",
+            "watchtower-synthetic",
         }
 
         # Check git vs non-git
@@ -280,6 +290,7 @@ class TestScanDirectory:
 # ---------------------------------------------------------------------------
 # Tech stack detection
 # ---------------------------------------------------------------------------
+
 
 class TestTechStack:
     def test_python_ml(self, tmp_path: Path) -> None:
@@ -317,9 +328,7 @@ class TestTechStack:
     def test_express_backend(self, tmp_path: Path) -> None:
         d = tmp_path / "api"
         d.mkdir()
-        (d / "package.json").write_text(
-            '{"dependencies":{"express":"^4.18"}}', encoding="utf-8"
-        )
+        (d / "package.json").write_text('{"dependencies":{"express":"^4.18"}}', encoding="utf-8")
         tech, owner = discover.detect_tech_stack(d)
         assert "express" in tech
         assert owner == "backend-agent"
@@ -353,6 +362,7 @@ class TestTechStack:
 # OpenSpec detection
 # ---------------------------------------------------------------------------
 
+
 class TestOpenSpecDetection:
     def test_openspec_dir_in_repo(self, project_dir: Path) -> None:
         repo = make_git_repo(project_dir / "specs-repo")
@@ -377,6 +387,7 @@ class TestOpenSpecDetection:
 # Draft generation
 # ---------------------------------------------------------------------------
 
+
 class TestDraftGeneration:
     def test_draft_created_and_valid(self, project_dir: Path) -> None:
         make_git_repo(project_dir / "svc-api")
@@ -395,6 +406,7 @@ class TestDraftGeneration:
         # Validate with our validator
         validate = importlib.import_module("otaman_core.validate_platform")
         import yaml
+
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         errors = validate.validate_builtin(config)
         assert errors == [], f"Draft validation errors: {errors}"
@@ -405,6 +417,7 @@ class TestDraftGeneration:
         draft_path = discover.generate_draft_yaml(project_dir, report)
 
         import yaml
+
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         repo_names = [r["name"] for r in config["repos"]]
         assert "my-app" in repo_names
@@ -419,6 +432,7 @@ class TestDraftGeneration:
 
         # Create initial config with custom owner
         import yaml
+
         config = {
             "project": "test",
             "version": "1.0",
@@ -462,6 +476,7 @@ class TestDraftGeneration:
 
         # Create initial config
         import yaml
+
         report = discover.scan_directory(project_dir)
         discover.generate_draft_yaml(project_dir, report)
 
@@ -496,6 +511,7 @@ class TestDraftGeneration:
         (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
 
         import yaml
+
         config = {
             "project": "test",
             "version": "1.0",
@@ -525,6 +541,7 @@ class TestDraftGeneration:
         draft_path = discover.generate_draft_yaml(project_dir, report)
 
         import yaml
+
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         assert config["specs"]["format"] == "openspec"
         assert config["specs"]["path"] == "./specs"
@@ -534,6 +551,7 @@ class TestDraftGeneration:
 # otaman-scan-ux-hardening task 2.2 + 2.3 — spec-repo name detection +
 # launcher: stub emission
 # ---------------------------------------------------------------------------
+
 
 class TestSpecRepoDetectionAndLauncherStub:
     def test_empty_specs_repo_detected_by_name(self, project_dir: Path) -> None:
@@ -581,6 +599,7 @@ class TestSpecRepoDetectionAndLauncherStub:
         draft_path = discover.generate_draft_yaml(project_dir, report)
 
         import yaml
+
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         assert "launcher" in config
         assert config["launcher"]["local"]["enabled"] is True
@@ -598,6 +617,7 @@ class TestSpecRepoDetectionAndLauncherStub:
         draft_path = discover.generate_draft_yaml(project_dir, report)
 
         import yaml
+
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         by_name = {r["name"]: r for r in config["repos"]}
         assert by_name["foo-specs"]["owner"] == "spec-agent"
@@ -611,6 +631,7 @@ class TestSpecRepoDetectionAndLauncherStub:
         (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
 
         import yaml
+
         # Existing config WITHOUT a launcher block (pre-2.3 platform.yaml shape)
         config = {
             "project": "test",
@@ -640,11 +661,12 @@ class TestSpecRepoDetectionAndLauncherStub:
         (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
 
         import yaml
+
         custom_launcher = {
-            "local": {"enabled": False},          # user disabled local
+            "local": {"enabled": False},  # user disabled local
             "ssh": {
-                "enabled": True,                  # user enabled ssh
-                "host": "dev@my-real-host",       # user filled in real host
+                "enabled": True,  # user enabled ssh
+                "host": "dev@my-real-host",  # user filled in real host
                 "repo_path": "/srv/projects/api",
             },
         }

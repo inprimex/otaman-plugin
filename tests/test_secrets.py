@@ -139,36 +139,44 @@ class TestSourceChain:
         """First non-empty value wins, in listed order."""
         monkeypatch.setenv("MY_KEY", "from-env")
         _write_dotenv(maestro_root, "MY_KEY=from-dotenv\n")
-        ref = SecretRef(sources=[
-            {"type": "env", "name": "MY_KEY"},
-            {"type": "dotenv", "name": "MY_KEY"},
-        ])
+        ref = SecretRef(
+            sources=[
+                {"type": "env", "name": "MY_KEY"},
+                {"type": "dotenv", "name": "MY_KEY"},
+            ]
+        )
         assert resolve(ref, maestro_root=maestro_root) == "from-env"
 
     def test_fallback_to_dotenv_when_env_missing(self, maestro_root, monkeypatch):
         monkeypatch.delenv("MY_KEY", raising=False)
         _write_dotenv(maestro_root, "MY_KEY=from-dotenv\n")
-        ref = SecretRef(sources=[
-            {"type": "env", "name": "MY_KEY"},
-            {"type": "dotenv", "name": "MY_KEY"},
-        ])
+        ref = SecretRef(
+            sources=[
+                {"type": "env", "name": "MY_KEY"},
+                {"type": "dotenv", "name": "MY_KEY"},
+            ]
+        )
         assert resolve(ref, maestro_root=maestro_root) == "from-dotenv"
 
     def test_unknown_source_type_skipped(self, maestro_root, monkeypatch):
         """Unknown types don't crash; chain continues."""
         monkeypatch.setenv("MY_KEY", "ok")
-        ref = SecretRef(sources=[
-            {"type": "vault", "path": "x"},   # unknown in v1
-            {"type": "env", "name": "MY_KEY"},
-        ])
+        ref = SecretRef(
+            sources=[
+                {"type": "vault", "path": "x"},  # unknown in v1
+                {"type": "env", "name": "MY_KEY"},
+            ]
+        )
         assert resolve(ref, maestro_root=maestro_root) == "ok"
 
     def test_all_sources_fail_returns_none(self, maestro_root, monkeypatch):
         monkeypatch.delenv("MY_KEY", raising=False)
-        ref = SecretRef(sources=[
-            {"type": "env", "name": "MY_KEY"},
-            {"type": "dotenv", "name": "MY_KEY"},
-        ])
+        ref = SecretRef(
+            sources=[
+                {"type": "env", "name": "MY_KEY"},
+                {"type": "dotenv", "name": "MY_KEY"},
+            ]
+        )
         assert resolve(ref, maestro_root=maestro_root) is None
 
 
@@ -179,11 +187,13 @@ class TestResolveOrFail:
 
     def test_raises_with_source_description(self, maestro_root, monkeypatch):
         monkeypatch.delenv("MISSING", raising=False)
-        ref = SecretRef(sources=[
-            {"type": "env", "name": "MISSING"},
-            {"type": "dotenv", "name": "MISSING"},
-            {"type": "keyring", "service": "maestro", "account": "x"},
-        ])
+        ref = SecretRef(
+            sources=[
+                {"type": "env", "name": "MISSING"},
+                {"type": "dotenv", "name": "MISSING"},
+                {"type": "keyring", "service": "maestro", "account": "x"},
+            ]
+        )
         with pytest.raises(RuntimeError) as exc:
             resolve_or_fail(ref, maestro_root=maestro_root)
         msg = str(exc.value)
@@ -196,7 +206,7 @@ class TestLoadDotenv:
     def test_returns_all_pairs(self, maestro_root):
         _write_dotenv(
             maestro_root,
-            "# header\nA=1\nB=two\nC=\"with spaces\"\n",
+            '# header\nA=1\nB=two\nC="with spaces"\n',
         )
         result = load_dotenv(maestro_root)
         assert result == {"A": "1", "B": "two", "C": "with spaces"}
@@ -220,6 +230,7 @@ class TestRegisterSource:
         finally:
             # Clean up registered source to avoid test pollution.
             from _secrets import _BUILTIN_SOURCES
+
             _BUILTIN_SOURCES.pop("static-test", None)
 
 
@@ -228,6 +239,7 @@ class TestKeyringSource:
         """If keyring isn't importable, source silently yields None."""
         # Force ImportError by hiding the module.
         import importlib
+
         monkeypatch.setitem(sys.modules, "keyring", None)
         src = KeyringSource()
         assert src.resolve({"account": "x"}, {}) is None

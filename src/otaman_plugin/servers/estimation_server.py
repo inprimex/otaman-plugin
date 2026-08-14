@@ -36,10 +36,12 @@ mcp = FastMCP(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _find_plugin_root() -> Path | None:
     """Find the otaman plugin root (where assets/ lives)."""
     # Check env var first (set by Claude Code)
     import os
+
     env_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if env_root:
         p = Path(env_root)
@@ -103,6 +105,7 @@ def _save_yaml(path: Path, data: Any) -> bool:
 # Tools: Benchmarks
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def search_benchmarks(
     query: str,
@@ -126,7 +129,10 @@ def search_benchmarks(
     benchmarks_path = plugin_root / "assets" / "estimation-benchmarks.yaml"
     data = _load_yaml(benchmarks_path)
     if not data or "benchmarks" not in data:
-        return {"benchmarks": [], "note": "No benchmarks file found. Create assets/estimation-benchmarks.yaml."}
+        return {
+            "benchmarks": [],
+            "note": "No benchmarks file found. Create assets/estimation-benchmarks.yaml.",
+        }
 
     query_lower = query.lower()
     query_terms = set(re.split(r"[\s,;]+", query_lower))
@@ -135,13 +141,15 @@ def search_benchmarks(
     for b in data["benchmarks"]:
         # Score by relevance
         score = 0
-        searchable = " ".join([
-            b.get("type", ""),
-            b.get("domain", ""),
-            " ".join(b.get("tags", [])),
-            " ".join(b.get("key_factors", [])),
-            b.get("code", ""),
-        ]).lower()
+        searchable = " ".join(
+            [
+                b.get("type", ""),
+                b.get("domain", ""),
+                " ".join(b.get("tags", [])),
+                " ".join(b.get("key_factors", [])),
+                b.get("code", ""),
+            ]
+        ).lower()
 
         for term in query_terms:
             if term in searchable:
@@ -192,7 +200,11 @@ def add_benchmark(
         return {"error": "Plugin root not found"}
 
     benchmarks_path = plugin_root / "assets" / "estimation-benchmarks.yaml"
-    data = _load_yaml(benchmarks_path) or {"benchmarks": [], "patterns": [], "adjustment_factors": {}}
+    data = _load_yaml(benchmarks_path) or {
+        "benchmarks": [],
+        "patterns": [],
+        "adjustment_factors": {},
+    }
 
     midpoint = (estimated_range[0] + estimated_range[1]) / 2
     accuracy = round((actual_hours - midpoint) / midpoint * 100, 1) if midpoint > 0 else 0
@@ -222,6 +234,7 @@ def add_benchmark(
 # Tools: Component Estimation
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def get_component_estimate(
     component: str,
@@ -243,7 +256,10 @@ def get_component_estimate(
     library_path = plugin_root / "assets" / "component-library.yaml"
     data = _load_yaml(library_path)
     if not data or "components" not in data:
-        return {"components": {}, "note": "No component library found. Create assets/component-library.yaml."}
+        return {
+            "components": {},
+            "note": "No component library found. Create assets/component-library.yaml.",
+        }
 
     components = data["components"]
     component_lower = component.lower()
@@ -258,7 +274,10 @@ def get_component_estimate(
             matches = {k: v for k, v in cat.items() if variant_lower in k}
             if matches:
                 return {"component": component, "matches": matches}
-            return {"error": f"Variant '{variant}' not found in '{component}'", "available": list(cat.keys())}
+            return {
+                "error": f"Variant '{variant}' not found in '{component}'",
+                "available": list(cat.keys()),
+            }
         return {"component": component, "variants": cat}
 
     # Fuzzy search across all components
@@ -273,12 +292,16 @@ def get_component_estimate(
 
     if matches:
         return {"fuzzy_matches": matches}
-    return {"error": f"Component '{component}' not found", "available_categories": list(components.keys())}
+    return {
+        "error": f"Component '{component}' not found",
+        "available_categories": list(components.keys()),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Tools: Domain Expert
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def get_domain_expert(
@@ -301,9 +324,11 @@ def get_domain_expert(
 
     expert_path = plugin_root / "references" / "domain-experts" / f"{domain}.md"
     if not expert_path.exists():
-        available = [
-            p.stem for p in (plugin_root / "references" / "domain-experts").glob("*.md")
-        ] if (plugin_root / "references" / "domain-experts").is_dir() else []
+        available = (
+            [p.stem for p in (plugin_root / "references" / "domain-experts").glob("*.md")]
+            if (plugin_root / "references" / "domain-experts").is_dir()
+            else []
+        )
         return {"error": f"No domain expert for '{domain}'", "available": available}
 
     content = expert_path.read_text(encoding="utf-8")
@@ -323,6 +348,7 @@ def get_domain_expert(
 # Tools: Project Metadata
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def get_project_meta(cwd: str) -> dict[str, Any]:
     """Read project metadata from .otaman-presale/project-meta.yaml (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directory
@@ -335,7 +361,9 @@ def get_project_meta(cwd: str) -> dict[str, Any]:
     """
     presale = _find_presale_dir(cwd)
     if not presale:
-        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"}
+        return {
+            "error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"
+        }
 
     meta = _load_yaml(presale / "project-meta.yaml")
     if not meta:
@@ -361,7 +389,9 @@ def update_project_phase(
 
     presale = _find_presale_dir(cwd)
     if not presale:
-        return {"error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"}
+        return {
+            "error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"
+        }
 
     meta_path = presale / "project-meta.yaml"
     meta = _load_yaml(meta_path)
@@ -413,18 +443,22 @@ def save_knowledge_item(
     if destination == "project":
         presale = _find_presale_dir(cwd)
         if not presale:
-            return {"error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"}
+            return {
+                "error": "No .otaman-presale/ (or legacy .maestro-presale/).  # legacy: .maestro-presale/ directorydirectory found"
+            }
 
         knowledge_file = presale / "captured-knowledge.yaml"
         data = _load_yaml(knowledge_file) or {"items": []}
 
-        data["items"].append({
-            "type": item_type,
-            "content": content,
-            "confidence": confidence,
-            "source": source,
-            "captured": datetime.now(timezone.utc).isoformat(),
-        })
+        data["items"].append(
+            {
+                "type": item_type,
+                "content": content,
+                "confidence": confidence,
+                "source": source,
+                "captured": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
         if _save_yaml(knowledge_file, data):
             return {"saved": True, "destination": "project", "items_count": len(data["items"])}
@@ -437,13 +471,19 @@ def save_knowledge_item(
             return {"error": "Plugin root not found"}
 
         benchmarks_path = plugin_root / "assets" / "estimation-benchmarks.yaml"
-        data = _load_yaml(benchmarks_path) or {"benchmarks": [], "patterns": [], "adjustment_factors": {}}
+        data = _load_yaml(benchmarks_path) or {
+            "benchmarks": [],
+            "patterns": [],
+            "adjustment_factors": {},
+        }
 
-        data.setdefault("patterns", []).append({
-            "pattern": content,
-            "source": source,
-            "confidence": confidence,
-        })
+        data.setdefault("patterns", []).append(
+            {
+                "pattern": content,
+                "source": source,
+                "confidence": confidence,
+            }
+        )
 
         if _save_yaml(benchmarks_path, data):
             return {"saved": True, "destination": "benchmarks"}

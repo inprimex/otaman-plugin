@@ -99,7 +99,7 @@ def parse_tasks_md(tasks_path: Path) -> list[dict[str, Any]]:
         at_match = re.search(r"@([\w-]+)\s*$", task_text)
         if at_match:
             repo_hint = at_match.group(1)
-            task_text = task_text[:at_match.start()].strip()
+            task_text = task_text[: at_match.start()].strip()
 
         # Try to extract repo hint from **repo-name**: prefix
         bold_match = re.match(r"\*\*([\w-]+)\*\*:\s*(.+)", task_text)
@@ -107,12 +107,14 @@ def parse_tasks_md(tasks_path: Path) -> list[dict[str, Any]]:
             repo_hint = bold_match.group(1)
             task_text = bold_match.group(2).strip()
 
-        tasks.append({
-            "text": task_text,
-            "done": done,
-            "group": current_group,
-            "repo_hint": repo_hint,
-        })
+        tasks.append(
+            {
+                "text": task_text,
+                "done": done,
+                "group": current_group,
+                "repo_hint": repo_hint,
+            }
+        )
 
     return tasks
 
@@ -241,7 +243,9 @@ def main() -> int:
     # Find project root
     project_root = find_project_root(tasks_path)
     if not project_root:
-        print("ERROR: Could not find .agents/ownership.json in any parent directory", file=sys.stderr)
+        print(
+            "ERROR: Could not find .agents/ownership.json in any parent directory", file=sys.stderr
+        )
         return 2
 
     # Load data

@@ -50,8 +50,12 @@ def workspace(tmp_path):
 def _run(*, cwd: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     # Strip out anything leaking from the dev's shell that could change behavior.
-    for k in ("OTAMAN_UNATTENDED", "OTAMAN_AFK_AUTO",
-              "OTAMAN_ACTIVE_ACCOUNT", "OTAMAN_AFK_NO_NOTIFY"):
+    for k in (
+        "OTAMAN_UNATTENDED",
+        "OTAMAN_AFK_AUTO",
+        "OTAMAN_ACTIVE_ACCOUNT",
+        "OTAMAN_AFK_NO_NOTIFY",
+    ):
         env.pop(k, None)
     # Tests must not actually try to talk to a daemon — the inner Python
     # call will fork and the suppress-flag short-circuits before any I/O.
@@ -60,8 +64,11 @@ def _run(*, cwd: Path, env_extra: dict | None = None) -> subprocess.CompletedPro
         env.update(env_extra)
     return subprocess.run(
         [BASH, str(HOOK)],
-        capture_output=True, text=True, timeout=15,
-        cwd=cwd, env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=cwd,
+        env=env,
     )
 
 
@@ -70,9 +77,7 @@ def _write_afk(maestro: Path, source: str = "manual") -> Path:
     afk_dir.mkdir(exist_ok=True)
     f = afk_dir / "afk"
     f.write_text(
-        "enabled_at: 2026-04-25T08:00:00+00:00\n"
-        f"source: {source}\n"
-        "enabled_by: human\n",
+        f"enabled_at: 2026-04-25T08:00:00+00:00\nsource: {source}\nenabled_by: human\n",
         encoding="utf-8",
     )
     return f

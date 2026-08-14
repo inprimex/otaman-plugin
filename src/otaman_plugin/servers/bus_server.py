@@ -10,7 +10,6 @@ Transport: stdio (launched by Claude Code via .mcp.json)
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +37,7 @@ _BROADCAST_WHITELIST: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _normalize_path(p: str) -> Path:
     """Handle WSL ↔ Windows path differences."""
@@ -113,6 +113,7 @@ def _extract_subject(text: str) -> str:
 # ---------------------------------------------------------------------------
 # bus-cc-routing — CC fan-out (tasks 1.1-1.4)
 # ---------------------------------------------------------------------------
+
 
 def _parse_cc_field(text: str) -> list[str]:
     """Parse the optional ``cc:`` field from a message's YAML frontmatter.
@@ -258,9 +259,7 @@ def _compute_effective_cc(
     candidates: list[str] = []
     if explicit_cc:
         candidates.extend(c for c in explicit_cc if isinstance(c, str) and c)
-    candidates.extend(
-        sorted(evaluate_routing_rules(routing_rules, to, priority, msg_type))
-    )
+    candidates.extend(sorted(evaluate_routing_rules(routing_rules, to, priority, msg_type)))
     for name in candidates:
         if name == to or name in seen:
             continue
@@ -281,7 +280,7 @@ def _inject_x_cc(content: str) -> str:
         return content  # malformed frontmatter; caller will not reach here
     head, fm_body, tail = m.group(1), m.group(2), m.group(3)
     new_fm = fm_body.rstrip("\n") + "\nx-cc: true"
-    return head + new_fm + tail + content[m.end():]
+    return head + new_fm + tail + content[m.end() :]
 
 
 # ---------------------------------------------------------------------------
@@ -378,9 +377,7 @@ def _compute_response_badges(
     return badges
 
 
-def _extract_cc_recipient_from_stem(
-    stem: str, cc_list: list[str] | None = None
-) -> str | None:
+def _extract_cc_recipient_from_stem(stem: str, cc_list: list[str] | None = None) -> str | None:
     """Identify which CC recipient a bus message file is addressed to.
 
     CC copies follow the filename convention
@@ -442,6 +439,7 @@ def _timestamp_id() -> str:
 # Tools
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def otaman_check(
     cwd: str,
@@ -458,7 +456,9 @@ def otaman_check(
     """
     root = _find_project_root(cwd)
     if not root:
-        return {"error": "No otaman project found (no .agents/ownership.json in parent directories)"}
+        return {
+            "error": "No otaman project found (no .agents/ownership.json in parent directories)"
+        }
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -490,9 +490,7 @@ def otaman_check(
             is_cc_copy = fm.get("x-cc", "").strip().lower() == "true"
             cc_list_for_routing = _parse_cc_field(text) if is_cc_copy else []
             cc_recipient = (
-                _extract_cc_recipient_from_stem(stem, cc_list_for_routing)
-                if is_cc_copy
-                else None
+                _extract_cc_recipient_from_stem(stem, cc_list_for_routing) if is_cc_copy else None
             )
 
             if is_cc_copy:
@@ -539,9 +537,13 @@ def otaman_check(
     # primary `messages` and the bus-cc-routing `cc_messages` list so
     # both surfaces share a consistent ordering.
     priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
-    messages.sort(key=lambda m: (priority_order.get(m["priority"], 2), m["timestamp"]), reverse=False)
+    messages.sort(
+        key=lambda m: (priority_order.get(m["priority"], 2), m["timestamp"]), reverse=False
+    )
     messages.sort(key=lambda m: priority_order.get(m["priority"], 2))
-    cc_messages.sort(key=lambda m: (priority_order.get(m["priority"], 2), m["timestamp"]), reverse=False)
+    cc_messages.sort(
+        key=lambda m: (priority_order.get(m["priority"], 2), m["timestamp"]), reverse=False
+    )
     cc_messages.sort(key=lambda m: priority_order.get(m["priority"], 2))
 
     # Check blocked tasks
@@ -562,12 +564,14 @@ def otaman_check(
                     status_note = "approved — waiting for spec commit"
                 if msg["type"] == "spec-change" and msg["status"] == "pending":
                     status_note = "READY TO RESUME — specs updated"
-            blocked.append({
-                "task": task_name.strip(),
-                "proposal": proposal.strip(),
-                "blocked_since": since.strip(),
-                "status_note": status_note,
-            })
+            blocked.append(
+                {
+                    "task": task_name.strip(),
+                    "proposal": proposal.strip(),
+                    "blocked_since": since.strip(),
+                    "status_note": status_note,
+                }
+            )
 
     # Counts cover primary messages only — keeps the existing semantics
     # stable for legacy consumers. CC copies are informational; consumers
@@ -613,9 +617,7 @@ def otaman_check(
 # agent names contain hyphens (`plugin-agent`); widened to `[a-z0-9-]+`
 # here. Flagged in the PR; the spec text is the part out of sync, not
 # this implementation.
-_PROPOSAL_STEM_RE = re.compile(
-    r"\d{8}T\d{6}-[a-z0-9-]+-to-[a-z0-9-]+-[a-z0-9-]+"
-)
+_PROPOSAL_STEM_RE = re.compile(r"\d{8}T\d{6}-[a-z0-9-]+-to-[a-z0-9-]+-[a-z0-9-]+")
 
 _TOMBSTONE_REASONS: dict[str, str] = {
     "spec-change-approved": "approved",
@@ -681,12 +683,8 @@ def _auto_tombstone_blocked(
         r"^(## Blocked: .+?)(?=\n## Blocked: |\Z)",
         re.DOTALL | re.MULTILINE,
     )
-    proposal_field_re = re.compile(
-        r"^\s*-\s*\*\*Proposal\*\*:\s*(\S+)", re.MULTILINE
-    )
-    change_field_re = re.compile(
-        r"^\s*-\s*\*\*Change\*\*:\s*(\S+)", re.MULTILINE
-    )
+    proposal_field_re = re.compile(r"^\s*-\s*\*\*Proposal\*\*:\s*(\S+)", re.MULTILINE)
+    change_field_re = re.compile(r"^\s*-\s*\*\*Change\*\*:\s*(\S+)", re.MULTILINE)
     title_re = re.compile(r"^## Blocked:\s*(.+)$", re.MULTILINE)
 
     for blocked_file in sorted(blocked_dir.glob("*.md")):
@@ -704,7 +702,7 @@ def _auto_tombstone_blocked(
             entry_block = m.group(1)
 
             # Preserve unchanged text between matches.
-            new_parts.append(text[last_end:m.start()])
+            new_parts.append(text[last_end : m.start()])
 
             should_tombstone = False
             if msg_type in ("spec-change-approved", "spec-change-rejected"):
@@ -719,9 +717,7 @@ def _auto_tombstone_blocked(
             if should_tombstone:
                 title_m = title_re.search(entry_block)
                 title = title_m.group(1).strip() if title_m else "(untitled)"
-                tombstoned.append(
-                    {"agent": agent_name, "title": title, "reason": reason}
-                )
+                tombstoned.append({"agent": agent_name, "title": title, "reason": reason})
                 trailer = f"\ncleared {today} — {reason} -->"
                 new_parts.append("<!-- " + entry_block.rstrip() + trailer)
                 modified = True
@@ -985,6 +981,7 @@ def otaman_status(cwd: str) -> dict[str, Any]:
     agents_file = root / ".agents" / "agents.yaml"
     if agents_file.exists():
         import yaml
+
         data = yaml.safe_load(agents_file.read_text(encoding="utf-8"))
         result["project"] = data.get("project", "unknown")
         result["agents"] = data.get("agents", [])
@@ -993,7 +990,6 @@ def otaman_status(cwd: str) -> dict[str, Any]:
 
     # Count bus messages by status
     bus = _bus_dir(root)
-    acks = _acks_dir(root)
     total = 0
     types: dict[str, int] = {}
 
@@ -1171,8 +1167,15 @@ def otaman_complete(
 
     # Call actualize_tasks module (lives in src/otaman_plugin/, not scripts/)
     cmd = [
-        sys.executable, "-m", "otaman_plugin.actualize_tasks",
-        "--change", change_name, "--agent", agent, "--project-root", str(root),
+        sys.executable,
+        "-m",
+        "otaman_plugin.actualize_tasks",
+        "--change",
+        change_name,
+        "--agent",
+        agent,
+        "--project-root",
+        str(root),
     ]
     if mark_all:
         cmd.append("--all")
@@ -1185,6 +1188,7 @@ def otaman_complete(
         return {"error": result.stderr.strip() or result.stdout.strip()}
 
     import json
+
     try:
         report = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError):
@@ -1422,6 +1426,7 @@ def otaman_cleanup(cwd: str, dry_run: bool = False) -> dict[str, Any]:
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     import json
+
     try:
         return json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError):

@@ -23,6 +23,7 @@ AGENTS = Path(__file__).parent.parent / "agents"
 # Schema tests — new fields
 # ---------------------------------------------------------------------------
 
+
 class TestPlatformSchema:
     @pytest.fixture
     def schema(self):
@@ -49,6 +50,7 @@ class TestPlatformSchema:
 # ---------------------------------------------------------------------------
 # Standards detection
 # ---------------------------------------------------------------------------
+
 
 class TestStandardsDetection:
     def test_detects_pnpm(self, tmp_path):
@@ -94,9 +96,9 @@ class TestStandardsDetection:
         assert stds.get("iac") == "pulumi"
 
     def test_detects_nestjs_from_package_json(self, tmp_path):
-        (tmp_path / "package.json").write_text(json.dumps({
-            "dependencies": {"@nestjs/core": "^10.0"}
-        }))
+        (tmp_path / "package.json").write_text(
+            json.dumps({"dependencies": {"@nestjs/core": "^10.0"}})
+        )
         stds = discover.detect_standards(tmp_path)
         assert stds.get("framework") == "nestjs"
 
@@ -108,6 +110,7 @@ class TestStandardsDetection:
 # ---------------------------------------------------------------------------
 # Standards rendering in CLAUDE.md
 # ---------------------------------------------------------------------------
+
 
 class TestStandardsRendering:
     def test_renders_standards(self, tmp_path):
@@ -146,6 +149,7 @@ class TestStandardsRendering:
 # Domain path rules
 # ---------------------------------------------------------------------------
 
+
 class TestPathRules:
     @pytest.fixture(params=["healthcare", "fintech", "general"])
     def rules(self, request):
@@ -171,6 +175,7 @@ class TestPathRules:
 # Domain agent templates
 # ---------------------------------------------------------------------------
 
+
 class TestDomainAgentTemplates:
     def test_healthcare_compliance_officer_exists(self):
         path = AGENTS / "templates" / "healthcare" / "compliance-officer.md"
@@ -189,6 +194,7 @@ class TestDomainAgentTemplates:
 # ---------------------------------------------------------------------------
 # Example validation
 # ---------------------------------------------------------------------------
+
 
 class TestExamples:
     def test_healthcare_full_example_loads(self):

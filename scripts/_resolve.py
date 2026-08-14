@@ -25,7 +25,9 @@ _WINDOWS_SHELLS = frozenset({"powershell", "pwsh", "cmd"})
 # Known fields in .otaman/.maestro marker files. Unknown `key:` lines fall through to  # legacy: .maestro supported
 # bare-path handling, which preserves support for Windows absolute paths
 # (e.g. ``C:/work/my-otaman``) that happen to contain a colon.
-_KNOWN_MARKER_FIELDS = frozenset({"maestro_root", "expected_account"})  # legacy: maestro_root field name
+_KNOWN_MARKER_FIELDS = frozenset(
+    {"maestro_root", "expected_account"}
+)  # legacy: maestro_root field name
 
 
 def find_maestro_root(start: Path | None = None) -> Path | None:
@@ -54,7 +56,9 @@ def find_maestro_root(start: Path | None = None) -> Path | None:
         current = current.parent
 
     # 2. OTAMAN_ROOT / MAESTRO_ROOT environment variable  # legacy: MAESTRO_ROOT env var
-    env_root = os.environ.get("OTAMAN_ROOT", os.environ.get("MAESTRO_ROOT", "")).strip()  # legacy: MAESTRO_ROOT env var
+    env_root = os.environ.get(
+        "OTAMAN_ROOT", os.environ.get("MAESTRO_ROOT", "")
+    ).strip()  # legacy: MAESTRO_ROOT env var
     if env_root:
         p = Path(env_root).resolve()
         if (p / "platform.yaml").exists() or (p / ".agents").is_dir():

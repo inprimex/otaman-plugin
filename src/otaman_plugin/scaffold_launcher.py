@@ -105,7 +105,9 @@ def render_launch_settings(opts: dict) -> str:
     mesh_host = opts["mesh_host"]
 
     # local_root: either provided maestro_root, or a sensible placeholder
-    local_root = maestro_root.replace("\\", "/") if maestro_root else f"C:/work/{name}/{name}-maestro"  # legacy: pre-rebrand reference
+    local_root = (
+        maestro_root.replace("\\", "/") if maestro_root else f"C:/work/{name}/{name}-maestro"
+    )  # legacy: pre-rebrand reference
     rroot = remote_root or f"/home/USER/{name}/{name}-maestro"  # legacy: pre-rebrand reference
 
     lines = [
@@ -156,7 +158,7 @@ def main(argv: list[str]) -> int:
 
     if target.exists() and any(target.iterdir()) and not opts["force"]:
         print(f"[!] Target folder is not empty: {target}", file=sys.stderr)
-        print(f"    Pass --force to overwrite, or choose a different path.", file=sys.stderr)
+        print("    Pass --force to overwrite, or choose a different path.", file=sys.stderr)
         return 1
 
     target.mkdir(parents=True, exist_ok=True)
@@ -176,16 +178,18 @@ def main(argv: list[str]) -> int:
             print(f"  [OK] Copied platform.yaml from {src}")
         else:
             print(f"  [!] {src} not found — skipping platform.yaml copy.")
-            print(f"      Copy it manually or .\\launch.ps1 will fetch from remote on first run.")
+            print("      Copy it manually or .\\launch.ps1 will fetch from remote on first run.")
 
     print(f"  [OK] Wrote {launch_ps1}")
     print(f"  [OK] Wrote {settings}")
     print()
     print("Next steps:")
     print(f"  1. cd {target}")
-    print(f"  2. Review launch-settings.yaml — fill in USER@HOST / USER@MESH-HOST / ssh_key as needed")
-    print(f"  3. .\\launch.ps1 -Setup       # interactive wizard to add/edit connections")
-    print(f"  4. .\\launch.ps1               # launch agents")
+    print(
+        "  2. Review launch-settings.yaml — fill in USER@HOST / USER@MESH-HOST / ssh_key as needed"
+    )
+    print("  3. .\\launch.ps1 -Setup       # interactive wizard to add/edit connections")
+    print("  4. .\\launch.ps1               # launch agents")
     return 0
 
 

@@ -42,7 +42,7 @@ class SecretRef:
     sources: list[dict[str, Any]]
 
     @classmethod
-    def from_config(cls, config: Any) -> "SecretRef":
+    def from_config(cls, config: Any) -> SecretRef:
         """Build from a YAML config value.
 
         Accepts:
@@ -105,7 +105,9 @@ class DotenvSource:
         # Prefer .otaman/secrets.env; fall back to .maestro/secrets.env  # legacy: .maestro/secrets.env supported
         dotenv_path = Path(maestro_root) / ".otaman" / "secrets.env"
         if not dotenv_path.is_file():
-            dotenv_path = Path(maestro_root) / ".maestro" / "secrets.env"  # legacy: .maestro/secrets.env path
+            dotenv_path = (
+                Path(maestro_root) / ".maestro" / "secrets.env"
+            )  # legacy: .maestro/secrets.env path
         if not dotenv_path.is_file():
             return None
         return _read_dotenv_value(dotenv_path, name)
@@ -121,7 +123,9 @@ class KeyringSource:
             import keyring  # type: ignore[import-not-found]
         except ImportError:
             return None
-        service = spec.get("service") or "maestro"  # legacy: maestro keyring service name as fallback
+        service = (
+            spec.get("service") or "maestro"
+        )  # legacy: maestro keyring service name as fallback
         account = spec.get("account") or spec.get("name")
         if not account:
             return None

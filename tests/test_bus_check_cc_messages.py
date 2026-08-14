@@ -14,12 +14,8 @@ After the 2.3 change, ``otaman_check`` returns CC copies in a new
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 import yaml
-
 
 from otaman_plugin.servers.bus_server import (  # noqa: E402
     _extract_cc_recipient_from_stem,
@@ -27,10 +23,10 @@ from otaman_plugin.servers.bus_server import (  # noqa: E402
     otaman_send,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper — workspace fixture with routing rules
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
@@ -93,14 +89,12 @@ def workspace(tmp_path, monkeypatch):
 # Unit tests — _extract_cc_recipient_from_stem
 # ---------------------------------------------------------------------------
 
+
 class TestExtractCcRecipientFromStem:
     def test_cc_copy_stem_returns_recipient(self):
         stem = "20260609T120000-runner-agent-to-human-cc-spec-agent-thing"
         # cc list is the disambiguator — agent names contain hyphens
-        assert (
-            _extract_cc_recipient_from_stem(stem, ["spec-agent", "cpo-agent"])
-            == "spec-agent"
-        )
+        assert _extract_cc_recipient_from_stem(stem, ["spec-agent", "cpo-agent"]) == "spec-agent"
 
     def test_primary_stem_returns_none(self):
         stem = "20260609T120000-runner-agent-to-human-thing"
@@ -110,10 +104,7 @@ class TestExtractCcRecipientFromStem:
         # The slug starts with a hyphen — without the cc list, naive regex
         # would greedily eat into the slug; the cc-list lookup avoids that.
         stem = "20260609T120000-runner-agent-to-human-cc-spec-agent-some-urgent-thing"
-        assert (
-            _extract_cc_recipient_from_stem(stem, ["spec-agent", "cpo-agent"])
-            == "spec-agent"
-        )
+        assert _extract_cc_recipient_from_stem(stem, ["spec-agent", "cpo-agent"]) == "spec-agent"
 
     def test_no_cc_list_returns_none(self):
         # Without the cc list as a name dictionary, the helper has no
@@ -131,6 +122,7 @@ class TestExtractCcRecipientFromStem:
 # Integration — fan-out + check
 # ---------------------------------------------------------------------------
 
+
 def _send_urgent_to_human(workspace) -> dict:
     return otaman_send.fn(
         cwd=str(workspace["sender"]),
@@ -146,9 +138,7 @@ class TestCcMessagesSplit:
         _send_urgent_to_human(workspace)
 
         # spec-agent checks their inbox
-        spec_view = otaman_check.fn(
-            cwd=str(workspace["spec"]), status_filter="pending"
-        )
+        spec_view = otaman_check.fn(cwd=str(workspace["spec"]), status_filter="pending")
         # CC copy is in cc_messages, not in messages
         assert len(spec_view["messages"]) == 0
         assert len(spec_view["cc_messages"]) == 1
@@ -171,9 +161,7 @@ class TestCcMessagesSplit:
     def test_other_agent_sees_no_cc_copies(self, workspace):
         _send_urgent_to_human(workspace)
 
-        other_view = otaman_check.fn(
-            cwd=str(workspace["other"]), status_filter="pending"
-        )
+        other_view = otaman_check.fn(cwd=str(workspace["other"]), status_filter="pending")
         # deploy-agent is not in the routing rules' cc lists; they see nothing
         assert other_view["messages"] == []
         assert other_view["cc_messages"] == []

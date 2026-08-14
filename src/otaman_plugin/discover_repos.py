@@ -83,9 +83,20 @@ PACKAGE_JSON_HINTS: dict[str, tuple[list[str], str]] = {
 }
 
 # Keywords in Python deps that suggest ML/data
-PYTHON_ML_HINTS = {"torch", "tensorflow", "keras", "sklearn", "scikit-learn",
-                    "pandas", "numpy", "xgboost", "lightgbm", "transformers",
-                    "mlflow", "dvc"}
+PYTHON_ML_HINTS = {
+    "torch",
+    "tensorflow",
+    "keras",
+    "sklearn",
+    "scikit-learn",
+    "pandas",
+    "numpy",
+    "xgboost",
+    "lightgbm",
+    "transformers",
+    "mlflow",
+    "dvc",
+}
 
 PYTHON_WEB_HINTS = {"django", "flask", "fastapi", "starlette", "sanic", "tornado"}
 
@@ -202,8 +213,11 @@ def detect_standards(repo_path: Path) -> dict[str, Any]:
 
     # Framework detection
     framework_signals = {
-        "next.config.js": "nextjs", "next.config.mjs": "nextjs", "next.config.ts": "nextjs",
-        "nuxt.config.ts": "nuxt", "nuxt.config.js": "nuxt",
+        "next.config.js": "nextjs",
+        "next.config.mjs": "nextjs",
+        "next.config.ts": "nextjs",
+        "nuxt.config.ts": "nuxt",
+        "nuxt.config.js": "nuxt",
         "svelte.config.js": "sveltekit",
         "astro.config.mjs": "astro",
         "remix.config.js": "remix",
@@ -270,11 +284,19 @@ def detect_standards(repo_path: Path) -> dict[str, Any]:
     # Testing
     testing: dict[str, Any] = {}
     test_signals = {
-        "jest.config.js": "jest", "jest.config.ts": "jest", "jest.config.mjs": "jest",
-        "vitest.config.js": "vitest", "vitest.config.ts": "vitest", "vitest.config.mjs": "vitest",
-        "playwright.config.ts": "playwright", "playwright.config.js": "playwright",
-        "cypress.config.js": "cypress", "cypress.config.ts": "cypress",
-        "pytest.ini": "pytest", "conftest.py": "pytest", "setup.cfg": "pytest",
+        "jest.config.js": "jest",
+        "jest.config.ts": "jest",
+        "jest.config.mjs": "jest",
+        "vitest.config.js": "vitest",
+        "vitest.config.ts": "vitest",
+        "vitest.config.mjs": "vitest",
+        "playwright.config.ts": "playwright",
+        "playwright.config.js": "playwright",
+        "cypress.config.js": "cypress",
+        "cypress.config.ts": "cypress",
+        "pytest.ini": "pytest",
+        "conftest.py": "pytest",
+        "setup.cfg": "pytest",
     }
     for signal_file, test_fw in test_signals.items():
         if (repo_path / signal_file).exists():
@@ -296,12 +318,18 @@ def detect_standards(repo_path: Path) -> dict[str, Any]:
     # Linting
     linting = []
     lint_signals = {
-        ".eslintrc": "eslint", ".eslintrc.js": "eslint", ".eslintrc.json": "eslint",
-        "eslint.config.js": "eslint", "eslint.config.mjs": "eslint",
-        ".prettierrc": "prettier", ".prettierrc.js": "prettier", "prettier.config.js": "prettier",
+        ".eslintrc": "eslint",
+        ".eslintrc.js": "eslint",
+        ".eslintrc.json": "eslint",
+        "eslint.config.js": "eslint",
+        "eslint.config.mjs": "eslint",
+        ".prettierrc": "prettier",
+        ".prettierrc.js": "prettier",
+        "prettier.config.js": "prettier",
         "biome.json": "biome",
         ".pylintrc": "pylint",
-        "ruff.toml": "ruff", ".ruff.toml": "ruff",
+        "ruff.toml": "ruff",
+        ".ruff.toml": "ruff",
     }
     for signal_file, linter in lint_signals.items():
         if (repo_path / signal_file).exists() and linter not in linting:
@@ -359,11 +387,20 @@ def _looks_like_spec_repo(repo_path: Path) -> bool:
 
     # Tier 2 — content-based: at least 2 subdirs with spec-like markdown files.
     spec_subdirs = 0
-    spec_file_names = {"spec.md", "change.md", "contracts.md", "design.md",
-                       "proposal.md", "requirements.md", "api.md"}
+    spec_file_names = {
+        "spec.md",
+        "change.md",
+        "contracts.md",
+        "design.md",
+        "proposal.md",
+        "requirements.md",
+        "api.md",
+    }
     for entry in repo_path.iterdir():
         if entry.is_dir() and not entry.name.startswith("."):
-            md_files = {f.name.lower() for f in entry.iterdir() if f.is_file() and f.suffix == ".md"}
+            md_files = {
+                f.name.lower() for f in entry.iterdir() if f.is_file() and f.suffix == ".md"
+            }
             if md_files & spec_file_names:
                 spec_subdirs += 1
     return spec_subdirs >= 2
@@ -449,11 +486,25 @@ def _looks_like_project(path: Path) -> bool:
     """
     # Strong signals: project manifests or source directories
     project_indicators = [
-        "package.json", "pyproject.toml", "requirements.txt", "setup.py",
-        "Pipfile", "go.mod", "Cargo.toml", "pom.xml", "build.gradle",
-        "composer.json", "Gemfile", "pubspec.yaml",
-        "Makefile", "CMakeLists.txt", "Dockerfile", "docker-compose.yml",
-        "docker-compose.yaml", ".gitignore", ".env.example",
+        "package.json",
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.py",
+        "Pipfile",
+        "go.mod",
+        "Cargo.toml",
+        "pom.xml",
+        "build.gradle",
+        "composer.json",
+        "Gemfile",
+        "pubspec.yaml",
+        "Makefile",
+        "CMakeLists.txt",
+        "Dockerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        ".gitignore",
+        ".env.example",
     ]
     for indicator in project_indicators:
         if (path / indicator).exists():
@@ -506,9 +557,11 @@ def scan_directory(root: Path) -> dict[str, Any]:
         #   1. Has platform.yaml + .agents/ (fully-init project — original heuristic)
         #   2. Name ends with -maestro or -otaman (just-created shell, no platform.yaml yet)  # legacy: pre-rebrand reference
         is_maestro_folder = (entry / "platform.yaml").exists() and (entry / ".agents").is_dir()
-        is_otaman_named = entry.name.endswith("-maestro") or entry.name.endswith("-otaman")  # legacy: pre-rebrand reference
+        is_otaman_named = entry.name.endswith("-maestro") or entry.name.endswith(
+            "-otaman"
+        )  # legacy: pre-rebrand reference
         if is_maestro_folder or is_otaman_named:
-            _progress(f"    (skipped — maestro/otaman folder)")  # legacy: pre-rebrand reference
+            _progress("    (skipped — maestro/otaman folder)")  # legacy: pre-rebrand reference
             continue
 
         git_dir = entry / ".git"
@@ -543,7 +596,7 @@ def scan_directory(root: Path) -> dict[str, Any]:
         display_name = name
         for prefix in ("repo-", "service-", "svc-", "app-"):
             if display_name.startswith(prefix):
-                display_name = display_name[len(prefix):]
+                display_name = display_name[len(prefix) :]
                 break
 
         tech, suggested_owner = detect_tech_stack(repo_path)
@@ -592,7 +645,9 @@ def scan_directory(root: Path) -> dict[str, Any]:
             try:
                 r = subprocess.run(
                     ["git", "-C", str(repo_path), "remote", "get-url", "origin"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 if r.returncode == 0:
                     remote_url = r.stdout.strip()
@@ -686,7 +741,9 @@ def _relative_path(from_dir: Path, to_dir: Path) -> str:
         return to_dir.resolve().as_posix()
 
 
-def generate_draft_yaml(root: Path, report: dict[str, Any], maestro_dir: Path | None = None) -> Path:
+def generate_draft_yaml(
+    root: Path, report: dict[str, Any], maestro_dir: Path | None = None
+) -> Path:
     """Generate platform.yaml.draft from discovery report.
 
     Args:
@@ -803,14 +860,20 @@ def generate_draft_yaml(root: Path, report: dict[str, Any], maestro_dir: Path | 
     with open(draft_path, "w", encoding="utf-8") as f:
         f.write("# Maestro Platform Configuration (DRAFT)\n")  # legacy: pre-rebrand reference
         f.write("# Generated by /otaman:scan — review and adjust before running /otaman:init\n")
-        f.write("# Repo paths are relative to this maestro folder.\n")  # legacy: pre-rebrand reference
-        f.write("# Pay special attention to 'owner' fields — these are suggestions based on tech stack detection.\n\n")
+        f.write(
+            "# Repo paths are relative to this maestro folder.\n"
+        )  # legacy: pre-rebrand reference
+        f.write(
+            "# Pay special attention to 'owner' fields — these are suggestions based on tech stack detection.\n\n"
+        )
         yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
     return draft_path
 
 
-def update_existing_config(root: Path, report: dict[str, Any], *, dry_run: bool = False) -> tuple[Path, dict[str, Any]]:
+def update_existing_config(
+    root: Path, report: dict[str, Any], *, dry_run: bool = False
+) -> tuple[Path, dict[str, Any]]:
     """Merge discovery results into an existing platform.yaml.
 
     Preserves:
@@ -830,6 +893,7 @@ def update_existing_config(root: Path, report: dict[str, Any], *, dry_run: bool 
     except yaml.YAMLError as _e:
         # Malformed YAML — preserve users file as .bak, surface a clear error
         import shutil
+
         bak = config_path.with_suffix(config_path.suffix + ".bak")
         shutil.copy2(config_path, bak)
         print(
@@ -980,11 +1044,14 @@ def main() -> int:
     if update_mode:
         config_path = root / "platform.yaml"
         if not config_path.exists():
-            print(f"ERROR: --update requires existing platform.yaml at {config_path}", file=sys.stderr)
+            print(
+                f"ERROR: --update requires existing platform.yaml at {config_path}", file=sys.stderr
+            )
             return 2
         if dry_run:
             # Don't mutate; report what would change
             from copy import deepcopy
+
             _, changes = update_existing_config(root, deepcopy(report), dry_run=True)
             report["update_path"] = str(root / "platform.yaml.updated")
             report["changes"] = changes

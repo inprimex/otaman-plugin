@@ -57,15 +57,11 @@ def workspace(tmp_path, monkeypatch):
 
     repo_a = tmp_path / "repo-a"
     repo_a.mkdir()
-    (repo_a / ".otaman").write_text(
-        "otaman_root: ../my-otaman\nagent: agent-a\n", encoding="utf-8"
-    )
+    (repo_a / ".otaman").write_text("otaman_root: ../my-otaman\nagent: agent-a\n", encoding="utf-8")
 
     repo_b = tmp_path / "repo-b"
     repo_b.mkdir()
-    (repo_b / ".otaman").write_text(
-        "otaman_root: ../my-otaman\nagent: agent-b\n", encoding="utf-8"
-    )
+    (repo_b / ".otaman").write_text("otaman_root: ../my-otaman\nagent: agent-b\n", encoding="utf-8")
 
     repo_no_marker = tmp_path / "repo-no-marker"
     repo_no_marker.mkdir()
@@ -103,9 +99,7 @@ class TestPerRepoMarkerResolution:
     def test_repo_without_marker_resolves_none(self, workspace):
         # CLAUDE.md exists but carries no .otaman marker anywhere up the
         # tree — unresolved, not a guess from current-agent.
-        identity = _get_agent_identity(
-            workspace["otaman"], str(workspace["repo_no_marker"])
-        )
+        identity = _get_agent_identity(workspace["otaman"], str(workspace["repo_no_marker"]))
         assert identity is None
 
 

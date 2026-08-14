@@ -56,9 +56,7 @@ def test_server_files_live_inside_package():
         "bus_server.py reintroduced at legacy servers/ location; the "
         "ce-org-agent-bootstrap restructure removed it intentionally"
     )
-    assert not legacy_est.exists(), (
-        "estimation_server.py reintroduced at legacy servers/ location"
-    )
+    assert not legacy_est.exists(), "estimation_server.py reintroduced at legacy servers/ location"
 
 
 def test_servers_package_has_init():

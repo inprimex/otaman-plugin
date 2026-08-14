@@ -4,12 +4,10 @@ and CC fan-out in ``otaman_send`` (bus-cc-routing tasks 1.1-1.6).
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
-
 
 from otaman_plugin.servers.bus_server import (  # noqa: E402
     _compute_effective_cc,
@@ -20,10 +18,10 @@ from otaman_plugin.servers.bus_server import (  # noqa: E402
     otaman_send,
 )
 
-
 # ---------------------------------------------------------------------------
 # Task 1.1 — cc field parsing
 # ---------------------------------------------------------------------------
+
 
 class TestParseCcField:
     def test_inline_list(self):
@@ -50,6 +48,7 @@ class TestParseCcField:
 # ---------------------------------------------------------------------------
 # Task 1.3 — routing rule evaluator
 # ---------------------------------------------------------------------------
+
 
 class TestEvaluateRoutingRules:
     def test_no_rules_returns_empty(self):
@@ -117,6 +116,7 @@ class TestEvaluateRoutingRules:
 # Task 1.3 cont. — primary recipient excluded from CC (via _compute_effective_cc)
 # ---------------------------------------------------------------------------
 
+
 class TestComputeEffectiveCc:
     def test_primary_excluded_even_when_in_rule(self):
         rules = [{"when": {"to": "human"}, "cc": ["spec-agent", "human"]}]
@@ -125,16 +125,12 @@ class TestComputeEffectiveCc:
         assert "spec-agent" in result
 
     def test_primary_excluded_when_in_explicit_cc(self):
-        result = _compute_effective_cc(
-            "human", "normal", ["spec-agent", "human"], []
-        )
+        result = _compute_effective_cc("human", "normal", ["spec-agent", "human"], [])
         assert result == ["spec-agent"]
 
     def test_explicit_and_rule_unioned_and_deduped(self):
         rules = [{"when": {"to": "human"}, "cc": ["spec-agent", "cpo-agent"]}]
-        result = _compute_effective_cc(
-            "human", "normal", ["spec-agent", "deploy-agent"], rules
-        )
+        result = _compute_effective_cc("human", "normal", ["spec-agent", "deploy-agent"], rules)
         assert sorted(result) == ["cpo-agent", "deploy-agent", "spec-agent"]
         # Explicit recipients are listed first so the on-disk shape is
         # deterministic — explicit ordering, then rule-derived in sorted order
@@ -148,6 +144,7 @@ class TestComputeEffectiveCc:
 # ---------------------------------------------------------------------------
 # Task 1.4 — x-cc injection
 # ---------------------------------------------------------------------------
+
 
 class TestInjectXCc:
     def test_x_cc_appended_to_frontmatter(self):
@@ -171,6 +168,7 @@ class TestInjectXCc:
 # ---------------------------------------------------------------------------
 # Task 1.6 — integration test: full otaman_send fan-out path
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
@@ -252,7 +250,7 @@ class TestIntegrationFanOut:
     def test_no_routing_rule_match_no_cc_copies(self, workspace):
         result = otaman_send.fn(
             cwd=str(workspace["repo"]),
-            to="cli-agent",     # rules target "human" only — no match here
+            to="cli-agent",  # rules target "human" only — no match here
             subject="hello",
             body="hi",
             priority="normal",
@@ -316,9 +314,7 @@ class TestIntegrationFanOut:
         (otaman / "platform.yaml").write_text(yaml.dump(platform_data), encoding="utf-8")
         repo = tmp_path / "repo"
         repo.mkdir()
-        (repo / ".otaman").write_text(
-            "otaman_root: ../om\nagent: runner-agent\n", encoding="utf-8"
-        )
+        (repo / ".otaman").write_text("otaman_root: ../om\nagent: runner-agent\n", encoding="utf-8")
 
         result = otaman_send.fn(
             cwd=str(repo),

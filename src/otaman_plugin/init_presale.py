@@ -47,9 +47,16 @@ def create_presale_dir(
                 f"mv {root}/.maestro-presale {root}/.otaman-presale",  # legacy: migration command
                 file=sys.stderr,
             )
-        print("Use --force to reinitialize (project-meta.yaml will NOT be overwritten).", file=sys.stderr)
+        print(
+            "Use --force to reinitialize (project-meta.yaml will NOT be overwritten).",
+            file=sys.stderr,
+        )
         # Still create missing subdirectories — idempotent re-run behaviour.
-        for d in [presale / "estimation", presale / "architecture", presale / "discovery" / "decisions"]:
+        for d in [
+            presale / "estimation",
+            presale / "architecture",
+            presale / "discovery" / "decisions",
+        ]:
             if not d.exists():
                 d.mkdir(parents=True, exist_ok=True)
                 created.append(str(d.relative_to(root)))
@@ -119,16 +126,31 @@ def main() -> int:
             "Usage: init-presale.py <project-code> <project-name> <domain> [--client CLIENT]",
             file=sys.stderr,
         )
-        print("  domain: healthcare | fintech | marketplace | ml-ai | saas | ecommerce | iot | general", file=sys.stderr)
+        print(
+            "  domain: healthcare | fintech | marketplace | ml-ai | saas | ecommerce | iot | general",
+            file=sys.stderr,
+        )
         return 2
 
     project_code = args[0]
     project_name = args[1]
     domain = args[2]
 
-    valid_domains = ["healthcare", "fintech", "marketplace", "ml-ai", "saas", "ecommerce", "iot", "general"]
+    valid_domains = [
+        "healthcare",
+        "fintech",
+        "marketplace",
+        "ml-ai",
+        "saas",
+        "ecommerce",
+        "iot",
+        "general",
+    ]
     if domain not in valid_domains:
-        print(f"ERROR: Invalid domain '{domain}'. Must be one of: {', '.join(valid_domains)}", file=sys.stderr)
+        print(
+            f"ERROR: Invalid domain '{domain}'. Must be one of: {', '.join(valid_domains)}",
+            file=sys.stderr,
+        )
         return 2
 
     client = None

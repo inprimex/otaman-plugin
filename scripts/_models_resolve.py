@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 # Human-readable tier names → Claude Code CLI model aliases.
 # Claude Code's /model accepts these aliases, and Anthropic's API
 # accepts the same names for current models. These ARE stable: what
@@ -38,7 +37,7 @@ VALID_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max", "inher
 class ModelResolution:
     """Result of resolving (model, effort) for a session, with provenance."""
 
-    model: str = ""        # empty = not set; caller should leave env unset
+    model: str = ""  # empty = not set; caller should leave env unset
     effort: str = ""
     model_source: str = ""  # "cli" | "by_repo" | "by_agent" | "default" | ""
     effort_source: str = ""
@@ -117,7 +116,9 @@ def _merge_models(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, An
     return out
 
 
-def _load_models_block(maestro_root_or_file: Path) -> dict[str, Any]:  # legacy: maestro_root param name
+def _load_models_block(
+    maestro_root_or_file: Path,
+) -> dict[str, Any]:  # legacy: maestro_root param name
     """Load merged models config from the otaman root or a single file.
 
     If ``maestro_root_or_file`` is a directory, reads both:
@@ -133,12 +134,8 @@ def _load_models_block(maestro_root_or_file: Path) -> dict[str, Any]:  # legacy:
         return _read_models_from_yaml(maestro_root_or_file)
 
     # Directory case: merge platform.yaml (base) + launch-settings.yaml (overlay)
-    platform_models = _read_models_from_yaml(
-        maestro_root_or_file / "platform.yaml"
-    )
-    launch_models = _read_models_from_yaml(
-        maestro_root_or_file / "launch-settings.yaml"
-    )
+    platform_models = _read_models_from_yaml(maestro_root_or_file / "platform.yaml")
+    launch_models = _read_models_from_yaml(maestro_root_or_file / "launch-settings.yaml")
     return _merge_models(platform_models, launch_models)
 
 
@@ -265,8 +262,10 @@ def explain_chain(
     """
     resolved = resolve_tier(
         maestro_root,
-        repo=repo, agent=agent,
-        cli_model=cli_model, cli_effort=cli_effort,
+        repo=repo,
+        agent=agent,
+        cli_model=cli_model,
+        cli_effort=cli_effort,
     )
     platform_yaml = maestro_root / "platform.yaml"
     # Resolve from both files (same as resolve_tier) so the explanation
@@ -287,37 +286,53 @@ def explain_chain(
         cli_desc.append(f"--model={cli_model}")
     if cli_effort:
         cli_desc.append(f"--effort={cli_effort}")
-    lines.append(_line(
-        1, "CLI override",
-        " ".join(cli_desc) if cli_desc else "",
-        resolved.model_source == "cli" or resolved.effort_source == "cli",
-    ))
+    lines.append(
+        _line(
+            1,
+            "CLI override",
+            " ".join(cli_desc) if cli_desc else "",
+            resolved.model_source == "cli" or resolved.effort_source == "cli",
+        )
+    )
 
     # 2. by_repo
     by_repo_cfg = (models.get("by_repo") or {}).get(repo or "") or {}
-    lines.append(_line(
-        2, f"by_repo[{repo or '-'}]",
-        f"model={by_repo_cfg.get('model', '')} effort={by_repo_cfg.get('effort', '')}" if by_repo_cfg else "",
-        resolved.model_source == "by_repo" or resolved.effort_source == "by_repo",
-    ))
+    lines.append(
+        _line(
+            2,
+            f"by_repo[{repo or '-'}]",
+            f"model={by_repo_cfg.get('model', '')} effort={by_repo_cfg.get('effort', '')}"
+            if by_repo_cfg
+            else "",
+            resolved.model_source == "by_repo" or resolved.effort_source == "by_repo",
+        )
+    )
 
     # 3. by_agent
     resolved_agent = agent
     if resolved_agent is None and repo:
         resolved_agent = _repos_to_owner(platform_yaml).get(repo)
     by_agent_cfg = (models.get("by_agent") or {}).get(resolved_agent or "") or {}
-    lines.append(_line(
-        3, f"by_agent[{resolved_agent or '-'}]",
-        f"model={by_agent_cfg.get('model', '')} effort={by_agent_cfg.get('effort', '')}" if by_agent_cfg else "",
-        resolved.model_source == "by_agent" or resolved.effort_source == "by_agent",
-    ))
+    lines.append(
+        _line(
+            3,
+            f"by_agent[{resolved_agent or '-'}]",
+            f"model={by_agent_cfg.get('model', '')} effort={by_agent_cfg.get('effort', '')}"
+            if by_agent_cfg
+            else "",
+            resolved.model_source == "by_agent" or resolved.effort_source == "by_agent",
+        )
+    )
 
     # 4. default
-    lines.append(_line(
-        4, "project default",
-        f"model={models.get('default', '')} effort={models.get('default_effort', '')}",
-        resolved.model_source == "default" or resolved.effort_source == "default",
-    ))
+    lines.append(
+        _line(
+            4,
+            "project default",
+            f"model={models.get('default', '')} effort={models.get('default_effort', '')}",
+            resolved.model_source == "default" or resolved.effort_source == "default",
+        )
+    )
 
     lines.append("")
     lines.append(

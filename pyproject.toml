@@ -41,3 +41,35 @@ packages = ["src/otaman_plugin"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "../otaman-core/src"]
+
+# ce-lint-standard baseline (openspec). Repos MAY add lint categories,
+# MUST NOT remove baseline ones. Suppress per-line (# noqa) or via
+# per-file-ignores, never by dropping a category.
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# archive/ is frozen reference material — no lint/format churn there
+exclude = ["archive"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# E501 only, and only where long lines are content, not code:
+# - emitted CLAUDE.md/template strings (rewrapping changes generated output)
+# - `# legacy:` audit annotations that must stay on the same line as the
+#   legacy reference they allowlist (audit-maestro-refs.sh is line-based)
+# - embedded PowerShell scripts inside test string literals
+"src/otaman_plugin/generate_agent_config.py" = ["E501"]
+"src/otaman_plugin/servers/bus_server.py" = ["E501"]
+"src/otaman_plugin/servers/estimation_server.py" = ["E501"]
+"src/otaman_plugin/scaffold_launcher.py" = ["E501"]
+"src/otaman_plugin/init_presale.py" = ["E501"]
+"src/otaman_plugin/discover_repos.py" = ["E501"]
+"src/otaman_plugin/clone_project.py" = ["E501"]
+"scripts/_secrets.py" = ["E501"]
+"scripts/_resolve.py" = ["E501"]
+"scripts/_models_resolve.py" = ["E501"]
+"tests/test_runner_endpoint_discovery.py" = ["E501"]
+"tests/test_f072_attach_no_eval.py" = ["E501"]
+"tests/test_discover.py" = ["E501"]

@@ -10,16 +10,18 @@ otaman_send must now categorically refuse these types regardless of
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from otaman_plugin.servers.bus_server import otaman_send
 
 _send = otaman_send.fn
 
-PRIVILEGED_TYPES = ("human-decision", "spec-change-approved", "spec-change-rejected", "emergency-halt")
+PRIVILEGED_TYPES = (
+    "human-decision",
+    "spec-change-approved",
+    "spec-change-rejected",
+    "emergency-halt",
+)
 
 
 @pytest.fixture
@@ -29,7 +31,7 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     root = tmp_path / "proj"
     root.mkdir()
-    (root / "platform.yaml").write_text("project: test\nversion: \"1.0\"\n", encoding="utf-8")
+    (root / "platform.yaml").write_text('project: test\nversion: "1.0"\n', encoding="utf-8")
     (root / ".agents").mkdir()
     (root / ".otaman").write_text("agent: sender-agent\n", encoding="utf-8")
     return root
@@ -62,7 +64,7 @@ class TestPrivilegedTypesRefused:
         monkeypatch.setenv("HOME", str(tmp_path))
         root = tmp_path / "proj-no-identity"
         root.mkdir()
-        (root / "platform.yaml").write_text("project: test\nversion: \"1.0\"\n", encoding="utf-8")
+        (root / "platform.yaml").write_text('project: test\nversion: "1.0"\n', encoding="utf-8")
         (root / ".agents").mkdir()
         result = _send(cwd=str(root), to="human", subject="x", body="y", msg_type="emergency-halt")
         assert "error" in result
@@ -71,7 +73,9 @@ class TestPrivilegedTypesRefused:
 
 class TestNonPrivilegedTypesStillWork:
     def test_info_type_still_sends(self, repo):
-        result = _send(cwd=str(repo), to="human", subject="normal update", body="body", msg_type="info")
+        result = _send(
+            cwd=str(repo), to="human", subject="normal update", body="body", msg_type="info"
+        )
         assert "error" not in result
         bus = repo / ".agents" / "bus" / "active"
         files = list(bus.glob("*.md"))
@@ -81,5 +85,7 @@ class TestNonPrivilegedTypesStillWork:
         assert "from: sender-agent" in content
 
     def test_task_complete_type_still_sends(self, repo):
-        result = _send(cwd=str(repo), to="human", subject="done", body="body", msg_type="task-complete")
+        result = _send(
+            cwd=str(repo), to="human", subject="done", body="body", msg_type="task-complete"
+        )
         assert "error" not in result

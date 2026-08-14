@@ -32,19 +32,20 @@ from otaman_plugin.servers.bus_server import (
     otaman_send,
 )
 
-
 # ---------------------------------------------------------------------------
 # Task 1.2 (a)-(d) — pure evaluator tests, no filesystem
 # ---------------------------------------------------------------------------
+
 
 class TestTypeAwareRoutingEvaluator:
     def test_a_type_only_rule_fires_for_matching_type(self):
         rules = [
             {"when": {"type": "outcome-proposal"}, "cc": ["cofounder-agent", "cpo-agent"]},
         ]
-        assert evaluate_routing_rules(
-            rules, "human", "normal", "outcome-proposal"
-        ) == {"cofounder-agent", "cpo-agent"}
+        assert evaluate_routing_rules(rules, "human", "normal", "outcome-proposal") == {
+            "cofounder-agent",
+            "cpo-agent",
+        }
 
     def test_b_type_only_rule_does_not_fire_for_non_matching_type(self):
         rules = [
@@ -62,13 +63,11 @@ class TestTypeAwareRoutingEvaluator:
             },
         ]
         # Both match
-        assert evaluate_routing_rules(
-            rules, "human", "high", "outcome-proposal"
-        ) == {"cofounder-agent"}
+        assert evaluate_routing_rules(rules, "human", "high", "outcome-proposal") == {
+            "cofounder-agent"
+        }
         # Type matches but priority doesn't
-        assert evaluate_routing_rules(
-            rules, "human", "normal", "outcome-proposal"
-        ) == set()
+        assert evaluate_routing_rules(rules, "human", "normal", "outcome-proposal") == set()
         # Priority matches but type doesn't
         assert evaluate_routing_rules(rules, "human", "high", "info") == set()
 
@@ -87,9 +86,10 @@ class TestTypeAwareRoutingEvaluator:
             "cpo-agent",
         }
         # And: passing msg_type alongside still doesn't break legacy rules
-        assert evaluate_routing_rules(
-            rules, "human", "high", "outcome-proposal"
-        ) == {"spec-agent", "cpo-agent"}
+        assert evaluate_routing_rules(rules, "human", "high", "outcome-proposal") == {
+            "spec-agent",
+            "cpo-agent",
+        }
 
     def test_type_list_or_semantics(self):
         # Mirrors the existing priority-list shape — list form means OR
@@ -99,18 +99,17 @@ class TestTypeAwareRoutingEvaluator:
                 "cc": ["cofounder-agent"],
             },
         ]
-        assert evaluate_routing_rules(
-            rules, "human", "normal", "outcome-proposal"
-        ) == {"cofounder-agent"}
-        assert evaluate_routing_rules(
-            rules, "human", "normal", "proposal"
-        ) == {"cofounder-agent"}
+        assert evaluate_routing_rules(rules, "human", "normal", "outcome-proposal") == {
+            "cofounder-agent"
+        }
+        assert evaluate_routing_rules(rules, "human", "normal", "proposal") == {"cofounder-agent"}
         assert evaluate_routing_rules(rules, "human", "normal", "info") == set()
 
 
 # ---------------------------------------------------------------------------
 # Task 1.2 (e)-(f) — full otaman_send round-trip
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
@@ -157,9 +156,7 @@ def _read_msg(path: Path) -> dict[str, str]:
 
 
 class TestTypeRuleFanOut:
-    def test_e_type_rule_with_cc_list_writes_copies_to_all_recipients(
-        self, workspace
-    ):
+    def test_e_type_rule_with_cc_list_writes_copies_to_all_recipients(self, workspace):
         result = otaman_send.fn(
             cwd=str(workspace["repo"]),
             to="human",
@@ -225,15 +222,9 @@ class TestTypeRuleFanOut:
         # Unique cc set: cofounder-agent + cpo-agent (rule 1) + spec-agent
         # (rule 2, to-based) + auditor-agent (rule 3). cofounder-agent
         # appears in both rule 1 and rule 3 — must produce exactly one copy.
-        cc_files = [f for f in files if "-cc-" in f.name]
-        recipients = [
-            f.name.split("-cc-")[1].rsplit("-", 1)[0]  # strip slug suffix
-            for f in cc_files
-        ]
-        # The slug-suffix strip above leaves agent-name-prefix tokens; what
-        # we really care about is uniqueness. Easier: each file's
-        # frontmatter `to:` is the primary, so the disambiguating signal is
-        # the filename containing `-cc-<agent>-`. Count occurrences:
+        # Each file's frontmatter `to:` is the primary, so the
+        # disambiguating signal is the filename containing `-cc-<agent>-`.
+        # Count occurrences:
         for agent in ("cofounder-agent", "cpo-agent", "spec-agent", "auditor-agent"):
             n = sum(1 for f in files if f"-cc-{agent}-" in f.name)
             assert n == 1, f"{agent} got {n} copies, expected exactly 1"
@@ -243,6 +234,7 @@ class TestTypeRuleFanOut:
 # ---------------------------------------------------------------------------
 # Task 5.1 — integration test: full flow
 # ---------------------------------------------------------------------------
+
 
 class TestOutcomeProposalIntegration:
     def test_full_flow_outcome_proposal_fan_out(self, workspace):
@@ -277,9 +269,7 @@ class TestOutcomeProposalIntegration:
         assert any("-cc-cofounder-agent-" in f.name for f in files)
         assert any("-cc-cpo-agent-" in f.name for f in files)
 
-    def test_outcome_proposal_does_not_fan_out_when_no_rule(
-        self, tmp_path, monkeypatch
-    ):
+    def test_outcome_proposal_does_not_fan_out_when_no_rule(self, tmp_path, monkeypatch):
         """A workspace without the seeded rule emits only the primary —
         regression guard against accidental fan-out from a hardcoded path.
         """
@@ -315,6 +305,7 @@ class TestOutcomeProposalIntegration:
 # Cross-check — pure _compute_effective_cc behavior with msg_type
 # ---------------------------------------------------------------------------
 
+
 class TestComputeEffectiveCcWithType:
     def test_msg_type_plumbed_through(self):
         rules = [
@@ -322,9 +313,7 @@ class TestComputeEffectiveCcWithType:
             {"when": {"to": "human"}, "cc": ["spec-agent"]},
         ]
         # outcome-proposal: both rules fire
-        result = _compute_effective_cc(
-            "human", "normal", None, rules, msg_type="outcome-proposal"
-        )
+        result = _compute_effective_cc("human", "normal", None, rules, msg_type="outcome-proposal")
         assert set(result) == {"cofounder-agent", "spec-agent"}
         # info: only the to-based rule fires
         result = _compute_effective_cc("human", "normal", None, rules, msg_type="info")

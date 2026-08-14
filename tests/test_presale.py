@@ -1,9 +1,7 @@
 """Tests for pre-sale infrastructure — init-presale.py, schemas, component library."""
 
 import importlib
-import json
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -19,6 +17,7 @@ ASSETS = Path(__file__).parent.parent / "assets"
 # ---------------------------------------------------------------------------
 # init-presale.py tests
 # ---------------------------------------------------------------------------
+
 
 class TestInitPresale:
     def test_creates_directory_structure(self, tmp_path):
@@ -48,9 +47,7 @@ class TestInitPresale:
         assert meta["phase_history"][0]["completed"] is None
 
     def test_creates_empty_registers(self, tmp_path):
-        init_presale.create_presale_dir(
-            tmp_path, "TEST-EST-260327", "Test", "general"
-        )
+        init_presale.create_presale_dir(tmp_path, "TEST-EST-260327", "Test", "general")
         assumptions = yaml.safe_load(
             (tmp_path / ".otaman-presale" / "assumptions.yaml").read_text(encoding="utf-8")
         )
@@ -61,9 +58,7 @@ class TestInitPresale:
         assert risks["risks"] == []
 
     def test_idempotent_no_overwrite(self, tmp_path):
-        init_presale.create_presale_dir(
-            tmp_path, "TEST-EST-260327", "Test", "general"
-        )
+        init_presale.create_presale_dir(tmp_path, "TEST-EST-260327", "Test", "general")
         # Modify meta
         meta_path = tmp_path / ".otaman-presale" / "project-meta.yaml"
         meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
@@ -72,17 +67,13 @@ class TestInitPresale:
             yaml.dump(meta, f)
 
         # Re-run — should not overwrite
-        created = init_presale.create_presale_dir(
-            tmp_path, "NEW-CODE", "New Name", "fintech"
-        )
+        init_presale.create_presale_dir(tmp_path, "NEW-CODE", "New Name", "fintech")
         meta_after = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
         assert meta_after["project_code"] == "TEST-EST-260327"  # NOT overwritten
         assert meta_after["custom_field"] == "should survive"
 
     def test_client_optional(self, tmp_path):
-        init_presale.create_presale_dir(
-            tmp_path, "TEST-EST-260327", "Test", "general"
-        )
+        init_presale.create_presale_dir(tmp_path, "TEST-EST-260327", "Test", "general")
         meta = yaml.safe_load(
             (tmp_path / ".otaman-presale" / "project-meta.yaml").read_text(encoding="utf-8")
         )
@@ -92,6 +83,7 @@ class TestInitPresale:
 # ---------------------------------------------------------------------------
 # Component library tests
 # ---------------------------------------------------------------------------
+
 
 class TestComponentLibrary:
     @pytest.fixture
@@ -125,6 +117,7 @@ class TestComponentLibrary:
 # Estimation benchmarks tests
 # ---------------------------------------------------------------------------
 
+
 class TestEstimationBenchmarks:
     @pytest.fixture
     def benchmarks(self):
@@ -145,6 +138,7 @@ class TestEstimationBenchmarks:
 # ---------------------------------------------------------------------------
 # Presale schema tests
 # ---------------------------------------------------------------------------
+
 
 class TestPresaleSchema:
     @pytest.fixture
@@ -172,10 +166,13 @@ class TestPresaleSchema:
 # Domain expert tests
 # ---------------------------------------------------------------------------
 
+
 class TestDomainExperts:
     EXPERTS_DIR = Path(__file__).parent.parent / "references" / "domain-experts"
 
-    @pytest.fixture(params=["healthcare", "fintech", "marketplace", "ml-ai", "saas", "ecommerce", "iot"])
+    @pytest.fixture(
+        params=["healthcare", "fintech", "marketplace", "ml-ai", "saas", "ecommerce", "iot"]
+    )
     def expert_content(self, request):
         path = self.EXPERTS_DIR / f"{request.param}.md"
         assert path.exists(), f"Missing domain expert: {request.param}"
@@ -183,5 +180,10 @@ class TestDomainExperts:
 
     def test_has_required_sections(self, expert_content):
         domain, content = expert_content
-        for section in ["Requirements Checklist", "Compliance Frameworks", "Estimation Adjustments", "Risk Patterns"]:
+        for section in [
+            "Requirements Checklist",
+            "Compliance Frameworks",
+            "Estimation Adjustments",
+            "Risk Patterns",
+        ]:
             assert section in content, f"{domain} expert missing section: {section}"

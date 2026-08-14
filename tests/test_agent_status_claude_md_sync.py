@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 GENERATOR = REPO_ROOT / "src" / "otaman_plugin" / "generate_agent_config.py"

@@ -28,7 +28,6 @@ from otaman_plugin.skill_packs import (
     resolve_pack_root,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture — a temp otaman-meta layout with a fixture tech-startup pack
 # ---------------------------------------------------------------------------
@@ -110,6 +109,7 @@ def _platform(
 # Pack registry + manifest reader (tasks 2.1 + manifest loader)
 # ---------------------------------------------------------------------------
 
+
 class TestPackRegistry:
     def test_tech_startup_pack_is_registered(self):
         assert "tech-startup" in KNOWN_PACKS
@@ -130,6 +130,7 @@ class TestPackRegistry:
 # ---------------------------------------------------------------------------
 # resolve_active_skills — the four task 2.5 cases
 # ---------------------------------------------------------------------------
+
 
 class TestResolveActiveSkills:
     # (a) tech-startup profile loads 8 public skills
@@ -253,5 +254,5 @@ class TestEdgeCases:
 class TestSkillRef:
     def test_skillref_is_frozen_dataclass(self):
         ref = SkillRef(id="x", file=Path("/tmp/x.md"), access="public")
-        with pytest.raises(Exception):
+        with pytest.raises(AttributeError):  # FrozenInstanceError subclasses AttributeError
             ref.id = "y"  # type: ignore[misc]

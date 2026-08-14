@@ -37,7 +37,7 @@ def project(tmp_path):
     root = tmp_path / "proj"
     (root / ".agents" / "blocked").mkdir(parents=True)
     (root / "platform.yaml").write_text(
-        "project: test\nversion: \"1.0\"\nspecs:\n  path: ../specsrepo\n  format: openspec\n",
+        'project: test\nversion: "1.0"\nspecs:\n  path: ../specsrepo\n  format: openspec\n',
         encoding="utf-8",
     )
     # Bare line ("." → maestro_root, for find_maestro_root) plus an
@@ -73,7 +73,9 @@ def run_write(project, target: Path, path=None) -> tuple[int, dict | None]:
 
 
 def run_bash(project, command: str, path=None) -> tuple[int, dict | None]:
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "command": command})
+    payload = json.dumps(
+        {"tool_name": "Bash", "tool_input": {"command": command}, "command": command}
+    )
     return _run(project, payload, path=path)
 
 
@@ -112,16 +114,26 @@ def assert_denied(rc: int, parsed: dict | None) -> str:
 
 class TestAllow:
     def test_own_repo_write_allowed(self, project, otaman_stub_bin):
-        assert_allowed(*run_write(project, project["base"] / "myrepo" / "src" / "foo.py", path=otaman_stub_bin))
+        assert_allowed(
+            *run_write(project, project["base"] / "myrepo" / "src" / "foo.py", path=otaman_stub_bin)
+        )
 
     def test_coordination_file_allowed(self, project, otaman_stub_bin):
         assert_allowed(
-            *run_write(project, project["root"] / ".agents" / "blocked" / f"{AGENT}.md", path=otaman_stub_bin)
+            *run_write(
+                project,
+                project["root"] / ".agents" / "blocked" / f"{AGENT}.md",
+                path=otaman_stub_bin,
+            )
         )
 
     def test_own_repo_contract_allowed(self, project, otaman_stub_bin):
         # Repo owner may modify contracts in their own repo.
-        assert_allowed(*run_write(project, project["base"] / "myrepo" / "api.openapi.yaml", path=otaman_stub_bin))
+        assert_allowed(
+            *run_write(
+                project, project["base"] / "myrepo" / "api.openapi.yaml", path=otaman_stub_bin
+            )
+        )
 
     def test_own_repo_bash_redirect_allowed(self, project, otaman_stub_bin):
         tgt = project["base"] / "myrepo" / "src" / "x.txt"
@@ -130,25 +142,37 @@ class TestAllow:
 
 class TestDenySurfacesReason:
     def test_other_agent_repo_denied(self, project, otaman_stub_bin):
-        reason = assert_denied(*run_write(project, project["base"] / "otherrepo" / "src" / "bar.py", path=otaman_stub_bin))
+        reason = assert_denied(
+            *run_write(
+                project, project["base"] / "otherrepo" / "src" / "bar.py", path=otaman_stub_bin
+            )
+        )
         assert "otherrepo" in reason and "other-agent" in reason
 
     def test_specs_repo_denied_for_non_owner(self, project, otaman_stub_bin):
         reason = assert_denied(
-            *run_write(project, project["base"] / "specsrepo" / "openspec" / "spec.md", path=otaman_stub_bin)
+            *run_write(
+                project,
+                project["base"] / "specsrepo" / "openspec" / "spec.md",
+                path=otaman_stub_bin,
+            )
         )
         assert "/otaman:propose" in reason
 
     def test_contract_in_other_repo_denied(self, project, otaman_stub_bin):
         reason = assert_denied(
-            *run_write(project, project["base"] / "otherrepo" / "api.openapi.yaml", path=otaman_stub_bin)
+            *run_write(
+                project, project["base"] / "otherrepo" / "api.openapi.yaml", path=otaman_stub_bin
+            )
         )
         assert "contract" in reason.lower()
         assert "/otaman:propose" in reason
 
     def test_schemas_dir_in_other_repo_denied(self, project, otaman_stub_bin):
         reason = assert_denied(
-            *run_write(project, project["base"] / "otherrepo" / "schemas" / "x.json", path=otaman_stub_bin)
+            *run_write(
+                project, project["base"] / "otherrepo" / "schemas" / "x.json", path=otaman_stub_bin
+            )
         )
         assert "/otaman:propose" in reason
 
@@ -161,7 +185,11 @@ class TestDenySurfacesReason:
         # The reason quotes the agent name (Agent "test-agent" ...); the
         # helper must JSON-escape those quotes. json.loads in _run already
         # proves validity — assert the quoting made it through intact.
-        reason = assert_denied(*run_write(project, project["base"] / "otherrepo" / "src" / "bar.py", path=otaman_stub_bin))
+        reason = assert_denied(
+            *run_write(
+                project, project["base"] / "otherrepo" / "src" / "bar.py", path=otaman_stub_bin
+            )
+        )
         assert '"test-agent"' in reason
 
 
@@ -172,7 +200,11 @@ class TestF013EnforcementIdentity:
         # Spoof OTAMAN_AGENT to claim ownership of otherrepo. The real
         # .otaman marker (test-agent) must win — the write is still denied.
         root = project["root"]
-        proc_env = {"PATH": f"{otaman_stub_bin}:/usr/bin:/bin", "HOME": str(root), "OTAMAN_AGENT": "other-agent"}
+        proc_env = {
+            "PATH": f"{otaman_stub_bin}:/usr/bin:/bin",
+            "HOME": str(root),
+            "OTAMAN_AGENT": "other-agent",
+        }
         payload = json.dumps(
             {
                 "tool_name": "Edit",
@@ -193,11 +225,17 @@ class TestF013EnforcementIdentity:
         reason = assert_denied(proc.returncode, parsed)
         assert "test-agent" in reason
 
-    def test_stale_cli_banner_output_fails_open_not_garbage_deny(self, project, otaman_stale_stub_bin):
+    def test_stale_cli_banner_output_fails_open_not_garbage_deny(
+        self, project, otaman_stale_stub_bin
+    ):
         # A pre-F013 `otaman` build without --resolve-only prints its full
         # human-readable whoami banner instead of erroring. The hook must
         # treat this as "identity unresolved" (allow — same as the existing
         # fail-open default for unknown identity), never misparse the
         # banner text as a garbage agent name that then fails closed and
         # denies every legitimate write in the agent's own repo.
-        assert_allowed(*run_write(project, project["base"] / "myrepo" / "src" / "foo.py", path=otaman_stale_stub_bin))
+        assert_allowed(
+            *run_write(
+                project, project["base"] / "myrepo" / "src" / "foo.py", path=otaman_stale_stub_bin
+            )
+        )

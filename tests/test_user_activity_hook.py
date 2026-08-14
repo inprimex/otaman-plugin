@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -37,7 +36,8 @@ def workspace(tmp_path):
     maestro = tmp_path / "my-maestro"
     maestro.mkdir()
     (maestro / "platform.yaml").write_text(
-        "project: test\n", encoding="utf-8",
+        "project: test\n",
+        encoding="utf-8",
     )
     (maestro / ".agents").mkdir()
     repo = tmp_path / "my-repo"
@@ -49,7 +49,10 @@ def workspace(tmp_path):
 def _run(cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [BASH, str(HOOK)],
-        capture_output=True, text=True, timeout=10, cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        cwd=cwd,
     )
 
 
@@ -78,7 +81,10 @@ class TestUserActivityHook:
         orphan.mkdir()
         result = subprocess.run(
             [BASH, str(HOOK)],
-            capture_output=True, text=True, timeout=10, cwd=orphan,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=orphan,
         )
         assert result.returncode == 0
 

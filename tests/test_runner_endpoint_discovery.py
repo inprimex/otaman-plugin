@@ -77,6 +77,7 @@ def run_ps(harness_path: Path, body: str, env: dict | None = None) -> dict:
 # depth change.
 # ---------------------------------------------------------------------------
 
+
 class TestFlatRunnerKeysRoundTrip:
     def test_flat_keys_parse(self, harness_path, tmp_path):
         settings_file = tmp_path / "launch-settings.yaml"
@@ -178,6 +179,7 @@ class TestFlatRunnerKeysRoundTrip:
 # 3.3 — runner_uri dual URI shapes
 # ---------------------------------------------------------------------------
 
+
 class TestResolveRunnerUri:
     def test_explicit_https_used_as_is(self, harness_path):
         body = """
@@ -247,6 +249,7 @@ class TestResolveRunnerUri:
 # 3.2 — 3-state discovery precedence
 # ---------------------------------------------------------------------------
 
+
 class TestResolveRunnerEndpointForConnection:
     def test_from_block_takes_precedence_over_file(self, harness_path, tmp_path, monkeypatch):
         endpoint_dir = tmp_path / "fromblock-precedence"
@@ -297,6 +300,7 @@ class TestResolveRunnerEndpointForConnection:
 # 3.5 — Get-NativeSshInvocation (shared client/key/host resolution)
 # ---------------------------------------------------------------------------
 
+
 class TestGetNativeSshInvocation:
     def test_resolves_exe_key_and_target(self, harness_path):
         body = """
@@ -333,6 +337,7 @@ class TestGetNativeSshInvocation:
 # ---------------------------------------------------------------------------
 # 3.4 — runner_token_source resolver grammar
 # ---------------------------------------------------------------------------
+
 
 class TestResolveRunnerToken:
     def test_env_scheme(self, harness_path):
@@ -420,6 +425,7 @@ class TestResolveRunnerToken:
 # 3.5 — ssh-cat reuses the connection's resolved SSH invocation (verified
 # end-to-end against a fake ssh.exe that records its argv).
 # ---------------------------------------------------------------------------
+
 
 class TestSshCatReusesResolvedInvocation:
     @pytest.fixture
@@ -515,6 +521,7 @@ class TestSshCatReusesResolvedInvocation:
 # 3.6 — token cached once per launch batch, per connection
 # ---------------------------------------------------------------------------
 
+
 class TestTokenCaching:
     def test_second_call_reuses_cached_value(self, harness_path):
         body = """
@@ -526,7 +533,9 @@ class TestTokenCaching:
         """
         r = run_ps(harness_path, body, env={"CACHE_TEST_TOKEN": "original-value"})
         assert r["first"] == "original-value"
-        assert r["second"] == "original-value", "second call must reuse the cached token, not re-resolve"
+        assert r["second"] == "original-value", (
+            "second call must reuse the cached token, not re-resolve"
+        )
 
     def test_cache_is_independent_per_connection(self, harness_path):
         body = """
@@ -545,6 +554,7 @@ class TestTokenCaching:
 # 3.7 — degradation-mode behaviour (direct SSH when no runner) is unchanged
 # ---------------------------------------------------------------------------
 
+
 class TestDegradationModeUnchanged:
     def test_no_runner_switch_still_declared(self):
         text = PS1_LAUNCHER.read_text(encoding="utf-8")
@@ -558,7 +568,6 @@ class TestDegradationModeUnchanged:
         # Source = None (no runner_uri, no endpoint file) must not require
         # -AllowDirectFallback -- this is the "not every developer runs a
         # runner" path and must stay silent-but-informational.
-        empty_home = None
         body = """
         $settings = @{}
         $d = Resolve-RunnerEndpointForConnection -Settings $settings

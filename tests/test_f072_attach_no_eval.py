@@ -15,7 +15,6 @@ text. These tests prove a malicious reply cannot execute code and that the
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import threading
@@ -33,6 +32,7 @@ PWSH = shutil.which("pwsh")
 # ---------------------------------------------------------------------------
 # Mock runner that returns an attacker-controlled /spawn reply
 # ---------------------------------------------------------------------------
+
 
 def _make_server(response_obj: dict) -> HTTPServer:
     class Handler(BaseHTTPRequestHandler):
@@ -68,6 +68,7 @@ runner_spawn_one 127.0.0.1 {port} test-token plugin-agent otaman-plugin /tmp/pro
 # Bash: runner_spawn_one only returns a validated session_name
 # ---------------------------------------------------------------------------
 
+
 class TestBashRunnerSpawnOne:
     def test_rejects_malicious_session_name_no_code_execution(self, tmp_path):
         # The classic injection: a tampered reply whose session_name embeds a
@@ -92,7 +93,12 @@ class TestBashRunnerSpawnOne:
 
     def test_accepts_valid_session_name(self, tmp_path):
         server = _make_server(
-            {"attach": {"session_name": "myproj:plugin-agent", "attach_command": "tmux attach -t x"}}
+            {
+                "attach": {
+                    "session_name": "myproj:plugin-agent",
+                    "attach_command": "tmux attach -t x",
+                }
+            }
         )
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:

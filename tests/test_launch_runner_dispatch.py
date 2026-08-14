@@ -23,15 +23,12 @@ These tests verify:
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
-
 
 REPO = Path(__file__).parent.parent
 BASH_LAUNCHER = REPO / "scripts" / "launch-agents.sh"
@@ -41,6 +38,7 @@ PS1_LAUNCHER = REPO / "scripts" / "launch-agents.ps1"
 # ---------------------------------------------------------------------------
 # Bash text-based contract tests
 # ---------------------------------------------------------------------------
+
 
 class TestBashLauncherContract:
     @pytest.fixture(scope="class")
@@ -53,9 +51,7 @@ class TestBashLauncherContract:
         )
 
     def test_no_runner_flag_accepted(self, text: str):
-        assert "--no-runner)" in text, (
-            "--no-runner opt-out case missing from arg parser"
-        )
+        assert "--no-runner)" in text, "--no-runner opt-out case missing from arg parser"
 
     def test_via_runner_is_deprecated_noop(self, text: str):
         # --via-runner case still exists but no longer sets VIA_RUNNER=1
@@ -73,9 +69,7 @@ class TestBashLauncherContract:
         idx = text.index("runner_spawn_one()")
         end = text.index("\n}\n", idx)
         snippet = text[idx:end]
-        assert '"human": human' in snippet, (
-            "runner_spawn_one body must emit human field"
-        )
+        assert '"human": human' in snippet, "runner_spawn_one body must emit human field"
 
     def test_dispatch_passes_human(self, text: str):
         # Sanity: the tmux branch passes _human as the trailing argument.
@@ -97,6 +91,7 @@ class TestBashLauncherContract:
 # PS1 text-based contract tests
 # ---------------------------------------------------------------------------
 
+
 class TestPs1LauncherContract:
     @pytest.fixture(scope="class")
     def text(self) -> str:
@@ -117,9 +112,7 @@ class TestPs1LauncherContract:
         # Find Invoke-RunnerSpawn signature and verify $Human param.
         idx = text.index("function Invoke-RunnerSpawn")
         snippet = text[idx : idx + 1500]
-        assert "[string] $Human" in snippet, (
-            "Invoke-RunnerSpawn must accept a $Human parameter"
-        )
+        assert "[string] $Human" in snippet, "Invoke-RunnerSpawn must accept a $Human parameter"
         assert "human" in snippet and "if ($Human)" in snippet, (
             "Invoke-RunnerSpawn body must include the human field"
         )
@@ -141,9 +134,7 @@ class TestPs1LauncherContract:
         idx = text.index("function Wrap-WithTmux")
         end = text.index("\n}\n", idx)
         snippet = text[idx:end]
-        assert "[string]$WindowName" in snippet, (
-            "Wrap-WithTmux must accept a $WindowName parameter"
-        )
+        assert "[string]$WindowName" in snippet, "Wrap-WithTmux must accept a $WindowName parameter"
         assert "-n '$WindowName'" in snippet, (
             "Wrap-WithTmux must emit `-n '<repo>'` in tmux new-session args"
         )
@@ -225,6 +216,7 @@ class TestPs1LauncherContract:
 # ---------------------------------------------------------------------------
 # Runtime test — mock HTTP server captures the bash runner_spawn_one body
 # ---------------------------------------------------------------------------
+
 
 class _BodyCapture:
     """Shared state for the mock-server handler — captures POST bodies."""
