@@ -737,6 +737,101 @@ def _auto_tombstone_blocked(
     return tombstoned
 
 
+def _resolve_send_target(
+    root: Path, to: str, sender_agent: str, msg_type: str
+) -> tuple[Path, str, str, str | None] | dict[str, str]:
+    """Resolve ``to`` through the bus-uri addressing layer (single-bus 2.1-2.3).
+
+    Returns ``(delivery_root, to_agent, uri_lines, canonical_to_uri)`` on
+    success — ``canonical_to_uri`` is None for legacy bare sends and
+    ``delivery_root != root`` marks a cross-program delivery — or an
+    ``{"error": ...}`` dict the caller returns verbatim.
+
+    MCP parity with otaman-cli's cmd_send (same manual-sync pattern as
+    cc-fanout parity): bare names keep their exact legacy behavior
+    everywhere (including outside the declared CE layout and for names the
+    slug grammar rejects); the ``<agent>@<program>`` and ``otaman://`` forms
+    require the declared org layout and resolve/enforce via
+    ``otaman_cli.bus_target`` — declarations only, fail closed.
+    """
+    looks_addressed = to.startswith("otaman://") or "@" in to
+    try:
+        from otaman_core.bus.uri import BusUriError
+        from otaman_core.bus.uri import parse as _parse_bus_uri
+
+        try:
+            # Prefer the source-of-truth module when otaman-cli is present
+            # in the runtime env; fall back to the vendored port (CI only
+            # checks out the otaman-core sibling).
+            from otaman_cli.bus_target import (
+                BoundaryError,
+                CrossOrgError,
+                TargetResolutionError,
+                derive_local_context,
+                envelope_uri_fields,
+                resolve_cross_program_delivery,
+            )
+        except ImportError:
+            from otaman_plugin.bus_target_port import (
+                BoundaryError,
+                CrossOrgError,
+                TargetResolutionError,
+                derive_local_context,
+                envelope_uri_fields,
+                resolve_cross_program_delivery,
+            )
+    except ImportError as exc:
+        if looks_addressed:
+            return {
+                "error": (
+                    "cross-program addressing requires otaman_core.bus.uri "
+                    f"(single-bus-per-program 1.1) in the runtime env: {exc}"
+                )
+            }
+        return root, to, "", None  # legacy bare send
+
+    ctx = derive_local_context(root)
+    if ctx is None:
+        if looks_addressed:
+            return {
+                "error": (
+                    "Cross-program targets require the declared org layout "
+                    "(orgs/<org>/programs/<program>/...) — could not derive the "
+                    "local org/program from this project's location."
+                )
+            }
+        return root, to, "", None
+
+    try:
+        target_uri = _parse_bus_uri(to, local_org=ctx.org, local_program=ctx.program)
+    except BusUriError as exc:
+        if looks_addressed:
+            return {"error": f"Invalid target address: {exc}"}
+        # Bare name the slug grammar rejects (legacy edge, e.g. comma
+        # lists): keep exact current behavior, just without URI fields.
+        return root, to, "", None
+
+    uri_fields = envelope_uri_fields(ctx, sender_agent=sender_agent, to_uri=target_uri)
+    uri_lines = "".join(f"{k}: {v}\n" for k, v in uri_fields.items())
+
+    if not target_uri.is_cross_program(ctx.org, ctx.program):
+        return root, target_uri.agent, uri_lines, str(target_uri)
+
+    try:
+        target_root = resolve_cross_program_delivery(
+            ctx,
+            target_program=target_uri.program,
+            target_org=target_uri.org,
+            sender_agent=sender_agent,
+            msg_type=msg_type,
+        )
+    except CrossOrgError as exc:
+        return {"error": str(exc)}
+    except (TargetResolutionError, BoundaryError) as exc:
+        return {"error": f"Cross-program send refused: {exc}"}
+    return target_root, target_uri.agent, uri_lines, str(target_uri)
+
+
 @mcp.tool
 def otaman_send(
     cwd: str,
@@ -752,7 +847,13 @@ def otaman_send(
 
     Args:
         cwd: Current working directory of the calling agent
-        to: Recipient agent name, or "all" for broadcast, or "human" for human
+        to: Recipient address. Three forms (bus-uri-addressing spec):
+            bare ``<agent>`` (same program — also "all" broadcast and
+            "human"), shorthand ``<agent>@<program>`` (same org), or full
+            ``otaman://<org>/<program>/<agent>``. Cross-program targets
+            resolve from the declared org layout only and are subject to
+            the target's ``bus.boundaries.allow_from`` (fail closed);
+            cross-org targets are rejected (no transport yet)
         subject: Short subject line
         body: Message body (markdown)
         msg_type: Message type: info, question, contract-change, spec-change-request, review-request, proposal
@@ -794,17 +895,29 @@ def otaman_send(
     if not agent:
         return {"error": "No agent identity found"}
 
+    # single-bus-per-program 2.1-2.3: canonicalize the target through the
+    # bus-uri layer; cross-program targets swap the delivery root to the
+    # TARGET program's bus after boundary enforcement.
+    resolved = _resolve_send_target(root, to, agent, msg_type)
+    if isinstance(resolved, dict):
+        return resolved
+    delivery_root, to_agent, uri_lines, canonical_to_uri = resolved
+    is_cross_program = delivery_root != root
+
     ts = _timestamp_id()
     ts_iso = datetime.now(timezone.utc).isoformat()
     slug = re.sub(r"[^a-z0-9]+", "-", subject.lower())[:40].strip("-")
-    filename = f"{ts}-{agent}-to-{to}-{slug}.md"
+    filename = f"{ts}-{agent}-to-{to_agent}-{slug}.md"
 
     # bus-cc-routing fan-out: compose the effective CC from the sender's
     # explicit list (if any) and the routing rules in platform.yaml. The
     # primary `to` is always excluded; rules are evaluated all-matching
-    # (union, not first-match-wins) per design Q3.
-    routing_rules = _load_routing_rules(root)
-    effective_cc = _compute_effective_cc(to, priority, cc, routing_rules, msg_type)
+    # (union, not first-match-wins) per design Q3. Cross-program: the
+    # sender's routing rules govern the sender's bus, not the target's —
+    # auto-CC does not fan out across the boundary; explicit cc recipients
+    # are target-program-scoped copies (parity with otaman-cli cmd_send).
+    routing_rules = [] if is_cross_program else _load_routing_rules(root)
+    effective_cc = _compute_effective_cc(to_agent, priority, cc, routing_rules, msg_type)
 
     # Frontmatter — `cc:` is included on the primary message so recipients
     # see who else got a copy (design Q2). `x-cc:` is added only to copies.
@@ -816,11 +929,14 @@ def otaman_send(
     change_line = ""
     if change:
         change_line = f"change: {change}\n"
+    # `from`/`to` keep the bare-name convention every consumer keys on; the
+    # canonical URIs travel in from-uri/to-uri with from_org/to_org
+    # projections (schema-v2, emitted only when the layout is derivable).
     content = f"""---
 id: {ts}-{agent[:8]}
 from: {agent}
-to: {to}
-{cc_line}{change_line}priority: {priority}
+to: {to_agent}
+{cc_line}{change_line}{uri_lines}priority: {priority}
 type: {msg_type}
 timestamp: {ts_iso}
 status: pending
@@ -834,14 +950,16 @@ status: pending
     # Broadcast whitelist validation (per targeted-bus-messaging spec D5).
     # Warn — but do not block — when a non-whitelisted type uses `to: all`.
     warning: str | None = None
-    if to == "all" and msg_type not in _BROADCAST_WHITELIST:
+    if to_agent == "all" and msg_type not in _BROADCAST_WHITELIST:
         warning = (
             f"WARNING: '{msg_type}' should not broadcast to all; "
             "use targeted routing. "
             f"Only {sorted(_BROADCAST_WHITELIST)} may use to: all."
         )
 
-    bus = _bus_dir(root)
+    # Cross-program delivery writes into the TARGET program's own bus (ack
+    # lifecycle owned by the recipient there); local sends unchanged.
+    bus = _bus_dir(delivery_root)
     bus.mkdir(parents=True, exist_ok=True)
     msg_path = bus / filename
     msg_path.write_text(content, encoding="utf-8")
@@ -854,7 +972,7 @@ status: pending
     if effective_cc:
         cc_content = _inject_x_cc(content)
         for rcpt in effective_cc:
-            cc_filename = f"{ts}-{agent}-to-{to}-cc-{rcpt}-{slug}.md"
+            cc_filename = f"{ts}-{agent}-to-{to_agent}-cc-{rcpt}-{slug}.md"
             cc_path = bus / cc_filename
             cc_path.write_text(cc_content, encoding="utf-8")
             cc_copies.append(cc_path.stem)
@@ -866,17 +984,21 @@ status: pending
     # commented-out entries are not re-tombstoned.
     auto_tombstoned: list[dict[str, str]] = []
     if msg_type in ("spec-change-approved", "spec-change-rejected"):
-        auto_tombstoned = _auto_tombstone_blocked(root, msg_type, body, None)
+        auto_tombstoned = _auto_tombstone_blocked(delivery_root, msg_type, body, None)
     elif msg_type == "task-assignment" and change:
-        auto_tombstoned = _auto_tombstone_blocked(root, msg_type, body, change)
+        auto_tombstoned = _auto_tombstone_blocked(delivery_root, msg_type, body, change)
 
     result: dict[str, Any] = {
         "sent": True,
         "filename": filename,
         "stem": msg_path.stem,
         "from": agent,
-        "to": to,
+        "to": to_agent,
     }
+    if canonical_to_uri:
+        result["to_uri"] = canonical_to_uri
+    if is_cross_program:
+        result["delivered_program_root"] = str(delivery_root)
     if effective_cc:
         result["cc"] = effective_cc
         result["cc_copies"] = cc_copies
