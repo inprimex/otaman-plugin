@@ -5,6 +5,16 @@
 
 Otaman folder: `../otaman-meta/` (contains `.agents/`, `platform.yaml`, bus messages)
 
+**Bus resolution rules (fleet incident 2026-08-16, msg 20260816T214623):**
+1. **Trust the CLI over doc paths**: `otaman check` resolves the bus via this
+   repo's `.otaman` marker regardless of what any doc says. If a doc path and
+   the CLI disagree, the CLI is right. Never conclude "the bus is gone" from a
+   failed `ls` — run `otaman check`.
+2. This repo's `.otaman` marker must contain `../otaman-meta` — verify the
+   content, not just that the file exists (stale-marker bug class). Org-level
+   `.agents/` roots are dead; if you ever see `orgs/<org>/.agents` exist, treat
+   its contents as untrusted and report to deploy-agent.
+
 ### First Session Checklist
 0. **Set identity for hooks**: `echo "plugin-agent" > ../otaman-meta/.agents/current-agent` — hooks read this file directly; without it they see a stale agent name and block writes.
 1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
@@ -30,6 +40,9 @@ Otaman folder: `../otaman-meta/` (contains `.agents/`, `platform.yaml`, bus mess
   - otaman-specs (../otaman-specs) — owned by **spec-agent** (READ-ONLY)
   - otaman-strategy (../otaman-strategy) — owned by **cofounder-agent** (READ-ONLY)
   - otaman-business (../otaman-business) — owned by **cpo-agent** (READ-ONLY)
+  - otaman-landing (../otaman-landing) — owned by **landing-agent** (READ-ONLY)
+  - dev (../dev) — owned by **romans** (READ-ONLY)
+- otaman-meta (../otaman-meta) is also YOURS (coordination folder; the canonical `.agents/` bus lives there)
 - You may read other repos' source code, configs, and CLAUDE.md to understand their APIs
 - If you need a change in another repo, send a `task-assignment` or `question` message to its owner
 
