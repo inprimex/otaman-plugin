@@ -135,6 +135,27 @@ class TestWalkUpFallback:
         deep.mkdir(parents=True)
         assert find_maestro_root(deep) == root.resolve()
 
+    def test_walkup_skips_launcher_folder(self, tmp_path):
+        """A dir with platform.yaml AND launch-settings.yaml is a launcher
+        folder (scaffold_launcher.py copies platform.yaml next to
+        launch-settings.yaml), not an otaman root — the walk-up must skip
+        it and keep climbing (fix-macos-onboarding port)."""
+        root = tmp_path / "project"
+        root.mkdir()
+        (root / "platform.yaml").write_text("project: test\n")
+        launcher = root / "launchers" / "myproj"
+        launcher.mkdir(parents=True)
+        (launcher / "platform.yaml").write_text("project: test\n")
+        (launcher / "launch-settings.yaml").write_text("connections: {}\n")
+        assert find_maestro_root(launcher) == root.resolve()
+
+    def test_launcher_folder_alone_resolves_nothing(self, tmp_path):
+        launcher = tmp_path / "myproj-launcher"
+        launcher.mkdir()
+        (launcher / "platform.yaml").write_text("project: test\n")
+        (launcher / "launch-settings.yaml").write_text("connections: {}\n")
+        assert find_maestro_root(launcher) is None
+
 
 class TestNoMatch:
     """When nothing matches."""

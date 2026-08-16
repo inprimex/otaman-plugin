@@ -81,13 +81,18 @@ _find_maestro_root_from() {
         fi
     fi
 
-    # 3. Walk-up fallback (legacy layout)
+    # 3. Walk-up fallback (legacy layout). Skip launcher folders: the
+    # scaffold copies platform.yaml next to launch-settings.yaml, so a dir
+    # holding both is a launcher folder, not an otaman root
+    # (fix-macos-onboarding port).
     check="$dir"
     prev=""
     while [[ "$check" != "/" && "$check" != "." && "$check" != "$prev" ]]; do
         if [[ -f "$check/.agents/ownership.json" ]] || [[ -f "$check/platform.yaml" ]]; then
-            echo "$check"
-            return 0
+            if [[ ! -f "$check/launch-settings.yaml" ]]; then
+                echo "$check"
+                return 0
+            fi
         fi
         prev="$check"
         check="$(dirname "$check")"

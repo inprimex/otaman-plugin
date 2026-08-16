@@ -65,10 +65,14 @@ def find_maestro_root(start: Path | None = None) -> Path | None:
             return p
 
     # 3. Walk-up fallback (legacy layout: otaman artifacts in a parent directory)
+    # Skip launcher folders: scaffold_launcher.py copies platform.yaml next to
+    # launch-settings.yaml, so a dir holding both is a launcher folder, not an
+    # otaman root (fix-macos-onboarding port).
     current = origin
     while current != current.parent:
         if (current / "platform.yaml").exists() or (current / ".agents").is_dir():
-            return current
+            if not (current / "launch-settings.yaml").exists():
+                return current
         current = current.parent
 
     return None

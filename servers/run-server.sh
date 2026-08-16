@@ -54,10 +54,15 @@ elif [[ -x "$VENV/bin/python" ]]; then
     exec "$VENV/bin/python" "${PYTHON_ARGS[@]}"
 fi
 
-# 3. Fall back to system Python
-if command -v python3 &>/dev/null && python3 -c "pass" 2>/dev/null; then
-    exec python3 "${PYTHON_ARGS[@]}"
-elif command -v py &>/dev/null; then
+# 3. Fall back to system Python. Prefer versioned interpreters so a stale
+#    system python3 (< 3.10, e.g. macOS command-line-tools) doesn't shadow a
+#    newer brew/pyenv install (fix-macos-onboarding port).
+for cmd in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$cmd" &>/dev/null && "$cmd" -c "pass" 2>/dev/null; then
+        exec "$cmd" "${PYTHON_ARGS[@]}"
+    fi
+done
+if command -v py &>/dev/null; then
     exec py "${PYTHON_ARGS[@]}"
 elif command -v python &>/dev/null && python -c "pass" 2>/dev/null; then
     exec python "${PYTHON_ARGS[@]}"
