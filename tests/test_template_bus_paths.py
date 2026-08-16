@@ -79,6 +79,46 @@ class TestIdentityChecklistLine:
         assert expected in content
 
 
+class TestMarkerFirstPathDerivation:
+    """cli-agent 20260816T223250: prefer the repo's `.otaman` marker as the
+    source of truth for the otaman-folder path — a relpath baked at
+    generation time can't survive layout migrations; the marker is kept
+    current by init."""
+
+    def test_valid_marker_wins_over_relpath(self, tmp_path):
+        # Real otaman root at a location the relpath computation would
+        # never produce; the marker points there.
+        real_root = tmp_path / "real-meta"
+        (real_root / ".agents").mkdir(parents=True)
+        (real_root / "platform.yaml").write_text("project: t\n")
+        repo_dir = tmp_path / "backend"
+        repo_dir.mkdir()
+        (repo_dir / ".otaman").write_text("# marker\n../real-meta\nagent: dev-agent\n")
+        content = _generate(tmp_path, _REPO)
+        assert "Otaman folder: `../real-meta/`" in content
+        assert "Read `../real-meta/.agents/queue/dev-agent.md` — see your active" in content
+
+    def test_maestro_root_key_variant_works(self, tmp_path):
+        real_root = tmp_path / "real-meta"
+        (real_root / ".agents").mkdir(parents=True)
+        repo_dir = tmp_path / "backend"
+        repo_dir.mkdir()
+        (repo_dir / ".otaman").write_text("maestro_root: ../real-meta\n")
+        content = _generate(tmp_path, _REPO)
+        assert "Otaman folder: `../real-meta/`" in content
+
+    def test_stale_marker_falls_back_to_relpath(self, tmp_path):
+        repo_dir = tmp_path / "backend"
+        repo_dir.mkdir()
+        (repo_dir / ".otaman").write_text("../does-not-exist\n")
+        content = _generate(tmp_path, _REPO)
+        assert "Otaman folder: `../`" in content  # relpath fallback
+
+    def test_no_marker_uses_relpath(self, tmp_path):
+        content = _generate(tmp_path, _REPO)
+        assert "Otaman folder: `../`" in content
+
+
 class TestMarkerAgentFieldPreserved:
     def test_rewrite_preserves_agent_line(self, tmp_path):
         """landing finding 4: marker rewrite dropped `agent: <name>`."""

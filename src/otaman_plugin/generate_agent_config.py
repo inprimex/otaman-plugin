@@ -265,6 +265,39 @@ _SPEC_AUTHORING_GUARD = """### Spec Authoring — NOT your job (CRITICAL)
 - If you feel the urge to "just fill in the spec myself" — stop, send a `question` message to spec-agent instead."""
 
 
+def _read_marker_path(repo_dir: Path) -> str | None:
+    """Read the otaman-folder path from a repo's ``.otaman``/``.maestro`` marker.  # legacy: .maestro supported
+
+    Returns the marker's relative path ONLY when it resolves to a real
+    otaman root (platform.yaml or .agents/ present) from *repo_dir* —
+    a stale marker falls through to the caller's relpath computation
+    rather than baking a broken path into the generated docs.
+    """
+    for name in (".otaman", ".maestro"):  # legacy: .maestro marker supported
+        marker = repo_dir / name
+        if not marker.is_file():
+            continue
+        try:
+            text = marker.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith(("maestro_root:", "otaman_root:")):  # legacy: maestro_root key
+                line = line.split(":", 1)[1].strip()
+            elif ":" in line.split(" ")[0]:
+                continue  # other `key: value` fields (agent:, expected_account:, ...)
+            if not line:
+                continue
+            candidate = (repo_dir / line).resolve() if not Path(line).is_absolute() else Path(line)
+            if (candidate / "platform.yaml").exists() or (candidate / ".agents").is_dir():
+                return Path(line).as_posix()
+            return None  # marker present but stale — let relpath decide
+    return None
+
+
 def _build_maestro_block(
     repo: dict[str, Any],
     all_repos: list[dict[str, Any]],
@@ -303,13 +336,23 @@ def _build_maestro_block(
 
     # Compute relative path from repo to maestro folder for .agents/ references.  # legacy: pre-rebrand reference
     # M = relative path from repo to maestro folder (e.g., "../lmachine-maestro")  # legacy: pre-rebrand reference
+    #
+    # Marker-first (cli-agent 20260816T223250, after the 2026-08-16 stale-path
+    # incident): a relpath baked at generation time can't survive layout
+    # migrations, but each repo's `.otaman` marker is kept current by init.
+    # Prefer the marker's path when it exists AND resolves to a real otaman
+    # root; fall back to the relpath computation for fresh scaffolds.
     m = ".."  # fallback: assume parent dir
     if project_root:
         repo_dir = (project_root / repo["path"]).resolve()
-        try:
-            m = Path(os.path.relpath(project_root.resolve(), repo_dir)).as_posix()
-        except ValueError:
-            m = project_root.resolve().as_posix()
+        marker_rel = _read_marker_path(repo_dir)
+        if marker_rel:
+            m = marker_rel
+        else:
+            try:
+                m = Path(os.path.relpath(project_root.resolve(), repo_dir)).as_posix()
+            except ValueError:
+                m = project_root.resolve().as_posix()
 
     specs_section = ""
     if "specs" in config:
