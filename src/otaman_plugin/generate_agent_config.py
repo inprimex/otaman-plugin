@@ -252,6 +252,19 @@ def generate_repo_claude_md(project_root: Path, config: dict[str, Any]) -> list[
     return warnings
 
 
+# Spec-authoring guard — part of the scaffold TEMPLATE so re-syncs preserve it.
+# History: originally added to bridge's CLAUDE.md by hand (their PR #14) inside
+# the otaman:begin/end managed block; the July scaffold re-sync silently dropped
+# it because the template itself never contained it (re-landed by bridge PR #44;
+# templated here per cofounder-agent task 20260816T202237).
+_SPEC_AUTHORING_GUARD = """### Spec Authoring — NOT your job (CRITICAL)
+- **spec-agent authors ALL spec artifacts** — `proposal.md`, `design.md`, `tasks.md`, `specs/*/spec.md`, JSON schemas, ADRs. These live in `otaman-specs` which is READ-ONLY for you.
+- **Your only spec action is `/otaman:propose`** — you describe what you need, spec-agent writes it.
+- **After approval + spec-change notification**: wait for `task-assignment` messages addressed to you from the mapped `tasks.md`. Those tasks will be **implementation work in your repo**, not spec authoring.
+- **Never write**: `proposal.md`, `design.md`, `tasks.md`, `spec.md`, ADR files, or any file under `otaman-specs/openspec/`. Even after approval. Even if you think it would be faster.
+- If you feel the urge to "just fill in the spec myself" — stop, send a `question` message to spec-agent instead."""
+
+
 def _build_maestro_block(
     repo: dict[str, Any],
     all_repos: list[dict[str, Any]],
@@ -330,7 +343,9 @@ def _build_maestro_block(
 - **Never implement against a spec that doesn't exist yet** — wait for human approval + spec commit
 - After proposing, switch to other tasks. Run `/otaman:check` periodically to see if your proposal was approved
 - Resume the blocked task only after you see BOTH `spec-change-approved` AND `spec-change` messages
-- Check `{m}/.agents/blocked/{repo["owner"]}.md` for your currently blocked tasks"""
+- Check `{m}/.agents/blocked/{repo["owner"]}.md` for your currently blocked tasks
+
+{_SPEC_AUTHORING_GUARD}"""
         else:
             specs_section = f"""
 ### Specs
@@ -343,7 +358,9 @@ def _build_maestro_block(
 - **Never implement against a spec that doesn't exist yet** — wait for human approval + spec commit
 - After proposing, switch to other tasks. Run `/otaman:check` periodically to see if your proposal was approved
 - Resume the blocked task only after you see BOTH `spec-change-approved` AND `spec-change` messages
-- Check `{m}/.agents/blocked/{repo["owner"]}.md` for your currently blocked tasks"""
+- Check `{m}/.agents/blocked/{repo["owner"]}.md` for your currently blocked tasks
+
+{_SPEC_AUTHORING_GUARD}"""
 
     # Build standards section for this repo
     standards_section = ""
