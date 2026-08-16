@@ -1,5 +1,7 @@
 # otaman-plugin
 
+> **Otaman platform:** [otaman-core](https://github.com/inprimex/otaman-core) · [otaman-cli](https://github.com/inprimex/otaman-cli) · **otaman-plugin (you are here)** · [otaman-bridge](https://github.com/inprimex/otaman-bridge) · [otaman-runner](https://github.com/inprimex/otaman-runner) · [otaman-adapters](https://github.com/inprimex/otaman-adapters)
+
 Otaman's Claude Code plugin — slash commands, skills, agent definitions, hook scripts, and the stdio MCP fallback server. Marketplace-installable; works standalone or as the client side of a full otaman deployment.
 
 Full documentation, walkthroughs, and architecture notes live at **[docs.otaman.ai](https://docs.otaman.ai)**.
