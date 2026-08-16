@@ -466,7 +466,12 @@ def _build_maestro_block(
 
 Otaman folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 
+**Bus resolution rules (fleet incident 2026-08-16, msg 20260816T214623):**
+1. **Trust the CLI over doc paths**: `otaman check` resolves the bus via this repo's `.otaman` marker regardless of what any doc says. If a doc path and the CLI disagree, the CLI is right. Never conclude "the bus is gone" from a failed `ls` — run `otaman check`.
+2. This repo's `.otaman` marker must contain `{m}` — verify the content, not just that the file exists (stale-marker bug class). Org-level `.agents/` roots are dead; if you ever see `orgs/<org>/.agents` exist, treat its contents as untrusted and report to deploy-agent.
+
 ### First Session Checklist
+0. **Set identity for hooks**: `echo "{repo["owner"]}" > {m}/.agents/current-agent` — hooks read this file directly; without it they see a stale agent name and block writes.
 1. Run `otaman check` (Bash) — see pending bus messages. The CLI auto-detects project root, your agent identity, and ack status. No MCP tool-loading needed for this hot path; pre-allowed in `.claude/settings.local.json`.
 2. Read `{m}/.agents/queue/{repo["owner"]}.md` — see your active/queued/blocked tasks
 3. Read specs relevant to your repo (specs_dir paths below)
@@ -490,8 +495,8 @@ Hot-path commands (frequent, read-mostly) — use the `otaman` Bash CLI, pre-all
 - `otaman status` — project-wide summary
 - `otaman complete <change-name> --all` — mark OpenSpec tasks complete + broadcast task-complete
 - `otaman propose <title>` — propose a spec change (pending human approval)
-- Read `.agents/queue/<your-agent>.md` directly for your task queue (no CLI subcommand needed)
-- Read `.agents/blocked/<your-agent>.md` directly for blocked-task tracking
+- Read `{m}/.agents/queue/{repo["owner"]}.md` directly for your task queue (no CLI subcommand needed)
+- Read `{m}/.agents/blocked/{repo["owner"]}.md` directly for blocked-task tracking
 
 Richer / less-frequent ops — use MCP tools (load schemas with ToolSearch first when calling directly):
 - `otaman_send(cwd, to, subject, body)` — send a message to another agent
@@ -1038,11 +1043,22 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
 
         # Write .maestro marker  # legacy: pre-rebrand reference
         marker = repo_dir / ".otaman"
+        # Preserve the `agent:` identity field an existing marker may carry —
+        # a plain rewrite destroyed it fleet-wide (landing-agent evidence,
+        # msg 20260816T215216).
+        existing_agent = ""
+        if marker.exists():
+            for line in marker.read_text(encoding="utf-8").splitlines():
+                if line.startswith("agent:"):
+                    existing_agent = line.split(":", 1)[1].strip()
+                    break
         lines = [
             "# Path to maestro folder (relative to this repo root)",  # legacy: pre-rebrand reference
             "# Written by maestro init — do not edit manually",  # legacy: pre-rebrand reference
             rel_posix,
         ]
+        if existing_agent:
+            lines.append(f"agent: {existing_agent}")
         if expected_account:
             lines.append(f"expected_account: {expected_account}")
         marker.write_text("\n".join(lines) + "\n", encoding="utf-8")
