@@ -14,9 +14,9 @@ Usage::
 Outputs (on stdout) shell-safe export statements:
 
     export MAESTRO_ACTIVE_CONNECTION='lan'
-    export MAESTRO_ACTIVE_ACCOUNT='riseapps'
+    export MAESTRO_ACTIVE_ACCOUNT='clientco'
     export MAESTRO_CONNECTION_TYPE='ssh'
-    export CLAUDE_CONFIG_DIR='/home/foo/.claude-riseapps'
+    export CLAUDE_CONFIG_DIR='/home/foo/.claude-clientco'
     export MY_SECRET='val'
     # repos: auth-service,web-app,specs-repo
 

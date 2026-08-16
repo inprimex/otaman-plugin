@@ -33,7 +33,7 @@ talk to it from your Telegram client (mobile or desktop).
 
 **One bot per maestro account** is the recommended pattern. If you run
 multiple projects, create one bot per project (e.g.
-`my_otaman_naz_bot`, `my_otaman_greenbin_bot`) so messages route to the
+`my_otaman_proja_bot`, `my_otaman_projb_bot`) so messages route to the
 right place automatically.
 
 ---
@@ -57,12 +57,12 @@ already covers this).
 
 ### Option A — Keyring (recommended)
 
-Pick a unique secret name per project, e.g. `tg-bot-naz`:
+Pick a unique secret name per project, e.g. `tg-bot-proja`:
 
 ```bash
 python3 -c "
 import keyring
-keyring.set_password('otaman', 'tg-bot-naz', 'PASTE-TOKEN-HERE')
+keyring.set_password('otaman', 'tg-bot-proja', 'PASTE-TOKEN-HERE')
 "
 ```
 
@@ -70,16 +70,16 @@ Then reference it in `launch-settings.yaml`:
 
 ```yaml
 accounts:
-  naz:
-    config_dir: "~/.claude-riseapps"
-    label: "Naz"
+  proja:
+    config_dir: "~/.claude-acme"
+    label: "ProjA"
     transport: telegram
     transport_config:
-      group_id: -1003928170207        # filled in Step 3
-      allowed_user_ids: [799080965]   # filled in Step 4
+      group_id: -1001234567890        # filled in Step 3
+      allowed_user_ids: [123456789]   # filled in Step 4
       bot_token:
         sources:
-          - { type: keyring, service: otaman, account: tg-bot-naz }
+          - { type: keyring, service: otaman, account: tg-bot-proja }
 ```
 
 ### Option B — Dotenv file
@@ -88,7 +88,7 @@ In your maestro folder, create or edit `.otaman/secrets.env`:
 
 ```bash
 mkdir -p .otaman
-echo 'OTAMAN_TG_BOT_NAZ=PASTE-TOKEN-HERE' >> .otaman/secrets.env
+echo 'OTAMAN_TG_BOT_PROJA=PASTE-TOKEN-HERE' >> .otaman/secrets.env
 chmod 600 .otaman/secrets.env
 ```
 
@@ -97,8 +97,8 @@ Then reference in `launch-settings.yaml`:
 ```yaml
       bot_token:
         sources:
-          - { type: dotenv, name: OTAMAN_TG_BOT_NAZ }
-          - { type: env,    name: OTAMAN_TG_BOT_NAZ }   # also works if exported in shell
+          - { type: dotenv, name: OTAMAN_TG_BOT_PROJA }
+          - { type: env,    name: OTAMAN_TG_BOT_PROJA }   # also works if exported in shell
 ```
 
 ### Verify
@@ -119,12 +119,12 @@ setup. Each project gets its own group, where bus approvals appear as
 forum topics.
 
 1. In Telegram, create a new **group** (not a channel). Call it whatever
-   you want — `Otaman Naz`, `Otaman GreenBin`, etc.
+   you want — `Otaman ProjA`, `Otaman ProjB`, etc.
 2. Add your bot to the group as an administrator. Required permissions:
    - Pin messages
    - Manage topics (this enables auto-created forum topics per project)
 3. Enable **Topics** in the group settings (group info → edit → enable Topics).
-4. Find the group_id (looks like `-1003928170207`):
+4. Find the group_id (looks like `-1001234567890`):
    - **Easiest method:** add the bot @username_to_id_bot or @get_id_bot
      to the group temporarily. It posts the group's chat ID; copy it.
    - **Via the Telegram API:** send any message in the group, then visit
@@ -134,7 +134,7 @@ forum topics.
 Paste the group_id into `launch-settings.yaml`:
 
 ```yaml
-      group_id: -1003928170207
+      group_id: -1001234567890
 ```
 
 The minus sign prefix matters — that's how Telegram distinguishes group
@@ -149,11 +149,11 @@ Telegram user IDs. Anyone else's reply to the bot is ignored.
 
 1. Find your own Telegram user ID:
    - Add @userinfobot or @getidsbot to the group, or DM @userinfobot
-   - It replies with your user ID (a positive integer, e.g. `799080965`)
+   - It replies with your user ID (a positive integer, e.g. `123456789`)
 2. Add to the allowlist in `launch-settings.yaml`:
 
 ```yaml
-      allowed_user_ids: [799080965]
+      allowed_user_ids: [123456789]
 ```
 
 You can add multiple IDs (each teammate gets their own entry).
@@ -171,7 +171,7 @@ otaman bridge status      # should show "running, transport=telegram, account=<n
 ```
 
 On Windows, the bridge runs as a foreground process — open a terminal,
-`otaman bridge run --account naz` and leave it open.
+`otaman bridge run --account proja` and leave it open.
 
 ---
 

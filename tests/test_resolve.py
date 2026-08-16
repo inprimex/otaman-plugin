@@ -283,19 +283,19 @@ class TestParseMarkerFields:
 
     def test_extended_format(self, tmp_path):
         marker = tmp_path / ".maestro"
-        marker.write_text("../my-maestro\nexpected_account: riseapps\n")
+        marker.write_text("../my-maestro\nexpected_account: clientco\n")
         assert parse_marker_fields(marker) == {
             "maestro_root": "../my-maestro",
-            "expected_account": "riseapps",
+            "expected_account": "clientco",
         }
 
     def test_explicit_maestro_root_key(self, tmp_path):
         """maestro_root: <path> as an explicit key also works."""
         marker = tmp_path / ".maestro"
-        marker.write_text("maestro_root: ../my-maestro\nexpected_account: riseapps\n")
+        marker.write_text("maestro_root: ../my-maestro\nexpected_account: clientco\n")
         assert parse_marker_fields(marker) == {
             "maestro_root": "../my-maestro",
-            "expected_account": "riseapps",
+            "expected_account": "clientco",
         }
 
     def test_windows_absolute_path_bare(self, tmp_path):
@@ -307,10 +307,10 @@ class TestParseMarkerFields:
     def test_unknown_key_ignored(self, tmp_path):
         """Unknown key: value lines don't pollute the result."""
         marker = tmp_path / ".maestro"
-        marker.write_text("../my-maestro\ncustom_field: something\nexpected_account: riseapps\n")
+        marker.write_text("../my-maestro\ncustom_field: something\nexpected_account: clientco\n")
         assert parse_marker_fields(marker) == {
             "maestro_root": "../my-maestro",
-            "expected_account": "riseapps",
+            "expected_account": "clientco",
         }
 
     def test_empty_file(self, tmp_path):
@@ -362,8 +362,8 @@ class TestReadExpectedAccount:
     """read_expected_account — convenience over find_marker + parse."""
 
     def test_returns_account(self, tmp_path):
-        (tmp_path / ".maestro").write_text("../my-maestro\nexpected_account: riseapps\n")
-        assert read_expected_account(tmp_path) == "riseapps"
+        (tmp_path / ".maestro").write_text("../my-maestro\nexpected_account: clientco\n")
+        assert read_expected_account(tmp_path) == "clientco"
 
     def test_returns_none_for_legacy_marker(self, tmp_path):
         """Legacy marker without the field → None (not empty string)."""
@@ -384,11 +384,11 @@ class TestFindMaestroRootWithExtendedMarker:
     def test_extended_marker_resolves(self, workspace):
         repo = workspace["repo"]
         maestro = workspace["maestro"]
-        (repo / ".maestro").write_text("../my-maestro\nexpected_account: riseapps\n")
+        (repo / ".maestro").write_text("../my-maestro\nexpected_account: clientco\n")
         assert find_maestro_root(repo) == maestro.resolve()
 
     def test_explicit_key_form_resolves(self, workspace):
         repo = workspace["repo"]
         maestro = workspace["maestro"]
-        (repo / ".maestro").write_text("maestro_root: ../my-maestro\nexpected_account: riseapps\n")
+        (repo / ".maestro").write_text("maestro_root: ../my-maestro\nexpected_account: clientco\n")
         assert find_maestro_root(repo) == maestro.resolve()

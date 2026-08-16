@@ -235,30 +235,30 @@ Nothing else changes — your existing `platform.yaml` / connections / hooks are
 
 ## 5. Multiple accounts on one machine
 
-Running both `personal` and `riseapps` (e.g. B2B outsource work)? Each needs its own bot, its own group, its own token, its own daemon:
+Running both `personal` and `client` (e.g. B2B outsource work)? Each needs its own bot, its own group, its own token, its own daemon:
 
 ```bash
 # Account setup
 otaman accounts add personal  --config-dir "~/.claude-personal"
-otaman accounts add riseapps --config-dir "~/.claude-riseapps"
+otaman accounts add client   --config-dir "~/.claude-client"
 
 otaman accounts configure-telegram personal  --group-id ... --allowed-user-ids ...
-otaman accounts configure-telegram riseapps --group-id ... --allowed-user-ids ...
+otaman accounts configure-telegram client   --group-id ... --allowed-user-ids ...
 
 # Secrets (one line per account)
 cat >> .otaman/secrets.env <<'EOF'
 OTAMAN_TG_BOT_PERSONAL=...
-OTAMAN_TG_BOT_RISEAPPS=...
+OTAMAN_TG_BOT_CLIENT=...
 EOF
 
 # Run both daemons (separate terminals, or background)
 otaman bridge run --account personal  &
-otaman bridge run --account riseapps &
+otaman bridge run --account client   &
 
 otaman bridge status
 # ACCOUNT   STATE    DETAIL
 # personal  running  pid=... transport=telegram ...
-# riseapps  running  pid=... transport=telegram ...
+# client    running  pid=... transport=telegram ...
 ```
 
 Each daemon has its own endpoint file at `~/.otaman/bridge-<account>.endpoint`, so they don't collide. The PreToolUse hook resolves which daemon to call by looking at `OTAMAN_ACTIVE_ACCOUNT` (set by the launcher) or the `CLAUDE_CONFIG_DIR` basename.

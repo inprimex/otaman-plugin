@@ -78,17 +78,17 @@ class TestResolve:
                 "active_connection": "local",
                 "accounts": {
                     "personal": {"config_dir": "~/.claude-personal"},
-                    "riseapps": {"config_dir": "~/.claude-riseapps"},
+                    "clientco": {"config_dir": "~/.claude-clientco"},
                 },
                 "connections": {
                     "local": {"type": "local", "account": "personal"},
-                    "lan": {"type": "ssh", "account": "riseapps"},
+                    "lan": {"type": "ssh", "account": "clientco"},
                 },
             },
         )
         state = lr.resolve(maestro_root, "lan", "bash")
         assert state["connection_name"] == "lan"
-        assert state["account_name"] == "riseapps"
+        assert state["account_name"] == "clientco"
         assert state["connection_type"] == "ssh"
 
     def test_extends_chain(self, maestro_root):
