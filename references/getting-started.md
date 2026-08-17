@@ -14,7 +14,7 @@ adopt later.
 
 **Prerequisites:**
 - Claude Code installed and authenticated (`claude --version` works)
-- Python 3.10+
+- Python 3.11+
 - `git`, `tmux` (optional but recommended)
 - 15 minutes
 
@@ -23,10 +23,20 @@ adopt later.
 ## Step 1: Install otaman (2 min)
 
 ```bash
-# Once otaman is published to PyPI (current state: pre-public release):
-pip install otaman-cli
+# The install script fetches the latest cosign-signed release and sets up
+# the CLI, plugin tree, and hooks:
+curl -fsSL https://get.otaman.ai/ce | sudo bash
 
-# Pre-release dev install — clone the 4 repos as siblings:
+# Pin a specific release instead of latest:
+curl -fsSL https://get.otaman.ai/ce | sudo bash -s -- --otaman-release=v0.2.19
+```
+
+<details>
+<summary>Contributor / from-source install</summary>
+
+Clone the four packages as siblings and wire them up with `uv`:
+
+```bash
 git clone https://github.com/inprimex/otaman-core
 git clone https://github.com/inprimex/otaman-cli
 git clone https://github.com/inprimex/otaman-bridge
@@ -34,6 +44,7 @@ git clone https://github.com/inprimex/otaman-plugin
 cd otaman-core/..  # parent of the 4 sibling checkouts
 uv sync --all-packages
 ```
+</details>
 
 Verify:
 ```bash
