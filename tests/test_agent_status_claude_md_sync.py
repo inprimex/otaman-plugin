@@ -1,33 +1,30 @@
 """Regression test for `agent-status-presence` task 2.4.
 
-The `## Agent Status (REQUIRED)` block must be present in BOTH:
+The `### Agent Status (REQUIRED)` block must be present in the CLAUDE.md
+scaffold TEMPLATE — `src/otaman_plugin/generate_agent_config.py` — so that
+every otaman-managed repo's locally-generated `CLAUDE.local.md` carries the
+rule. This guards the failure mode `core-agent` warned about in
+`20260609T145334-core-agent-to-plugin-agent-fyi-agent-status-presence-generator-temp`:
+if the block ever leaves the template, `otaman init` silently drops it.
 
-- `otaman-plugin/CLAUDE.md` (this repo's own canonical doc)
-- `otaman-plugin/src/otaman_plugin/generate_agent_config.py` (the
-  template used to scaffold every otaman-managed repo's CLAUDE.md)
-
-If the block lives in one but not the other, the next time
-`otaman init` regenerates CLAUDE.md the rule will silently disappear —
-exactly the failure mode `core-agent` warned about in
-`20260609T145334-core-agent-to-plugin-agent-fyi-agent-status-presence-generator-temp`.
-
-This test pins the two copies together so any future drift fails
-loudly during CI.
+History note: this test previously also pinned the block in this repo's
+committed `CLAUDE.md`. That coupling was removed by the 2026-08-18
+external-audit sanitize (spec-agent 20260818T142208 / 143518) — the
+committed CLAUDE.md is now the public-safe developer guide and carries NO
+orchestration block; the full block is generated into a gitignored
+`CLAUDE.local.md` (auto-loaded by Claude Code after CLAUDE.md). So the
+invariant now lives on the template alone.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 GENERATOR = REPO_ROOT / "src" / "otaman_plugin" / "generate_agent_config.py"
 
-# The literal lines we require to appear in both files. We do NOT pin the
-# full block — small wording tweaks to the explanatory line are fine —
-# but the load-bearing CLI signatures and section heading must match.
+# Load-bearing lines: the section heading + the three CLI signatures.
 _REQUIRED_LINES = [
     "### Agent Status (REQUIRED)",
     'otaman set-status working --task "<N.M task description>" --change <change-name>',
@@ -36,43 +33,31 @@ _REQUIRED_LINES = [
 ]
 
 
-@pytest.mark.parametrize(
-    "path",
-    [CLAUDE_MD, GENERATOR],
-    ids=["claude_md", "generator_template"],
-)
-def test_agent_status_block_present(path: Path):
-    """Both the live CLAUDE.md and the generator template carry the rule."""
-    assert path.is_file(), f"{path} missing"
-    text = path.read_text(encoding="utf-8")
+def test_agent_status_block_present_in_template():
+    """The generator template carries the Agent Status rule."""
+    text = GENERATOR.read_text(encoding="utf-8")
     for line in _REQUIRED_LINES:
         assert line in text, (
-            f"{path.name}: '{line}' missing from the Agent Status block. "
-            "If you intentionally moved the section, update _REQUIRED_LINES "
-            "in this test."
+            f"'{line}' missing from the Agent Status block in the generator "
+            "template. If you intentionally moved the section, update "
+            "_REQUIRED_LINES in this test."
         )
 
 
-def test_required_lines_appear_in_same_order_in_both():
-    """The CLI signatures appear in the same intent order in both copies.
-
-    Catches the case where the block is present in both files but the
-    order of working / waiting / idle has been shuffled out of sync —
-    a subtle drift that the per-file test above can't see.
-    """
-    claude = CLAUDE_MD.read_text(encoding="utf-8")
+def test_required_lines_appear_in_canonical_order_in_template():
+    """The working / waiting / idle signatures stay in intent order."""
     gen = GENERATOR.read_text(encoding="utf-8")
-    for line in _REQUIRED_LINES:
-        claude_idx = claude.index(line)
-        gen_idx = gen.index(line)
-        assert claude_idx >= 0 and gen_idx >= 0
-    # Walk the four required lines in CLAUDE.md and ensure their relative
-    # order matches the order in the generator template.
-    claude_positions = [claude.index(line) for line in _REQUIRED_LINES]
-    gen_positions = [gen.index(line) for line in _REQUIRED_LINES]
-    assert claude_positions == sorted(claude_positions), (
-        "CLAUDE.md Agent Status lines out of canonical order"
-    )
-    assert gen_positions == sorted(gen_positions), (
+    positions = [gen.index(line) for line in _REQUIRED_LINES]
+    assert positions == sorted(positions), (
         "Generator template Agent Status lines out of canonical order"
     )
+
+
+def test_committed_claude_md_is_sanitized():
+    """The committed CLAUDE.md must NOT carry the private orchestration
+    block (external-audit P0). The full block is generated into a gitignored
+    CLAUDE.local.md and auto-loaded locally."""
+    text = CLAUDE_MD.read_text(encoding="utf-8")
+    assert "<!-- otaman:begin -->" not in text
+    assert "## Otaman Orchestration Rules" not in text
+    assert "### Agent Status (REQUIRED)" not in text
