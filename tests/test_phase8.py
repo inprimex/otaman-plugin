@@ -134,7 +134,7 @@ class TestStandardsRendering:
         }
         (tmp_path / "web").mkdir()
         gen_config.generate_repo_claude_md(tmp_path, config)
-        content = (tmp_path / "web" / "CLAUDE.md").read_text(encoding="utf-8")
+        content = (tmp_path / "web" / "CLAUDE.local.md").read_text(encoding="utf-8")
         assert "**Framework**: nextjs" in content
         assert "**Package manager**: pnpm" in content
         assert "**Styling**: tailwind" in content

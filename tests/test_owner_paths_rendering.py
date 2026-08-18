@@ -42,7 +42,7 @@ def _generate(tmp_path: Path, repo: dict) -> str:
     repo_dir = tmp_path / repo["path"].lstrip("./")
     repo_dir.mkdir(parents=True, exist_ok=True)
     gen_config.generate_repo_claude_md(tmp_path, _config(repo))
-    return (repo_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    return (repo_dir / "CLAUDE.local.md").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ class TestMultiAgentMonorepo:
             "communication": {"bus_path": ".agents/bus", "format": "markdown"},
         }
         gen_config.generate_repo_claude_md(tmp_path, config)
-        content = (repo_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        content = (repo_dir / "CLAUDE.local.md").read_text(encoding="utf-8")
         # web-agent sees apps/web/** but not apps/api/**
         assert "- `apps/web/**`" in content
         assert "- `apps/api/**`" not in content

@@ -14,16 +14,17 @@ Creates:
     ├── ownership.json
     └── agents.yaml
 
-Also generates per-repo CLAUDE.md with ownership rules (appends if exists).
+Also writes per-repo orchestration rules to a gitignored CLAUDE.local.md
+(never the committed CLAUDE.md; Claude Code auto-loads it after CLAUDE.md).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -210,16 +211,41 @@ def generate_queue_files(project_root: Path, config: dict[str, Any]) -> list[str
     return created
 
 
+# Matches an otaman/maestro-managed block plus any surrounding blank lines,
+# so stripping it doesn't leave a run of empty lines behind.
+_MANAGED_BLOCK_RE = re.compile(
+    r"\n*<!-- (?:otaman|maestro):begin -->.*?<!-- (?:otaman|maestro):end -->\n*",  # legacy: maestro markers
+    re.DOTALL,
+)
+
+
 def generate_repo_claude_md(project_root: Path, config: dict[str, Any]) -> list[str]:
-    """Generate or append CLAUDE.md in each repo with ownership rules."""
+    """Write each repo's private orchestration rules to a gitignored CLAUDE.local.md.
+
+    Mechanism change (external-audit remediation, spec-agent 20260818T143518;
+    Roman-caught ordering trap): the private orchestration block is NEVER
+    written into the committed ``CLAUDE.md`` any more. It goes to
+    ``CLAUDE.local.md`` — a gitignored, per-project file Claude Code
+    auto-loads *after* ``CLAUDE.md`` (verified: memory.md; loads without an
+    ``@import`` line). Chosen over the proposed ``@import`` of a gitignored
+    file because Claude Code's behavior for a *missing* ``@import`` target is
+    unspecified (external-contributor risk), whereas a missing
+    ``CLAUDE.local.md`` degrades gracefully by construction — it is simply
+    absent and the public ``CLAUDE.md`` still loads. This permanently kills
+    the inline-injection pull-conflict / rule-leak class.
+
+    On each run:
+      1. (Re)write the orchestration block into ``CLAUDE.local.md``.
+      2. Migrate: if a legacy injected block still sits in ``CLAUDE.md``,
+         strip it (content now lives in ``CLAUDE.local.md``), preserving any
+         surrounding public content. A CLAUDE.md that is ONLY the block
+         (not-yet-sanitized repo) is left untouched for the owner's separate
+         sanitize commit — the rules are already safe in ``CLAUDE.local.md``,
+         so nothing is lost either way.
+      3. Never create or append the block into ``CLAUDE.md``.
+    """
     warnings: list[str] = []
     all_repos = config["repos"]
-
-    # Build lookup: agent -> list of repo names
-    agent_repos: dict[str, list[str]] = defaultdict(list)
-    for repo in all_repos:
-        agent_repos[repo["owner"]].append(repo["name"])
-
     bus_path = config.get("communication", {}).get("bus_path", ".agents/bus")
 
     for repo in all_repos:
@@ -228,26 +254,32 @@ def generate_repo_claude_md(project_root: Path, config: dict[str, Any]) -> list[
             warnings.append(f"Repo directory does not exist: {repo['path']}")
             continue
 
-        claude_md_path = repo_dir / "CLAUDE.md"
-        maestro_block = _build_maestro_block(repo, all_repos, bus_path, config, project_root)
+        block = _build_maestro_block(repo, all_repos, bus_path, config, project_root)
 
+        # 1. Write the block into CLAUDE.local.md (gitignored, generator-owned).
+        #    Idempotent: replace an existing managed block, else append (so a
+        #    human's own CLAUDE.local.md notes survive), else create.
+        local_path = repo_dir / "CLAUDE.local.md"
+        if local_path.exists():
+            existing_local = local_path.read_text(encoding="utf-8")
+            if _MANAGED_BLOCK_RE.search(existing_local):
+                updated_local = _MANAGED_BLOCK_RE.sub("\n" + block + "\n", existing_local)
+            else:
+                updated_local = existing_local.rstrip("\n") + "\n\n" + block + "\n"
+            local_path.write_text(updated_local, encoding="utf-8")
+        else:
+            local_path.write_text(block + "\n", encoding="utf-8")
+
+        # 2. Migrate any legacy inline block out of CLAUDE.md.
+        claude_md_path = repo_dir / "CLAUDE.md"
         if claude_md_path.exists():
             existing = claude_md_path.read_text(encoding="utf-8")
-            # Recognize both new (otaman:) and legacy (maestro:) markers so  # legacy: pre-rebrand reference
-            # existing in-the-wild CLAUDE.md files migrate cleanly on next init.
-            if (
-                "<!-- otaman:begin -->" in existing or "<!-- maestro:begin -->" in existing
-            ):  # legacy: pre-rebrand reference
-                import re
-
-                pattern = r"<!-- (?:otaman|maestro):begin -->.*?<!-- (?:otaman|maestro):end -->"  # legacy: pre-rebrand reference
-                updated = re.sub(pattern, maestro_block, existing, flags=re.DOTALL)
-                claude_md_path.write_text(updated, encoding="utf-8")
-            else:
-                with open(claude_md_path, "a", encoding="utf-8") as f:
-                    f.write("\n\n" + maestro_block + "\n")
-        else:
-            claude_md_path.write_text(maestro_block + "\n", encoding="utf-8")
+            if _MANAGED_BLOCK_RE.search(existing):
+                remainder = _MANAGED_BLOCK_RE.sub("\n", existing).strip()
+                if remainder:
+                    # Public content wrapped the block — keep it, drop the block.
+                    claude_md_path.write_text(remainder + "\n", encoding="utf-8")
+                # else: file was only the block — leave for the owner's sanitize.
 
     return warnings
 
@@ -503,6 +535,9 @@ def _build_maestro_block(
             methodology_section = "\n".join(lines)
 
     return f"""<!-- otaman:begin -->
+<!-- Generated by `otaman init` into CLAUDE.local.md (gitignored, local-only).
+     Private orchestration detail — never committed; re-run `otaman init` to
+     refresh. Auto-loaded by Claude Code after the committed CLAUDE.md. -->
 ## Otaman Orchestration Rules
 
 **You are `{repo["owner"]}`**. You own this repository: **{repo["name"]}**.
@@ -1225,7 +1260,7 @@ def main() -> int:
     if "--dry-run" in _sys.argv:
         print("  [dry-run] generate-agent-config: skipping all writes")
         print("  [dry-run] would generate: .agents/, ownership.json, queue files,")
-        print("  [dry-run]                 per-repo CLAUDE.md, .mcp.json, .claude/,")
+        print("  [dry-run]                 per-repo CLAUDE.local.md, .mcp.json, .claude/,")
         print("  [dry-run]                 .otaman marker, hooks, .gitignore")
         print("  [dry-run] re-run without --dry-run to apply")
         return 0
@@ -1245,9 +1280,9 @@ def main() -> int:
     import platform as plat
 
     py_ver = tuple(int(x) for x in plat.python_version().split(".")[:2])
-    if py_ver < (3, 10):
+    if py_ver < (3, 11):
         print(
-            f"WARNING: Python 3.10+ recommended (you have {plat.python_version()})", file=sys.stderr
+            f"WARNING: Python 3.11+ recommended (you have {plat.python_version()})", file=sys.stderr
         )
 
     # Create directories
@@ -1269,8 +1304,8 @@ def main() -> int:
     for q in queue_created:
         print(f"Created: {q}")
 
-    _phase("Writing per-repo CLAUDE.md", count=len(config["repos"]))
-    # Generate per-repo CLAUDE.md
+    _phase("Writing per-repo CLAUDE.local.md", count=len(config["repos"]))
+    # Write per-repo orchestration rules to gitignored CLAUDE.local.md
     warnings = generate_repo_claude_md(project_root, config)
     for w in warnings:
         print(f"WARNING: {w}")

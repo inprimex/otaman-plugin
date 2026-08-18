@@ -37,7 +37,7 @@ def _generate(tmp_path: Path, repo: dict) -> str:
     repo_dir = tmp_path / repo["path"].lstrip("./")
     repo_dir.mkdir(parents=True, exist_ok=True)
     gen_config.generate_repo_claude_md(tmp_path, _config(repo))
-    return (repo_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    return (repo_dir / "CLAUDE.local.md").read_text(encoding="utf-8")
 
 
 _REPO = {"name": "backend", "path": "./backend", "owner": "dev-agent"}
