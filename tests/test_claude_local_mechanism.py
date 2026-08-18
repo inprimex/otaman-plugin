@@ -104,6 +104,41 @@ class TestMigration:
         assert "keep me" in md
 
 
+class TestAutoGitignore:
+    """`otaman init` must gitignore CLAUDE.local.md in each managed repo, so
+    adopting the mechanism needs no manual .gitignore edit and the private
+    file is never committable (spec-agent 20260818T150407 inclusion a)."""
+
+    def test_gitignore_created_with_both_entries(self, tmp_path):
+        repo_dir = tmp_path / "backend"
+        repo_dir.mkdir(parents=True)
+        gen_config.install_maestro_markers(tmp_path, _config(_REPO))
+        gi = (repo_dir / ".gitignore").read_text(encoding="utf-8").splitlines()
+        assert ".otaman" in gi
+        assert "CLAUDE.local.md" in gi
+
+    def test_adds_claude_local_when_only_otaman_present(self, tmp_path):
+        # The core/bridge case: canonical block already lists .otaman but not
+        # CLAUDE.local.md; running init adds the missing line, no manual edit.
+        repo_dir = tmp_path / "backend"
+        repo_dir.mkdir(parents=True)
+        (repo_dir / ".gitignore").write_text("__pycache__/\n.otaman\n.env\n", encoding="utf-8")
+        gen_config.install_maestro_markers(tmp_path, _config(_REPO))
+        gi = (repo_dir / ".gitignore").read_text(encoding="utf-8")
+        assert "CLAUDE.local.md" in gi.splitlines()
+        assert gi.count(".otaman\n") == 1  # existing entry not duplicated
+        assert ".env" in gi  # existing content preserved
+
+    def test_idempotent_no_duplicate_entries(self, tmp_path):
+        repo_dir = tmp_path / "backend"
+        repo_dir.mkdir(parents=True)
+        gen_config.install_maestro_markers(tmp_path, _config(_REPO))
+        gen_config.install_maestro_markers(tmp_path, _config(_REPO))
+        gi = (repo_dir / ".gitignore").read_text(encoding="utf-8").splitlines()
+        assert gi.count("CLAUDE.local.md") == 1
+        assert gi.count(".otaman") == 1
+
+
 class TestIdempotencyAndCoexistence:
     def test_two_runs_do_not_duplicate_block(self, tmp_path):
         _run(tmp_path)

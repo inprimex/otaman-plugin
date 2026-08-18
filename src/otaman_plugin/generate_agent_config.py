@@ -234,6 +234,16 @@ def generate_repo_claude_md(project_root: Path, config: dict[str, Any]) -> list[
     absent and the public ``CLAUDE.md`` still loads. This permanently kills
     the inline-injection pull-conflict / rule-leak class.
 
+    UPSTREAM-DEPENDENCY WATCH (spec-agent 20260818T150407): CLAUDE.local.md
+    auto-loading is a Claude Code behavior that has been described as
+    soft-deprecated in favor of imports at points. It is verified working
+    today (memory.md + core-agent's pilot check "CLAUDE.local.md still
+    auto-loads"). Because the generator owns this in ONE place, if a future
+    Claude Code drops auto-loading we swap to @import (by then hopefully
+    specified) here without touching any repo. Any pilot/doctor check
+    guarding the mechanism SHOULD assert the local rules actually load, so an
+    upgrade cannot silently orphan them.
+
     On each run:
       1. (Re)write the orchestration block into ``CLAUDE.local.md``.
       2. Migrate: if a legacy injected block still sits in ``CLAUDE.md``,
@@ -1099,7 +1109,9 @@ def generate_repo_settings(project_root: Path, config: dict[str, Any]) -> list[s
 def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[str]:
     """Write .maestro marker files in each managed repo pointing back to the maestro folder.  # legacy: pre-rebrand reference
 
-    Also appends .otaman to each repo's .gitignore if not already present.
+    Also ensures each repo's .gitignore lists the generator's local-only
+    files — the .otaman marker and CLAUDE.local.md — so adopting the
+    orchestration mechanism needs no manual .gitignore edit.
     Returns list of status messages.
     """
     results: list[str] = []
@@ -1148,27 +1160,31 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
         else:
             results.append(f"Marker: {repo['name']}/.otaman -> {rel_posix}")
 
-        # Append .otaman to repo's .gitignore if not already there
+        # Ensure the local-only files the generator writes are gitignored:
+        # the .otaman marker AND CLAUDE.local.md (the private orchestration
+        # rules). Auto-adding CLAUDE.local.md here is what makes it safe for
+        # a repo to adopt the mechanism just by running init — no manual
+        # .gitignore edit, no window where the private file is committable.
         gitignore = repo_dir / ".gitignore"
-        marker_entry = ".otaman"
-        if gitignore.exists():
-            content = gitignore.read_text(encoding="utf-8")
-            if marker_entry not in content.splitlines():
-                with open(gitignore, "a", encoding="utf-8") as f:
-                    if not content.endswith("\n"):
-                        f.write("\n")
-                    f.write(
-                        "\n# Maestro marker file (local pointer to maestro folder)\n"
-                    )  # legacy: pre-rebrand reference
-                    f.write(f"{marker_entry}\n")
-                results.append(f"Updated: {repo['name']}/.gitignore (added .otaman)")
-        else:
-            gitignore.write_text(
-                f"# Maestro marker file (local pointer to maestro folder)\n"  # legacy: pre-rebrand reference
-                f"{marker_entry}\n",
-                encoding="utf-8",
-            )
-            results.append(f"Created: {repo['name']}/.gitignore (with .otaman)")
+        wanted = [
+            ("# Otaman marker file (local pointer to otaman workspace)", ".otaman"),
+            (
+                "# Local-only orchestration rules written by `otaman init` (gitignored, never committed)",
+                "CLAUDE.local.md",
+            ),
+        ]
+        content = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+        present = set(content.splitlines())
+        missing = [(comment, entry) for comment, entry in wanted if entry not in present]
+        if missing:
+            with open(gitignore, "a", encoding="utf-8") as f:
+                if content and not content.endswith("\n"):
+                    f.write("\n")
+                for comment, entry in missing:
+                    f.write(f"\n{comment}\n{entry}\n")
+            added = ", ".join(entry for _, entry in missing)
+            verb = "Updated" if content else "Created"
+            results.append(f"{verb}: {repo['name']}/.gitignore (added {added})")
 
     return results
 
