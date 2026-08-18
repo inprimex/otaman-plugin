@@ -42,7 +42,7 @@ mechanism, not a security bypass:
 - Optional explicit expiry
 
 The bridge already supports both modes and prefers PAT when set. The
-[bootstrap creates the PAT automatically](https://github.com/inprimex/otaman-deploy/blob/main/scripts/zitadel-bootstrap.py).
+bootstrap script (ships with otaman-deploy) creates the PAT automatically.
 
 ---
 
@@ -145,9 +145,9 @@ OIDC_ISSUER=https://otaman-auth.your-team.example
 OIDC_ORG_ID=<numeric>
 OIDC_PROJECT_ID=<numeric>
 OIDC_AUDIENCE_BRIDGE=<numeric>
-OTAMAN_DCR_SHIM_PAT=<opaque token>           # ← used by bridge to call mgmt API
-OTAMAN_DCR_SHIM_CLIENT_ID=otaman-dcr-shim    # ← legacy fallback (won't work behind Cloudflare)
-OTAMAN_DCR_SHIM_SECRET=<secret>              # ← legacy fallback
+OTAMAN_DCR_SHIM_PAT=<opaque token>           # <= used by bridge to call mgmt API
+OTAMAN_DCR_SHIM_CLIENT_ID=otaman-dcr-shim    # <= legacy fallback (won't work behind Cloudflare)
+OTAMAN_DCR_SHIM_SECRET=<secret>              # <= legacy fallback
 ```
 
 Append this fragment to `/etc/otaman/secrets.env`.
@@ -200,7 +200,7 @@ curl -i -X POST https://otaman.your-team.example/mcp \
 
 Then in a Claude Code session pointing at the bridge URL (see
 [team-mode setup](team-mode-setup.md) for the `.mcp.json`), run
-`/mcp` → Authenticate → log in via Zitadel in the browser → tool
+`/mcp` => Authenticate => log in via Zitadel in the browser => tool
 calls succeed.
 
 ---

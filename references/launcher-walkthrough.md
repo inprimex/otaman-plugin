@@ -36,10 +36,10 @@ Launcher folders are **decoupled from the project itself**, which means:
 Typical layout:
 
 ```
-C:\work\launchers\my-project\        ← launcher folder (Windows laptop)
-├── launch.ps1                       ← thin wrapper, calls the orchestrator
-├── launch-settings.yaml             ← connections + accounts (this file)
-└── platform.yaml                    ← copy of project's platform.yaml
+C:\work\launchers\my-project\        <= launcher folder (Windows laptop)
+├── launch.ps1                       <= thin wrapper, calls the orchestrator
+├── launch-settings.yaml             <= connections + accounts (this file)
+└── platform.yaml                    <= copy of project's platform.yaml
 ```
 
 Or on Linux/macOS: `~/launchers/my-project/launch.sh` + same yaml pair.

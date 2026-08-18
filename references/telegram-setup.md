@@ -123,7 +123,7 @@ forum topics.
 2. Add your bot to the group as an administrator. Required permissions:
    - Pin messages
    - Manage topics (this enables auto-created forum topics per project)
-3. Enable **Topics** in the group settings (group info → edit → enable Topics).
+3. Enable **Topics** in the group settings (group info => edit => enable Topics).
 4. Find the group_id (looks like `-1001234567890`):
    - **Easiest method:** add the bot @username_to_id_bot or @get_id_bot
      to the group temporarily. It posts the group's chat ID; copy it.

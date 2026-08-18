@@ -175,9 +175,9 @@ gantt
 
 | Gate | Criteria | Artifacts Required |
 |------|----------|-------------------|
-| Discovery → MVP | Assumptions validated, specs approved | Updated estimation, platform.yaml |
-| MVP → Phase 2 | Core features complete, tested | QA report, user acceptance |
-| Phase 2 → Launch | All features complete, compliance ready | Compliance report, pen test |
+| Discovery => MVP | Assumptions validated, specs approved | Updated estimation, platform.yaml |
+| MVP => Phase 2 | Core features complete, tested | QA report, user acceptance |
+| Phase 2 => Launch | All features complete, compliance ready | Compliance report, pen test |
 
 ### 9. Next Steps (1-2 pages)
 

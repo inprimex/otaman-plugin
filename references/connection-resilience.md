@@ -40,7 +40,7 @@ otaman-{project}-{repo-name-sanitised}
 - `{project}` is the `project:` field from `platform.yaml`.
 - `{repo-name-sanitised}` strips characters that tmux disallows in session
   names. Dots, colons, and other non-`[A-Za-z0-9_-]` characters become
-  underscores. Example: `GreenBin.Resources` → `GreenBin_Resources`.
+  underscores. Example: `GreenBin.Resources` => `GreenBin_Resources`.
 
 This is deterministic — relaunching the same tab from the same launcher
 always resolves to the same session name, which is how reattach-on-drop
@@ -63,9 +63,9 @@ mesh VPN (Tailscale / WireGuard / NetBird). The compatibility matrix:
 
 **Recommendation by situation:**
 
-- You reach your remote via VPN → use `reliability: tmux+mosh`. Auto-reconnect is essentially free.
-- You reach your remote via direct port-forward → start with `reliability: tmux`. Add mosh later if you're willing to forward the UDP range.
-- You're inside a corporate network with strict firewalls → `reliability: tmux`. Don't fight the firewall for mosh.
+- You reach your remote via VPN => use `reliability: tmux+mosh`. Auto-reconnect is essentially free.
+- You reach your remote via direct port-forward => start with `reliability: tmux`. Add mosh later if you're willing to forward the UDP range.
+- You're inside a corporate network with strict firewalls => `reliability: tmux`. Don't fight the firewall for mosh.
 
 ## Troubleshooting
 

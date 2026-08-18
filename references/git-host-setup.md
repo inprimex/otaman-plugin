@@ -23,13 +23,13 @@ are identical:
 than classic PATs).
 
 1. Go to https://github.com/settings/personal-access-tokens
-2. Click **Generate new token** → **Fine-grained tokens**
+2. Click **Generate new token** => **Fine-grained tokens**
 3. Name: `otaman-<project>` (e.g., `otaman-myapp`)
 4. Expiration: pick a defensible duration (90 days is a sensible default)
 5. Resource owner: your user or org (org tokens may need owner approval)
-6. Repository access: **Only select repositories** → pick the ones in
+6. Repository access: **Only select repositories** => pick the ones in
    your project's `platform.yaml`
-7. Permissions → **Repository permissions**:
+7. Permissions => **Repository permissions**:
    - **Contents: Read-only** (required for `otaman git-host pr list`)
    - **Pull requests: Read and write** (required for `otaman git-host
      pr comment` and `otaman git-host post-review`)
@@ -86,15 +86,15 @@ git_host:
 Bitbucket Cloud uses **app passwords**, not PATs. Different mechanism
 but conceptually similar.
 
-1. Click your avatar (bottom-left) → **Personal settings**
-2. Under "Access management" → **App passwords**
+1. Click your avatar (bottom-left) => **Personal settings**
+2. Under "Access management" => **App passwords**
 3. Create new app password. Label: `otaman-<project>`
 4. **Permissions:**
-   - Account → Read
-   - Workspace membership → Read
-   - Projects → Read (Read and write if you need to update PRs)
-   - Pull requests → Read and write
-   - Repositories → Read
+   - Account => Read
+   - Workspace membership => Read
+   - Projects => Read (Read and write if you need to update PRs)
+   - Pull requests => Read and write
+   - Repositories => Read
 5. Create. The dialog shows your username + the app password — copy
    both.
 
@@ -118,14 +118,14 @@ secrets chain.
 
 ## Azure DevOps
 
-1. In Azure DevOps, click your profile (top-right) → **Personal access
+1. In Azure DevOps, click your profile (top-right) => **Personal access
    tokens**
 2. **New Token**. Name: `otaman-<project>`
 3. Organization: pick the org containing your project
 4. Expiration: 90 days
 5. **Scopes** — click **Custom defined**:
-   - **Code** → Read & write (write needed for PR comments)
-   - **Pull Request Threads** → Read & write
+   - **Code** => Read & write (write needed for PR comments)
+   - **Pull Request Threads** => Read & write
 6. Create. Copy the token (long base64-ish string).
 
 In otaman config:

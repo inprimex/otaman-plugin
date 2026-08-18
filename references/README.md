@@ -65,4 +65,4 @@ Schema + protocol references, not step-by-step tutorials:
 - All walkthroughs target **15 minutes or less** of focused setup time.
 - Every walkthrough has a **troubleshooting** section for the 5 most common failures.
 - Commands assume Unix/macOS shells with `bash` / `zsh` unless explicitly flagged for Windows PowerShell.
-- The `_secrets` chain (env → dotenv → keyring) is the universal pattern for storing tokens; **never** put tokens in `platform.yaml` or `launch-settings.yaml`.
+- The `_secrets` chain (env => dotenv => keyring) is the universal pattern for storing tokens; **never** put tokens in `platform.yaml` or `launch-settings.yaml`.

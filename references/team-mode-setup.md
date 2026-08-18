@@ -193,7 +193,7 @@ Common causes:
   PY
   ```
 
-  Then `/mcp` → Re-authenticate.
+  Then `/mcp` => Re-authenticate.
 
 - **Claude Code shows `Auth: ✔ authenticated` but `Status: △ needs
   authentication`**: pick "Re-authenticate" — same recovery as above.

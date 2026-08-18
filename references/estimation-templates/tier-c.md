@@ -1,6 +1,6 @@
 # Tier C — Standard Estimation Template (10-15 pages)
 
-**Methods**: Parametric (decompose into countable units) or Capacity-Based (budget ÷ rate → scope options).
+**Methods**: Parametric (decompose into countable units) or Capacity-Based (budget ÷ rate => scope options).
 **Accuracy**: ±25-30%
 
 ## Sections
@@ -25,7 +25,7 @@ Sum + project-level adjustments.
 
 ### Capacity-Based Method
 
-Budget ÷ blended rate → total hours → productivity coefficient (0.65-0.70) → allocate:
+Budget ÷ blended rate => total hours => productivity coefficient (0.65-0.70) => allocate:
 - Feature development: 50-60%
 - Testing: 15-20%
 - Infrastructure & DevOps: 10-15%
