@@ -16,5 +16,23 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# Maestro marker file (local pointer to maestro folder)
+# Otaman marker file (local pointer to otaman workspace)
 .otaman
+
+# Wiki — generated output (committed only for spikes/samples)
+.otaman-wiki/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+*.env
+secrets.env
+*.secret
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+.maestro/
