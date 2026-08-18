@@ -19,6 +19,11 @@ Thumbs.db
 # Otaman marker file (local pointer to otaman workspace)
 .otaman
 
+# Local-only orchestration rules injected by `otaman init` (private:
+# fleet layout, agent map, bus internals). Auto-loaded by Claude Code
+# after the committed CLAUDE.md; never committed.
+CLAUDE.local.md
+
 # Wiki — generated output (committed only for spikes/samples)
 .otaman-wiki/
 
