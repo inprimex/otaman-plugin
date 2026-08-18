@@ -86,7 +86,7 @@ otaman scan .
 ```
 
 Otaman walks the directory, detects the 3 repos, suggests owner agents
-based on filename hints (REAMDE-only → docs-agent), and creates a
+based on filename hints (REAMDE-only => docs-agent), and creates a
 `platform.yaml.draft` inside a new `otaman-quickstart-otaman/` folder
 (your maestro folder).
 

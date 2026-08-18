@@ -1,7 +1,7 @@
 # Messenger Configuration — Setup Guide
 
 How to wire a otaman account to a messenger transport. Covers the
-full bot-creation → token-storage → config-wiring → smoke-test path
+full bot-creation => token-storage => config-wiring => smoke-test path
 for each supported transport.
 
 **Currently supported:**
@@ -49,15 +49,15 @@ BotFather replies with a token of the form `7123456789:AAE...` — save it, you'
 
 Recommended BotFather settings:
 ```
-/setprivacy → <your bot> → Disable     (lets the bot read group messages —
+/setprivacy => <your bot> => Disable     (lets the bot read group messages —
                                          needed for T2d bus surfacing later)
-/setjoingroups → <your bot> → Enable   (default; lets admin add it to groups)
+/setjoingroups => <your bot> => Enable   (default; lets admin add it to groups)
 ```
 
 ### 2.2 Group creation + forum topics
 
-1. Create a supergroup in Telegram (New Group → add your bot).
-2. **Manage group → Topics → toggle ON.** This is what lets the bridge post per-project threads. Without this, `createForumTopic` API calls fail.
+1. Create a supergroup in Telegram (New Group => add your bot).
+2. **Manage group => Topics => toggle ON.** This is what lets the bridge post per-project threads. Without this, `createForumTopic` API calls fail.
 3. Promote the bot to admin. Required rights: **Manage topics** (+ **Delete messages** is handy for cleanup).
 
 **Find the group ID.** Easiest: add `@getidsbot` to the group briefly, it DMs you the ID. The ID for supergroups with forum topics is negative and starts with `-100`. Example: `-1001234567890`.
@@ -272,7 +272,7 @@ Each daemon has its own endpoint file at `~/.otaman/bridge-<account>.endpoint`, 
 | Phone doesn't buzz at all | `otaman afk status` (probably off) + `otaman bridge status` (daemon not running?) |
 | Daemon crashes on startup with `bot_token is required` | `.otaman/secrets.env` missing or key name wrong |
 | `python-telegram-bot not installed` | `pip install -r requirements-bridge.txt` |
-| `createForumTopic` errors in daemon log | Group isn't a forum; Manage group → Topics → ON. Delete `~/.otaman/bridge-<account>-topics.json` to clear cached failures. |
+| `createForumTopic` errors in daemon log | Group isn't a forum; Manage group => Topics => ON. Delete `~/.otaman/bridge-<account>-topics.json` to clear cached failures. |
 | Taps do nothing, daemon logs "rejected tap from uid=..." | Your user ID isn't in `allowed_user_ids`. Run `configure-telegram` again with the right IDs. |
 | "message thread not found" | Topic was deleted from the group. Delete `~/.otaman/bridge-<account>-topics.json`; next message recreates it. |
 | `endpoint file already exists` on `bridge run` | Stale after a crash. Run `otaman bridge stop --account <name>` or delete `~/.otaman/bridge-<name>.endpoint` and retry. |
