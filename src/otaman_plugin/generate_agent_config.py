@@ -1198,6 +1198,19 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
     """
     results: list[str] = []
     runtime_dir = project_root / ".otaman"
+    if runtime_dir.exists() and not runtime_dir.is_dir():
+        # A file-shape `.otaman` marker occupies this path (both marker
+        # shapes are live in the fleet). `mkdir(exist_ok=True)` only
+        # tolerates an existing *directory*, so a file here crashed with
+        # FileExistsError and blocked init --update. Skip the .otaman/
+        # runtime dir + secrets stub gracefully — the load-bearing
+        # CLAUDE.local.md generation happens elsewhere and is unaffected.
+        # (cli-agent 20260818T210201.)
+        results.append(
+            f"WARNING: {runtime_dir} is a file-shape marker, not a runtime "
+            "directory — skipping .otaman/ secrets-infra setup"
+        )
+        return results
     runtime_dir.mkdir(exist_ok=True)
 
     # Emit .otaman/secrets.env.example if absent. Don't clobber existing stubs

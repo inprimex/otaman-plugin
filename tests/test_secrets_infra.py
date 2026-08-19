@@ -45,6 +45,28 @@ class TestRuntimeDirAndExample:
         assert "OTAMAN_TG_BOT_PERSONAL=" in content
         assert "NEVER commit" in content
 
+    def test_idempotent_on_existing_dir(self, maestro_folder):
+        install_secrets_infra(maestro_folder, {})
+        install_secrets_infra(maestro_folder, {})  # must not raise
+        assert (maestro_folder / ".otaman").is_dir()
+
+
+class TestFileShapeMarker:
+    """A file-shape `.otaman` marker at the root must not crash init
+    (cli-agent 20260818T210201). `mkdir(exist_ok=True)` only tolerates an
+    existing *directory*, so a file there raised FileExistsError and blocked
+    init --update for file-shape-marker metas."""
+
+    def test_file_shape_marker_skips_gracefully(self, tmp_path):
+        root = tmp_path / "meta"
+        root.mkdir()
+        (root / ".otaman").write_text("../otaman-meta\n", encoding="utf-8")  # FILE
+        results = install_secrets_infra(root, {})  # must not raise
+        assert (root / ".otaman").is_file()  # marker preserved, not clobbered
+        assert any("file-shape marker" in r for r in results)
+        # No runtime dir / stub was created over the marker.
+        assert not (root / ".otaman").is_dir()
+
     def test_does_not_overwrite_existing_example(self, maestro_folder):
         """User may have customized .example with project-specific keys."""
         runtime = maestro_folder / ".otaman"
