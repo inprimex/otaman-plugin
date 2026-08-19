@@ -669,6 +669,29 @@ This is a single CLI call — no file editing, no token overhead. It lets the hu
   signal, not an error. (Per `fix-otaman-complete-task-drift`.)
 - **Lifecycle**: task-assignment received -> ack "read" -> implement -> `otaman complete` -> ack "resolved"
 - NEVER ack a task-assignment as "resolved" without first running `otaman complete`
+
+### Sequenced Task-Assignments (coordination contract)
+
+When a `task-assignment` you SEND has cross-agent ordering — its work depends on, or is depended on by, another agent's step in the same work item — it MUST carry BOTH the sequencing frontmatter AND the coordination sections. One without the other is malformed and `otaman send` refuses it, naming the missing half. Single-task assignments with no ordering carry NONE of this — don't tax the common case.
+
+**Frontmatter (all four fields, mandatory when sequenced):**
+- `sequence-id: <slug>` — shared by every step of the work item (lowercase `[a-z0-9][a-z0-9._-]`, max 64 chars)
+- `step: <n>/<m>` — the recipient's step out of m total (`1 <= n <= m`)
+- `depends-on: [step N, ...]` — steps that must finish first; empty `[]` for step 1
+- `stop-at: <short state>` — a machine-quotable statement of the stop point
+
+Send form: `otaman send <to> --type task-assignment --sequence-id <id> --step <n>/<m> --depends-on "step N" --stop-at "<state>"` — cli validates and refuses a malformed `step` or an unknown `depends-on` reference at send time.
+
+**Five body sections (include every one that applies):**
+1. `## Sequence` — the ordered steps × owners table for the whole item, with the recipient's row marked **YOU ARE HERE**.
+2. `## Your step` — the scope boundary plus an explicit **STOP-AT**: the state at which continuing would conflict with another step (e.g. "stop when the PR is open — do NOT merge").
+3. `## Handoff` — what "done" produces, who consumes it, and what it unblocks.
+4. `## Context` — where this sits in the larger scope (the parent change / campaign / outcome it serves, and why now), whenever the item belongs to one.
+5. `## Artifacts` — direct links/paths to the documents for THIS task (specs, design docs, PRs, evidence messages); `none` is an acceptable value.
+
+**STOP-AT discipline (recipients — honor it over initiative):** when you reach your step's STOP-AT, STOP, report the handoff, and do NOT begin a later step even when the follow-on work is obvious. The stop exists to prevent a conflict with another agent's step (see the 2026-08-18 amendment-race incident).
+
+**`otaman check`** annotates a pending assignment whose `depends-on` is unsatisfied with `[waiting on step N (owner)]` — advisory (acting isn't hard-blocked), but treat it as a real gate unless you know the dependency has cleared.
 {specs_section}
 {standards_section}
 {methodology_section}
