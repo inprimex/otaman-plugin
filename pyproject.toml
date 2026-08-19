@@ -10,7 +10,9 @@ dependencies = [
     "otaman-core",
     # fastmcp powers the bus_server and estimation_server MCP servers.
     # Keep loosely pinned for now; revisit if breaking releases land.
-    "fastmcp>=2,<4",
+    # Pin to 2.x: the servers + tests use the fastmcp 2 tool API (e.g.
+    # `tool.fn`), which fastmcp 3 removed. Migrating to 3.x is a separate task.
+    "fastmcp>=2,<3",
 ]
 
 [project.optional-dependencies]

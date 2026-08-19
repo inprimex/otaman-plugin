@@ -106,8 +106,8 @@ class DotenvSource:
         dotenv_path = Path(maestro_root) / ".otaman" / "secrets.env"
         if not dotenv_path.is_file():
             dotenv_path = (
-                Path(maestro_root) / ".maestro" / "secrets.env"
-            )  # legacy: .maestro/secrets.env path
+                Path(maestro_root) / ".maestro" / "secrets.env"  # legacy: .maestro/secrets.env path
+            )
         if not dotenv_path.is_file():
             return None
         return _read_dotenv_value(dotenv_path, name)
@@ -124,8 +124,8 @@ class KeyringSource:
         except ImportError:
             return None
         service = (
-            spec.get("service") or "maestro"
-        )  # legacy: maestro keyring service name as fallback
+            spec.get("service") or "maestro"  # legacy: maestro keyring service name as fallback
+        )
         account = spec.get("account") or spec.get("name")
         if not account:
             return None
