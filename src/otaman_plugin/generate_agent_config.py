@@ -211,7 +211,7 @@ def generate_queue_files(project_root: Path, config: dict[str, Any]) -> list[str
     return created
 
 
-# Matches an otaman/maestro-managed block plus any surrounding blank lines,
+# Matches an otaman/maestro-managed block plus surrounding blank lines (legacy: maestro markers),
 # so stripping it doesn't leave a run of empty lines behind.
 _MANAGED_BLOCK_RE = re.compile(
     r"\n*<!-- (?:otaman|maestro):begin -->.*?<!-- (?:otaman|maestro):end -->\n*",  # legacy: maestro markers
@@ -1120,8 +1120,8 @@ def install_maestro_markers(project_root: Path, config: dict[str, Any]) -> list[
         repo_dir = (project_root / repo["path"]).resolve()
         if not repo_dir.is_dir():
             results.append(
-                f"WARNING: Repo not found: {repo['path']}, skipping .maestro marker"
-            )  # legacy: pre-rebrand reference
+                f"WARNING: Repo not found: {repo['path']}, skipping .maestro marker"  # legacy: pre-rebrand reference
+            )
             continue
 
         # Compute relative path from repo to maestro folder  # legacy: pre-rebrand reference
@@ -1250,8 +1250,8 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
                 if existing and not existing.endswith("\n"):
                     f.write("\n")
                 f.write(
-                    "\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"
-                )  # legacy: pre-rebrand reference
+                    "\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"  # legacy: pre-rebrand reference
+                )
                 for e in missing:
                     f.write(f"{e}\n")
             results.append(f"Updated: .gitignore (+{len(missing)} entries for .otaman/ runtime)")
@@ -1263,8 +1263,8 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
             encoding="utf-8",
         )
         results.append(
-            "Created: .gitignore (maestro runtime entries)"
-        )  # legacy: pre-rebrand reference
+            "Created: .gitignore (maestro runtime entries)"  # legacy: pre-rebrand reference
+        )
 
     return results
 

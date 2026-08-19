@@ -10,7 +10,9 @@ dependencies = [
     "otaman-core",
     # fastmcp powers the bus_server and estimation_server MCP servers.
     # Keep loosely pinned for now; revisit if breaking releases land.
-    "fastmcp>=2,<4",
+    # Pin to 2.x: the servers + tests use the fastmcp 2 tool API (e.g.
+    # `tool.fn`), which fastmcp 3 removed. Migrating to 3.x is a separate task.
+    "fastmcp>=2,<3",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +42,9 @@ packages = ["src/otaman_plugin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "../otaman-core/src"]
+# otaman-cli is on the path because the MCP tools (e.g. otaman_notify_change)
+# and their tests import otaman_cli.* — a sibling checkout, like otaman-core.
+pythonpath = ["src", "../otaman-core/src", "../otaman-cli/src"]
 
 # ce-lint-standard baseline (openspec). Repos MAY add lint categories,
 # MUST NOT remove baseline ones. Suppress per-line (# noqa) or via

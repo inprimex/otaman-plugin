@@ -135,8 +135,11 @@ class TestPs1LauncherContract:
         end = text.index("\n}\n", idx)
         snippet = text[idx:end]
         assert "[string]$WindowName" in snippet, "Wrap-WithTmux must accept a $WindowName parameter"
-        assert "-n '$WindowName'" in snippet, (
-            "Wrap-WithTmux must emit `-n '<repo>'` in tmux new-session args"
+        # Emits `-n $WindowName` (the repo name interpolated); the earlier
+        # single-quoted form was dropped — PowerShell double-quoted context
+        # interpolates either way and slug repo names need no quoting.
+        assert "-n $WindowName" in snippet, (
+            "Wrap-WithTmux must emit `-n <repo>` in tmux new-session args"
         )
 
     def test_build_ssh_command_passes_repo_as_window_name(self, text: str):

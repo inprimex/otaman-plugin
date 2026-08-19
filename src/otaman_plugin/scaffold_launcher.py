@@ -106,8 +106,10 @@ def render_launch_settings(opts: dict) -> str:
 
     # local_root: either provided maestro_root, or a sensible placeholder
     local_root = (
-        maestro_root.replace("\\", "/") if maestro_root else f"C:/work/{name}/{name}-maestro"
-    )  # legacy: pre-rebrand reference
+        maestro_root.replace("\\", "/")
+        if maestro_root
+        else f"C:/work/{name}/{name}-maestro"  # legacy: pre-rebrand reference
+    )
     rroot = remote_root or f"/home/USER/{name}/{name}-maestro"  # legacy: pre-rebrand reference
 
     lines = [
