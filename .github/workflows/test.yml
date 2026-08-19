@@ -49,6 +49,13 @@ jobs:
           token: ${{ secrets.INPRIMEX_RO_TOKEN }}
           path: workspace/otaman-core
 
+      - name: Checkout otaman-cli (sibling — MCP tools import otaman_cli.*)
+        uses: actions/checkout@v7
+        with:
+          repository: inprimex/otaman-cli
+          token: ${{ secrets.INPRIMEX_RO_TOKEN }}
+          path: workspace/otaman-cli
+
       - name: Generate workspace pyproject.toml
         shell: bash
         working-directory: workspace

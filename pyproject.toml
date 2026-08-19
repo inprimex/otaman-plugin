@@ -42,7 +42,9 @@ packages = ["src/otaman_plugin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "../otaman-core/src"]
+# otaman-cli is on the path because the MCP tools (e.g. otaman_notify_change)
+# and their tests import otaman_cli.* — a sibling checkout, like otaman-core.
+pythonpath = ["src", "../otaman-core/src", "../otaman-cli/src"]
 
 # ce-lint-standard baseline (openspec). Repos MAY add lint categories,
 # MUST NOT remove baseline ones. Suppress per-line (# noqa) or via
