@@ -1,7 +1,11 @@
 name: test
 
 on:
-  workflow_dispatch:  # manual trigger only — auto-triggers disabled until billing resolved
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:  # manual trigger retained
 
 env:
   # Force Node 24 runtime now (deprecated Node 20 removed Sep 16 2026).
@@ -96,3 +100,23 @@ jobs:
       - name: Run tests
         working-directory: workspace/otaman-plugin
         run: uv run pytest tests/ -v
+
+  # Single stable status check for branch protection. `lint` and `test`
+  # (the latter a 3-OS matrix) expand into several context names that are
+  # brittle to require individually; require `ci-ok` instead. `if: always()`
+  # + the explicit result gate means a failed/ skipped dependency makes
+  # ci-ok FAIL (not skip) — a skipped required check would otherwise let a
+  # broken PR through.
+  ci-ok:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Verify required jobs passed
+        run: |
+          echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }}"
+          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::A required job did not succeed."
+            exit 1
+          fi
+          echo "All required jobs passed."
