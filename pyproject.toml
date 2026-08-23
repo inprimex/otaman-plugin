@@ -12,7 +12,7 @@ dependencies = [
     # Keep loosely pinned for now; revisit if breaking releases land.
     # Pin to 2.x: the servers + tests use the fastmcp 2 tool API (e.g.
     # `tool.fn`), which fastmcp 3 removed. Migrating to 3.x is a separate task.
-    "fastmcp>=2,<3",
+    "fastmcp>=2,<4",
 ]
 
 [project.optional-dependencies]
