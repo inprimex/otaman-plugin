@@ -129,8 +129,9 @@ def _write_program_connections(program_root: Path, entries: list[dict]) -> None:
     (program_root / "connections.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _persist_report(program_root: Path, **fields) -> None:
-    """Write a check report into core's canonical store at report_store_path."""
+def _persist_report(home: Path, program: str, **fields) -> None:
+    """Write a check report into core's canonical TENANT-home store (otaman-core
+    #22 API: report_store_path(home), program-keyed, persist_reports(..., program))."""
     from otaman_core.connection_check import (
         CheckReport,
         persist_reports,
@@ -148,30 +149,44 @@ def _persist_report(program_root: Path, **fields) -> None:
         healed=fields.get("healed", False),
         checked_at=fields["checked_at"],
     )
-    persist_reports([report], report_store_path(program_root))
+    persist_reports([report], report_store_path(home), program=program)
 
 
-def test_last_check_joins_core_store_end_to_end(tmp_path):
-    """Generator reads core's canonical store (report_store_path) and renders
-    the joined last-check via render_last_check — no live checks."""
+def test_last_check_joins_core_store_end_to_end(tmp_path, monkeypatch):
+    """Generator reads core's canonical tenant-home store keyed by program and
+    renders the joined last-check via render_last_check — no live checks. The
+    generator calls report_store_path() with no arg (real home), so we point
+    Path.home() at a tmp dir to keep it hermetic."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    program_root = tmp_path / "prog"
+    program_root.mkdir()
     _write_program_connections(
-        tmp_path, [{"name": "prog-git", "type": "git-https", "endpoint": "github.com"}]
+        program_root, [{"name": "prog-git", "type": "git-https", "endpoint": "github.com"}]
     )
-    _persist_report(tmp_path, name="prog-git", status="ok", checked_at="2026-08-24T17:00:00+00:00")
+    _persist_report(
+        tmp_path, "myproj", name="prog-git", status="ok", checked_at="2026-08-24T17:00:00+00:00"
+    )
     repo = {"name": "backend", "path": "./backend", "owner": "dev-agent"}
-    block = gen._build_maestro_block(repo, [repo], ".agents/bus", {}, tmp_path)
+    block = gen._build_maestro_block(
+        repo, [repo], ".agents/bus", {"project": "myproj"}, program_root
+    )
     row = [ln for ln in block.splitlines() if ln.startswith("| prog-git ")][0]
     # render_last_check owns the cell format; assert status + timestamp present.
     assert "ok" in row and "2026-08-24T17:00:00+00:00" in row
 
 
-def test_no_store_renders_dash_end_to_end(tmp_path):
+def test_no_store_renders_dash_end_to_end(tmp_path, monkeypatch):
     """Absent report store → every last-check cell is '—' (honest not-checked)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)  # clean home, no store
+    program_root = tmp_path / "prog"
+    program_root.mkdir()
     _write_program_connections(
-        tmp_path, [{"name": "prog-git", "type": "git-https", "endpoint": "github.com"}]
+        program_root, [{"name": "prog-git", "type": "git-https", "endpoint": "github.com"}]
     )
     repo = {"name": "backend", "path": "./backend", "owner": "dev-agent"}
-    block = gen._build_maestro_block(repo, [repo], ".agents/bus", {}, tmp_path)
+    block = gen._build_maestro_block(
+        repo, [repo], ".agents/bus", {"project": "myproj"}, program_root
+    )
     row = [ln for ln in block.splitlines() if ln.startswith("| prog-git ")][0]
     assert row.rstrip().endswith("— |")
 
@@ -183,8 +198,11 @@ def test_block_is_wired_into_maestro_template():
     source = GENERATOR.read_text(encoding="utf-8")
     assert "{connection_section}" in source
     assert "connections.resolve_for(project_root)" in source
-    # last-check MUST come from core's canonical store seam, not a hand-rolled reader.
-    assert "report_store_path(project_root)" in source
+    # last-check MUST come from core's canonical tenant-home, program-keyed seam
+    # (report_store_path() no-arg + load_reports(..., program=...)), never a
+    # hand-rolled reader or the pre-#22 program_root signature.
+    assert "_cc.report_store_path()" in source
+    assert "program=project" in source
     assert "render_last_check" in source
 
 

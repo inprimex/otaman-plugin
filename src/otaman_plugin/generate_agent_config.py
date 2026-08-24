@@ -584,15 +584,18 @@ def _build_maestro_block(
     # <program_root>/connections.yaml.
     #
     # last-check is joined from the last PERSISTED check report via core's
-    # canonical store helpers (core owns the format — contract 20260824T171651,
-    # PR #21): load_reports(report_store_path(project_root)) keyed by name,
-    # render_last_check() for the cell. The generator NEVER runs live checks —
-    # the store is written by `otaman connection check` (cli §3.1). MUST read
-    # the SAME root the CLI writes to, else the join misses (core's open item).
-    # Guarded so a core lacking either module degrades to no/"—" section instead
-    # of crashing; a malformed connections.yaml is surfaced by core's
-    # validate_connections at check/validate time, so swallowing keeps
-    # generation robust and network-free.
+    # canonical store helpers (core owns the format — realigned to cli-agent's
+    # tenant-home, program-keyed contract in otaman-core #22): the store is the
+    # TENANT-global file report_store_path() (~/.otaman/connection-checks.json,
+    # NOT program-scoped — home defaults to Path.home()), keyed by the platform
+    # `project:` name. load_reports(path, program) returns {name: CheckReport};
+    # render_last_check() formats the cell. The generator NEVER runs live checks
+    # — the store is written by `otaman connection check` (cli §3.1) via
+    # persist_reports(..., program=<project>) into the SAME file+key, so the
+    # join lands. Guarded so a core lacking either module — or a missing project
+    # name / store — degrades to no/"—" section instead of crashing; a malformed
+    # connections.yaml is surfaced by core's validate_connections at
+    # check/validate time. Generation stays robust and network-free.
     connection_section = ""
     if project_root is not None:
         try:
@@ -601,11 +604,13 @@ def _build_maestro_block(
 
             conns = _connections.resolve_for(project_root)
             checks: dict[str, str] = {}
-            try:
-                store = _cc.load_reports(_cc.report_store_path(project_root))
-                checks = {name: _cc.render_last_check(rep) for name, rep in store.items()}
-            except Exception:
-                checks = {}  # no store / older core → every row renders "—"
+            project = config.get("project")
+            if project:
+                try:
+                    store = _cc.load_reports(_cc.report_store_path(), program=project)
+                    checks = {name: _cc.render_last_check(rep) for name, rep in store.items()}
+                except Exception:
+                    checks = {}  # no store / older core → every row renders "—"
             connection_section = _render_connection_inventory(conns, checks)
         except Exception:
             connection_section = ""
