@@ -11,7 +11,6 @@ test_spec_authoring_guard_template.py.
 from __future__ import annotations
 
 import importlib
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -119,60 +118,74 @@ def test_aligns_with_core_connection_dataclass():
     assert "core-real" in block and "deploy-key" in block and "gh-alias" in block
 
 
-def _write_checks(home: Path, program: str, reports: list[dict]) -> None:
-    (home / ".otaman").mkdir(parents=True, exist_ok=True)
-    (home / ".otaman" / "connection-checks.json").write_text(
-        json.dumps({"version": 1, "programs": {program: reports}}),
-        encoding="utf-8",
+def _write_program_connections(program_root: Path, entries: list[dict]) -> None:
+    lines = ["connections:"]
+    for e in entries:
+        lines.append(f"  - name: {e['name']}")
+        lines.append(f"    type: {e['type']}")
+        lines.append(f"    endpoint: {e['endpoint']}")
+        if e.get("secret_ref"):
+            lines.append(f"    secret_ref: {e['secret_ref']}")
+    (program_root / "connections.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _persist_report(program_root: Path, **fields) -> None:
+    """Write a check report into core's canonical store at report_store_path."""
+    from otaman_core.connection_check import (
+        CheckReport,
+        persist_reports,
+        report_store_path,
     )
 
-
-def test_load_checks_reads_persisted_report(tmp_path):
-    """cli-agent §3.1 contract: ~/.otaman/connection-checks.json keyed by program."""
-    _write_checks(
-        tmp_path,
-        "otaman-dev",
-        [{"name": "gh", "status": "ok", "checked_at": "2026-08-24T17:00Z"}],
+    report = CheckReport(
+        name=fields["name"],
+        type=fields.get("type", "git-https"),
+        endpoint=fields.get("endpoint", "github.com"),
+        reachable=fields.get("reachable", True),
+        authenticated=fields.get("authenticated", True),
+        status=fields.get("status", "ok"),
+        detail=fields.get("detail", ""),
+        healed=fields.get("healed", False),
+        checked_at=fields["checked_at"],
     )
-    checks = gen._load_connection_checks("otaman-dev", home=tmp_path)
-    assert checks == {"gh": "ok · 2026-08-24T17:00Z"}
+    persist_reports([report], report_store_path(program_root))
 
 
-def test_load_checks_absent_or_wrong_program_returns_empty(tmp_path):
-    # No file at all
-    assert gen._load_connection_checks("otaman-dev", home=tmp_path) == {}
-    # File exists but program key absent
-    _write_checks(tmp_path, "other-prog", [{"name": "x", "checked_at": "t"}])
-    assert gen._load_connection_checks("otaman-dev", home=tmp_path) == {}
-    # No program name -> empty
-    assert gen._load_connection_checks(None, home=tmp_path) == {}
-
-
-def test_load_checks_malformed_json_degrades_to_empty(tmp_path):
-    (tmp_path / ".otaman").mkdir(parents=True)
-    (tmp_path / ".otaman" / "connection-checks.json").write_text("{not json", encoding="utf-8")
-    assert gen._load_connection_checks("otaman-dev", home=tmp_path) == {}
-
-
-def test_load_checks_skips_entries_without_name_or_timestamp(tmp_path):
-    _write_checks(
-        tmp_path,
-        "p",
-        [
-            {"name": "good", "status": "ok", "checked_at": "2026-08-24T17:00Z"},
-            {"name": "no-time", "status": "ok"},  # missing checked_at -> skipped
-            {"status": "ok", "checked_at": "t"},  # missing name -> skipped
-        ],
+def test_last_check_joins_core_store_end_to_end(tmp_path):
+    """Generator reads core's canonical store (report_store_path) and renders
+    the joined last-check via render_last_check — no live checks."""
+    _write_program_connections(
+        tmp_path, [{"name": "prog-git", "type": "git-https", "endpoint": "github.com"}]
     )
-    assert gen._load_connection_checks("p", home=tmp_path) == {"good": "ok · 2026-08-24T17:00Z"}
+    _persist_report(tmp_path, name="prog-git", status="ok", checked_at="2026-08-24T17:00:00+00:00")
+    repo = {"name": "backend", "path": "./backend", "owner": "dev-agent"}
+    block = gen._build_maestro_block(repo, [repo], ".agents/bus", {}, tmp_path)
+    row = [ln for ln in block.splitlines() if ln.startswith("| prog-git ")][0]
+    # render_last_check owns the cell format; assert status + timestamp present.
+    assert "ok" in row and "2026-08-24T17:00:00+00:00" in row
+
+
+def test_no_store_renders_dash_end_to_end(tmp_path):
+    """Absent report store → every last-check cell is '—' (honest not-checked)."""
+    _write_program_connections(
+        tmp_path, [{"name": "prog-git", "type": "git-https", "endpoint": "github.com"}]
+    )
+    repo = {"name": "backend", "path": "./backend", "owner": "dev-agent"}
+    block = gen._build_maestro_block(repo, [repo], ".agents/bus", {}, tmp_path)
+    row = [ln for ln in block.splitlines() if ln.startswith("| prog-git ")][0]
+    assert row.rstrip().endswith("— |")
 
 
 def test_block_is_wired_into_maestro_template():
     """The section must be interpolated into the CLAUDE.local.md template and
-    fed by the core resolver — guard against a silent drop on future edits."""
+    fed by core's canonical resolver + store helpers — guard against a silent
+    drop or a drift back to an ad-hoc reader on future edits."""
     source = GENERATOR.read_text(encoding="utf-8")
     assert "{connection_section}" in source
     assert "connections.resolve_for(project_root)" in source
+    # last-check MUST come from core's canonical store seam, not a hand-rolled reader.
+    assert "report_store_path(project_root)" in source
+    assert "render_last_check" in source
 
 
 def test_build_maestro_block_embeds_program_connections(tmp_path):

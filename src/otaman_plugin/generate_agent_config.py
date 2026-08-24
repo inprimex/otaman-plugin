@@ -340,39 +340,6 @@ def _read_marker_path(repo_dir: Path) -> str | None:
     return None
 
 
-def _load_connection_checks(program_name: str | None, home: Path | None = None) -> dict[str, str]:
-    """Read the last PERSISTED connection check report (cli-agent §3.1 frozen
-    contract, 20260824T171808) for the ``last-check`` column.
-
-    Source: ``~/.otaman/connection-checks.json`` (tenant home — a directory by
-    construction, unlike a program-scoped ``.otaman`` which may be a file-shape
-    marker). Shape: ``{"version":1,"programs":{"<name>":[CheckReport,...]}}``,
-    keyed by the platform ``project:`` name. Each report exposes only
-    status/booleans/locators/timestamps — no secret value.
-
-    Returns ``{connection_name: "status · checked_at"}``. The generator NEVER
-    runs live checks; it only reflects what ``otaman connection check`` last
-    persisted, and degrades to ``{}`` (every row renders ``—``) on any absence,
-    version skew, or malformation — a stale or missing report is honest signal,
-    never an error.
-    """
-    if not program_name:
-        return {}
-    path = (home or Path.home()) / ".otaman" / "connection-checks.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        reports = data.get("programs", {}).get(program_name, [])
-        out: dict[str, str] = {}
-        for r in reports:
-            name = r.get("name")
-            checked_at = r.get("checked_at")
-            if name and checked_at:
-                out[name] = f"{r.get('status', '?')} · {checked_at}"
-        return out
-    except Exception:
-        return {}
-
-
 def _render_connection_inventory(
     connections: list[Any], checks: dict[str, str] | None = None
 ) -> str:
@@ -614,21 +581,32 @@ def _build_maestro_block(
     # Rendered from otaman-core's connection resolver (frozen contract
     # 20260824T164952) — locators only, never values. project_root is the
     # program (otaman) root, so resolve_for() layers ~/.otaman (tenant) over
-    # <program_root>/connections.yaml. last-check is joined from the last
-    # PERSISTED check report (cli-agent §3.1 contract 20260824T171808) — the
-    # generator never runs live checks. Guarded so a core without the module
-    # (pre-connections-resolver) degrades to no section instead of crashing;
-    # a malformed connections.yaml is surfaced by core's validate_connections
-    # at check/validate time, so swallowing here keeps generation robust.
+    # <program_root>/connections.yaml.
+    #
+    # last-check is joined from the last PERSISTED check report via core's
+    # canonical store helpers (core owns the format — contract 20260824T171651,
+    # PR #21): load_reports(report_store_path(project_root)) keyed by name,
+    # render_last_check() for the cell. The generator NEVER runs live checks —
+    # the store is written by `otaman connection check` (cli §3.1). MUST read
+    # the SAME root the CLI writes to, else the join misses (core's open item).
+    # Guarded so a core lacking either module degrades to no/"—" section instead
+    # of crashing; a malformed connections.yaml is surfaced by core's
+    # validate_connections at check/validate time, so swallowing keeps
+    # generation robust and network-free.
     connection_section = ""
     if project_root is not None:
         try:
+            from otaman_core import connection_check as _cc
             from otaman_core import connections as _connections
 
-            connection_section = _render_connection_inventory(
-                _connections.resolve_for(project_root),
-                _load_connection_checks(config.get("project")),
-            )
+            conns = _connections.resolve_for(project_root)
+            checks: dict[str, str] = {}
+            try:
+                store = _cc.load_reports(_cc.report_store_path(project_root))
+                checks = {name: _cc.render_last_check(rep) for name, rep in store.items()}
+            except Exception:
+                checks = {}  # no store / older core → every row renders "—"
+            connection_section = _render_connection_inventory(conns, checks)
         except Exception:
             connection_section = ""
 
