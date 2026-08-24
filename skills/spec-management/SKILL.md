@@ -18,14 +18,62 @@ This skill governs how spec and feature changes flow through a otaman-managed pr
 ## Detecting the mode
 
 Check `platform.yaml` → `specs.format`:
-- **`openspec`** — OpenSpec is installed. Delegate all spec operations to `/opsx:` commands.
+- **`openspec`** — the pinned OpenSpec CLI is available. Delegation to `/opsx:` /
+  `openspec` commands is **guarded by identity and repo** — see
+  [Authority & guards](#authority--guards-who-may-delegate-to-opsx) below.
+  Only **spec-agent, operating in the specs repo**, delegates
+  archive/materialization/spec-authoring to the tool.
 - **`fallback`** — No OpenSpec. Use otaman's lightweight proposal workflow.
+
+Mere presence of the CLI (`specs.format: openspec`, or the binary being on a
+host) NEVER changes an agent's spec workflow on its own. The mode gate is
+**necessary but not sufficient** to delegate; the identity/repo guard below
+must also hold.
+
+## Authority & guards (who may delegate to `/opsx:*`)
+
+The OpenSpec CLI gates *structure* and executes *standard* delta application;
+it does **not** hold *judgment*. Judgment stays with spec-agent's house
+procedure. This encodes the `spec-tooling` capability (change
+`openspec-cli-adoption`, conflicts C3/C4).
+
+**C3 — delegation is spec-agent-only, in the specs repo.**
+Archive, materialization (delta application), and spec-authoring operations
+delegate to `/opsx:*` / `openspec` **only when BOTH** hold:
+1. the acting identity is **spec-agent** (`OTAMAN_AGENT=spec-agent`), and
+2. the session is operating **in the specs repo**.
+
+For **every other agent** — regardless of whether the CLI is installed or
+`specs.format` is `openspec` — the spec workflow is **unchanged**:
+`/otaman:propose` in, task-assignment out. No `/opsx:*` archive,
+materialization, or authoring delegation happens for them. If you are not
+spec-agent, treat spec ops exactly as you would in **fallback mode**.
+
+Even for spec-agent, **nonstandard archives** (decision records,
+superseded-without-materialization, correction preambles) are NOT delegated —
+they run by house procedure (manual, or `openspec archive` with
+`--skip-specs`/`-y`). The tool executes *standard* archives only, inside the
+branch-and-PR flow after definition-of-done verification.
+
+**C4 — `openspec init`/`openspec update` SHALL NOT run in any fleet repo.**
+Those commands write agent-instruction files (CLAUDE.md/AGENTS.md stubs, slash
+commands) that collide with the **sanitized, committed CLAUDE.md** and the
+**generator-owned CLAUDE.local.md** mechanism. In a fleet repo the correct
+action is to **refuse**. If specific assets they produce are wanted, generate
+them in a **scratch directory outside the repo** and adopt piecemeal by
+explicit review — never let `init/update` write into the working tree.
 
 ## OpenSpec mode (`specs.format: openspec`)
 
+> **Scope:** the delegation in this section applies **only to spec-agent
+> operating in the specs repo** (C3 guard above). Any other agent — even with
+> the CLI installed — stays in the `/otaman:propose` → task-assignment flow
+> and should skip to [Fallback mode](#fallback-mode-specsformat-fallback) for
+> how spec ops actually work for them.
+
 When OpenSpec is present, otaman does NOT manage proposals, specs, or task breakdowns. OpenSpec handles the full planning lifecycle:
 
-### What otaman delegates
+### What otaman delegates (spec-agent, in the specs repo)
 | Operation | Interactive (specs repo session) | CLI (programmatic) | Notes |
 |-----------|------|-----|-------|
 | New change proposal | `/opsx:new` | `openspec new change "{name}"` | Creates change dir in OpenSpec repo |
