@@ -340,7 +340,42 @@ def _read_marker_path(repo_dir: Path) -> str | None:
     return None
 
 
-def _render_connection_inventory(connections: list[Any]) -> str:
+def _load_connection_checks(program_name: str | None, home: Path | None = None) -> dict[str, str]:
+    """Read the last PERSISTED connection check report (cli-agent §3.1 frozen
+    contract, 20260824T171808) for the ``last-check`` column.
+
+    Source: ``~/.otaman/connection-checks.json`` (tenant home — a directory by
+    construction, unlike a program-scoped ``.otaman`` which may be a file-shape
+    marker). Shape: ``{"version":1,"programs":{"<name>":[CheckReport,...]}}``,
+    keyed by the platform ``project:`` name. Each report exposes only
+    status/booleans/locators/timestamps — no secret value.
+
+    Returns ``{connection_name: "status · checked_at"}``. The generator NEVER
+    runs live checks; it only reflects what ``otaman connection check`` last
+    persisted, and degrades to ``{}`` (every row renders ``—``) on any absence,
+    version skew, or malformation — a stale or missing report is honest signal,
+    never an error.
+    """
+    if not program_name:
+        return {}
+    path = (home or Path.home()) / ".otaman" / "connection-checks.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        reports = data.get("programs", {}).get(program_name, [])
+        out: dict[str, str] = {}
+        for r in reports:
+            name = r.get("name")
+            checked_at = r.get("checked_at")
+            if name and checked_at:
+                out[name] = f"{r.get('status', '?')} · {checked_at}"
+        return out
+    except Exception:
+        return {}
+
+
+def _render_connection_inventory(
+    connections: list[Any], checks: dict[str, str] | None = None
+) -> str:
     """agent-credential-access 2.1: render the resolved connection inventory
     into the always-loaded CLAUDE.local.md block.
 
@@ -354,8 +389,8 @@ def _render_connection_inventory(connections: list[Any]) -> str:
     locators, resolved at use time, never inlined into the bus or context. The
     ``Connection`` model (otaman-core, frozen contract 20260824T164952) carries
     no value-bearing field, so there is nothing here to leak. ``last-check`` is
-    a placeholder (``—``) until agent-credential-access 1.3 (the check engine)
-    lands and feeds a per-name report to join on.
+    joined on ``name`` from the last persisted check report (``checks`` map,
+    ``{name: "status · checked_at"}``) and renders ``—`` when no report exists.
 
     Takes any objects exposing ``name/type/endpoint/scope/secret_ref/ssh_ref``
     (duck-typed so tests need not import the core dataclass). Returns "" for an
@@ -363,10 +398,11 @@ def _render_connection_inventory(connections: list[Any]) -> str:
     """
     if not connections:
         return ""
+    checks = checks or {}
     rows = "\n".join(
         f"| {c.name} | {c.type} | {c.endpoint} | {c.scope} | "
         f"{getattr(c, 'secret_ref', None) or '—'} | "
-        f"{getattr(c, 'ssh_ref', None) or '—'} | — |"
+        f"{getattr(c, 'ssh_ref', None) or '—'} | {checks.get(c.name, '—')} |"
         for c in sorted(connections, key=lambda c: (c.scope, c.name))
     )
     return f"""
@@ -578,7 +614,9 @@ def _build_maestro_block(
     # Rendered from otaman-core's connection resolver (frozen contract
     # 20260824T164952) — locators only, never values. project_root is the
     # program (otaman) root, so resolve_for() layers ~/.otaman (tenant) over
-    # <program_root>/connections.yaml. Guarded so a core without the module
+    # <program_root>/connections.yaml. last-check is joined from the last
+    # PERSISTED check report (cli-agent §3.1 contract 20260824T171808) — the
+    # generator never runs live checks. Guarded so a core without the module
     # (pre-connections-resolver) degrades to no section instead of crashing;
     # a malformed connections.yaml is surfaced by core's validate_connections
     # at check/validate time, so swallowing here keeps generation robust.
@@ -588,7 +626,8 @@ def _build_maestro_block(
             from otaman_core import connections as _connections
 
             connection_section = _render_connection_inventory(
-                _connections.resolve_for(project_root)
+                _connections.resolve_for(project_root),
+                _load_connection_checks(config.get("project")),
             )
         except Exception:
             connection_section = ""

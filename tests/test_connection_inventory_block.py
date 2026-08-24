@@ -11,6 +11,7 @@ test_spec_authoring_guard_template.py.
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,14 +64,30 @@ def test_never_renders_values():
     assert "SUPER-SECRET-VALUE-should-never-render" not in block
 
 
-def test_missing_refs_render_as_dash_and_last_check_is_placeholder():
+def test_missing_refs_and_no_report_render_as_dash():
     block = gen._render_connection_inventory(
         [_StubConn("ssh-host", "ssh", "sunflowers.host", "program", ssh_ref="sunflowers")]
     )
-    # secret_ref absent -> em dash; ssh_ref shown; last-check always em dash (1.3 pending)
+    # secret_ref absent -> em dash; ssh_ref shown; last-check em dash (no report)
     assert "sunflowers" in block
     row = [ln for ln in block.splitlines() if ln.startswith("| ssh-host ")][0]
-    assert row.count("—") >= 2  # missing secret_ref + last-check placeholder
+    assert row.count("—") >= 2  # missing secret_ref + no-report last-check
+
+
+def test_last_check_joins_persisted_report_on_name():
+    """When a persisted check report is supplied, last-check shows status · time."""
+    checks = {"gh": "ok · 2026-08-24T17:00Z"}
+    block = gen._render_connection_inventory(
+        [
+            _StubConn("gh", "git-https", "github.com", "program", secret_ref="gh-pat"),
+            _StubConn("api", "api", "api.example.com", "program"),  # no report
+        ],
+        checks,
+    )
+    gh_row = [ln for ln in block.splitlines() if ln.startswith("| gh ")][0]
+    api_row = [ln for ln in block.splitlines() if ln.startswith("| api ")][0]
+    assert "ok · 2026-08-24T17:00Z" in gh_row
+    assert api_row.rstrip().endswith("— |")  # unmatched name falls back to —
 
 
 def test_rows_sorted_by_scope_then_name():
@@ -100,6 +117,54 @@ def test_aligns_with_core_connection_dataclass():
     )
     block = gen._render_connection_inventory([c])
     assert "core-real" in block and "deploy-key" in block and "gh-alias" in block
+
+
+def _write_checks(home: Path, program: str, reports: list[dict]) -> None:
+    (home / ".otaman").mkdir(parents=True, exist_ok=True)
+    (home / ".otaman" / "connection-checks.json").write_text(
+        json.dumps({"version": 1, "programs": {program: reports}}),
+        encoding="utf-8",
+    )
+
+
+def test_load_checks_reads_persisted_report(tmp_path):
+    """cli-agent §3.1 contract: ~/.otaman/connection-checks.json keyed by program."""
+    _write_checks(
+        tmp_path,
+        "otaman-dev",
+        [{"name": "gh", "status": "ok", "checked_at": "2026-08-24T17:00Z"}],
+    )
+    checks = gen._load_connection_checks("otaman-dev", home=tmp_path)
+    assert checks == {"gh": "ok · 2026-08-24T17:00Z"}
+
+
+def test_load_checks_absent_or_wrong_program_returns_empty(tmp_path):
+    # No file at all
+    assert gen._load_connection_checks("otaman-dev", home=tmp_path) == {}
+    # File exists but program key absent
+    _write_checks(tmp_path, "other-prog", [{"name": "x", "checked_at": "t"}])
+    assert gen._load_connection_checks("otaman-dev", home=tmp_path) == {}
+    # No program name -> empty
+    assert gen._load_connection_checks(None, home=tmp_path) == {}
+
+
+def test_load_checks_malformed_json_degrades_to_empty(tmp_path):
+    (tmp_path / ".otaman").mkdir(parents=True)
+    (tmp_path / ".otaman" / "connection-checks.json").write_text("{not json", encoding="utf-8")
+    assert gen._load_connection_checks("otaman-dev", home=tmp_path) == {}
+
+
+def test_load_checks_skips_entries_without_name_or_timestamp(tmp_path):
+    _write_checks(
+        tmp_path,
+        "p",
+        [
+            {"name": "good", "status": "ok", "checked_at": "2026-08-24T17:00Z"},
+            {"name": "no-time", "status": "ok"},  # missing checked_at -> skipped
+            {"status": "ok", "checked_at": "t"},  # missing name -> skipped
+        ],
+    )
+    assert gen._load_connection_checks("p", home=tmp_path) == {"good": "ok · 2026-08-24T17:00Z"}
 
 
 def test_block_is_wired_into_maestro_template():
