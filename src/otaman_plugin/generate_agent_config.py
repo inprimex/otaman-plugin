@@ -340,6 +340,54 @@ def _read_marker_path(repo_dir: Path) -> str | None:
     return None
 
 
+def _render_connection_inventory(
+    connections: list[Any], checks: dict[str, str] | None = None
+) -> str:
+    """agent-credential-access 2.1: render the resolved connection inventory
+    into the always-loaded CLAUDE.local.md block.
+
+    Compaction-durable by construction: this lands in the generator-owned,
+    gitignored CLAUDE.local.md that Claude Code reloads every session, so an
+    agent keeps seeing WHERE its credentials live even after context
+    compaction — which ssh Host, which backend key, at which scope.
+
+    Values are NEVER rendered. ``secret_ref`` is a secret-backend key NAME and
+    ``ssh_ref`` is an ``~/.ssh/config`` Host alias / socket handle — both are
+    locators, resolved at use time, never inlined into the bus or context. The
+    ``Connection`` model (otaman-core, frozen contract 20260824T164952) carries
+    no value-bearing field, so there is nothing here to leak. ``last-check`` is
+    joined on ``name`` from the last persisted check report (``checks`` map,
+    ``{name: "status · checked_at"}``) and renders ``—`` when no report exists.
+
+    Takes any objects exposing ``name/type/endpoint/scope/secret_ref/ssh_ref``
+    (duck-typed so tests need not import the core dataclass). Returns "" for an
+    empty inventory so CLAUDE.local.md stays clean when nothing is configured.
+    """
+    if not connections:
+        return ""
+    checks = checks or {}
+    rows = "\n".join(
+        f"| {c.name} | {c.type} | {c.endpoint} | {c.scope} | "
+        f"{getattr(c, 'secret_ref', None) or '—'} | "
+        f"{getattr(c, 'ssh_ref', None) or '—'} | {checks.get(c.name, '—')} |"
+        for c in sorted(connections, key=lambda c: (c.scope, c.name))
+    )
+    return f"""
+
+### Connections & credentials (resolved inventory — locators only, NEVER values)
+
+Where THIS agent's credentials live, resolved tenant → org → program (nearest
+scope wins per name). `secret_ref` / `ssh_ref` are POINTERS — a secret-backend
+key name, an ssh Host alias — **never secret values**. Resolve them at use time;
+never inline a value into the bus or your context. `last-check` stays `—` until
+the connection check engine lands.
+
+| name | type | endpoint | scope | secret_ref | ssh_ref | last-check |
+|------|------|----------|-------|------------|---------|------------|
+{rows}
+"""
+
+
 def _build_maestro_block(
     repo: dict[str, Any],
     all_repos: list[dict[str, Any]],
@@ -529,6 +577,44 @@ def _build_maestro_block(
         lines.append("\nIf docs are not available, STOP and inform the human.")
         knowledge_section = "\n".join(lines)
 
+    # agent-credential-access 2.1: resolved connection/credential inventory.
+    # Rendered from otaman-core's connection resolver (frozen contract
+    # 20260824T164952) — locators only, never values. project_root is the
+    # program (otaman) root, so resolve_for() layers ~/.otaman (tenant) over
+    # <program_root>/connections.yaml.
+    #
+    # last-check is joined from the last PERSISTED check report via core's
+    # canonical store helpers (core owns the format — realigned to cli-agent's
+    # tenant-home, program-keyed contract in otaman-core #22): the store is the
+    # TENANT-global file report_store_path() (~/.otaman/connection-checks.json,
+    # NOT program-scoped — home defaults to Path.home()), keyed by the platform
+    # `project:` name. load_reports(path, program) returns {name: CheckReport};
+    # render_last_check() formats the cell. The generator NEVER runs live checks
+    # — the store is written by `otaman connection check` (cli §3.1) via
+    # persist_reports(..., program=<project>) into the SAME file+key, so the
+    # join lands. Guarded so a core lacking either module — or a missing project
+    # name / store — degrades to no/"—" section instead of crashing; a malformed
+    # connections.yaml is surfaced by core's validate_connections at
+    # check/validate time. Generation stays robust and network-free.
+    connection_section = ""
+    if project_root is not None:
+        try:
+            from otaman_core import connection_check as _cc
+            from otaman_core import connections as _connections
+
+            conns = _connections.resolve_for(project_root)
+            checks: dict[str, str] = {}
+            project = config.get("project")
+            if project:
+                try:
+                    store = _cc.load_reports(_cc.report_store_path(), program=project)
+                    checks = {name: _cc.render_last_check(rep) for name, rep in store.items()}
+                except Exception:
+                    checks = {}  # no store / older core → every row renders "—"
+            connection_section = _render_connection_inventory(conns, checks)
+        except Exception:
+            connection_section = ""
+
     # Project-wide methodology
     methodology_section = ""
     methodology = standards_cfg.get("methodology", [])
@@ -697,6 +783,7 @@ Send form: `otaman send <to> --type task-assignment --sequence-id <id> --step <n
 {methodology_section}
 {domain_rules_section}
 {knowledge_section}
+{connection_section}
 
 ### Git Workflow
 - Work in branches: `agent/{repo["owner"]}/{{feature-name}}`
