@@ -307,6 +307,15 @@ _SPEC_AUTHORING_GUARD = """### Spec Authoring — NOT your job (CRITICAL)
 - If you feel the urge to "just fill in the spec myself" — stop, send a `question` message to spec-agent instead."""
 
 
+# interactive-human-console 3.1: a mandatory fleet policy that MUST appear in
+# every generated agent's orchestration rules (spec interactive-console,
+# "human console sessions SHALL be isolated from fleet input injection").
+_HUMAN_SESSION_GUARD = """### Human sessions — NEVER inject input (CRITICAL)
+- **NEVER inject keystrokes or input into a human's session.** Do not run `tmux send-keys` — or any equivalent (`screen -X stuff`, writing to another TTY/pty, driving another user's keyboard) — against the interactive human console (`otaman -i`) or any human-owned session.
+- The human console runs on a SEPARATE, private tmux server (its own socket), isolated from the fleet's default server. Interact with humans ONLY through the bus — `question`, `outcome-proposal`, proposals — then wait for the human to act in their own console.
+- This is a mandatory fleet policy, not a suggestion. On a shared tenant user it is a trust-plus-policy boundary (not a physical or cryptographic one) — honor it regardless of whether the console is technically reachable."""
+
+
 def _read_marker_path(repo_dir: Path) -> str | None:
     """Read the otaman-folder path from a repo's ``.otaman``/``.maestro`` marker.  # legacy: .maestro supported
 
@@ -694,6 +703,8 @@ Why the split: bus checks happen dozens of times per session, and the MCP-via-in
 - When you change an API or shared type: send `contract-change` via `otaman_send` BEFORE committing
 - Message handling while busy: ack as `read`, add to queue, finish current task first
 - Urgent messages: pause current work, inform the human immediately
+
+{_HUMAN_SESSION_GUARD}
 
 ### Outcome Proposals (business-impact ideas)
 
