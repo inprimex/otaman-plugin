@@ -1,6 +1,6 @@
 [project]
 name = "otaman-plugin"
-version = "0.2.0"
+version = "0.3.0"
 description = "Otaman Claude Code plugin: slash commands, skills, agents, hooks, stdio MCP, launcher scripts"
 requires-python = ">=3.10"
 authors = [{ name = "Otaman platform" }]
