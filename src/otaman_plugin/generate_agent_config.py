@@ -1424,6 +1424,33 @@ def main() -> int:
         return 2
 
     config = load_config(config_path)
+
+    # Fail fast on a malformed / wrong platform.yaml instead of crashing deep in
+    # generation with a cryptic `KeyError: 'project'` that reads as a partial
+    # success (bug 20260826T211138, fleet-impact). `project`, `version`, `repos`
+    # are schema-required (platform-schema.yaml). A stale/partial file the caller
+    # resolved by mistake — e.g. a stray org-level platform.yaml carrying only
+    # `models`/`bus` — must produce an honest, actionable, non-zero failure so
+    # CLAUDE.local.md regeneration doesn't silently no-op fleet-wide.
+    if not isinstance(config, dict):
+        print(
+            f"ERROR: {config_path} did not parse as a platform config "
+            f"(got {type(config).__name__}).",
+            file=sys.stderr,
+        )
+        return 2
+    missing = [k for k in ("project", "version", "repos") if k not in config]
+    if missing:
+        print(
+            f"ERROR: {config_path} is missing required key(s): {', '.join(missing)}. "
+            "This does not look like a program platform.yaml (a valid one has "
+            "project, version, repos) — refusing to generate agent config against "
+            "it. Check that the caller resolved the right program root (a stray "
+            "org-level platform.yaml is a common cause).",
+            file=sys.stderr,
+        )
+        return 2
+
     project_root = config_path.parent
 
     # Python version check
