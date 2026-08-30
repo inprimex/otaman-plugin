@@ -523,14 +523,22 @@ case "$SHELL_MODE" in
             # machinery needed). If cli refuses (held elsewhere), its exit-2
             # message naming the holder pid + attach command lands in the pane.
             echo "acting: creating identity session '${ACTING_SESSION}' and wrapping otaman acting-lock run (mode=${ACTING_MODE})." >&2
-            tmux new-session -d -s "$ACTING_SESSION" -n "${ACTING_OWNER:-agent}" -c "$PWD"
+            # Capture the new pane's globally-unique pane_id (e.g. %57) and
+            # target send-keys with IT, not the bare "=${session}" exact-match
+            # form. tmux (confirmed on 3.4) resolves "=name" for has-session /
+            # attach-session (session-level targets) but NOT for send-keys /
+            # capture-pane (pane-level targets) when no window/pane suffix is
+            # given — "can't find pane: =name" — silently dropping the command
+            # and leaving the session created but INERT (no lock ever
+            # acquired). pane_id sidesteps target-string parsing entirely.
+            _pane_id="$(tmux new-session -d -s "$ACTING_SESSION" -n "${ACTING_OWNER:-agent}" -c "$PWD" -P -F '#{pane_id}')"
             # Compose the send-keys command line with each argv element quoted
             # so --  EXTRA_ARGS / the loop string survive tmux's shell parse.
             _sendline=""
             for _tok in "${acting_run_cmd[@]}"; do
                 _sendline+="$(printf '%q' "$_tok") "
             done
-            tmux send-keys -t "=${ACTING_SESSION}" "exec ${_sendline}" C-m
+            tmux send-keys -t "$_pane_id" "exec ${_sendline}" C-m
             if [[ -n "${TMUX:-}" ]]; then
                 exec tmux switch-client -t "=${ACTING_SESSION}"
             else

@@ -402,6 +402,84 @@ exit 0
                 timeout=10,
             )
 
+    def test_create_path_actually_delivers_the_command(self, tmp_path):
+        """Regression: real tmux 3.x resolves the bare exact-match target
+        ``=session`` for has-session/attach-session but NOT for send-keys/
+        capture-pane (pane-level targets) when no window/pane suffix is given
+        — it silently drops the command, leaving a created-but-INERT session
+        (no lock ever acquired). The launcher must target the pane by its
+        globally-unique pane_id (captured via ``new-session -P -F
+        '#{pane_id}'``), never the bare session name, for send-keys.
+
+        Verifies genuine delivery to the PANE ITSELF (not just that send-keys
+        was CALLED — a fake tmux stub can't catch a real-tmux target-
+        resolution quirk) by reading the pane's actual content back via
+        capture-pane. Deliberately does NOT depend on the wrapped command
+        actually executing (that crosses into `bash -lc` login-shell PATH
+        semantics, a separate concern) — the regression is specifically
+        about send-keys reaching the pane, which is visible as soon as the
+        pane echoes back the keys it received."""
+        root = _make_otaman_root(tmp_path, project="proj2", owner="agent2")
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        _write_exec(bindir / "otaman", "#!/usr/bin/env bash\nexit 0\n")
+        _write_exec(bindir / "claude", "#!/usr/bin/env bash\nexit 0\n")
+
+        socket = tmp_path / "tmux2.sock"
+        session = "proj2_agent2"
+        real_tmux = shutil.which("tmux")
+        _write_exec(
+            bindir / "tmux",
+            f'#!/usr/bin/env bash\nexec {real_tmux} -S {socket} "$@"\n',
+        )
+        try:
+            # tmux's default exit-empty terminates the server when it has zero
+            # sessions — which would tear down the newly-created identity
+            # session (destroying the very pane we're about to inspect)
+            # before capture-pane runs. Keep a seed session alive for the
+            # private server's lifetime, and set remain-on-exit so a fast-
+            # exiting wrapped command doesn't destroy the pane either.
+            subprocess.run(
+                [real_tmux, "-S", str(socket), "new-session", "-d", "-s", "_seed", "-n", "w", "sh"],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            subprocess.run(
+                [real_tmux, "-S", str(socket), "set-option", "-g", "remain-on-exit", "on"],
+                capture_output=True,
+                timeout=10,
+            )
+            real_bins = [str(Path(shutil.which("python3")).parent)]
+            path = os.pathsep.join([str(bindir), "/usr/bin", "/bin", *real_bins])
+            env = {"PATH": path, "HOME": str(root.parent)}
+            r = subprocess.run(
+                ["bash", str(BASH_LAUNCHER), "--background"],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env,
+            )
+            assert "creating identity session" in r.stderr, r.stderr
+            cap = subprocess.run(
+                [real_tmux, "-S", str(socket), "capture-pane", "-t", session, "-p"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            pane_text = cap.stdout
+            assert "acting-lock run --mode background" in pane_text, (
+                "send-keys did not deliver the wrapped command into the pane "
+                f"(the bare '=session' target bug) — pane content:\n{pane_text}"
+            )
+        finally:
+            subprocess.run(
+                [real_tmux, "-S", str(socket), "kill-server"],
+                capture_output=True,
+                timeout=10,
+            )
+
 
 # ---------------------------------------------------------------------------
 # --dry-run honesty — describes wrapper behaviour; no otaman/tmux/claude calls
