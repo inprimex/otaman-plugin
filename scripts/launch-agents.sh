@@ -270,6 +270,21 @@ case "$SHELL_MODE" in
 esac
 
 # ------------------------------------------------------------------
+# Never spawn as root (2026-08-31 fleet incident: a session created as
+# romans/sudo left ~/.claude/projects/<program> owned romans:romans,
+# EACCES'ing every later otaman-dev session's transcript writes). Root is
+# never a legitimate identity for a Claude Code session — refuse outright
+# rather than let it silently corrupt ~/.claude ownership for every user
+# who runs a session in this program afterward.
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    echo "error: refusing to launch as root (uid 0)" >&2
+    echo "hint: run this script as the intended agent user, not via sudo — a root-run" >&2
+    echo "      session leaves ~/.claude/projects/<program> owned by root, breaking" >&2
+    echo "      transcript writes for every later non-root session in this program" >&2
+    exit 1
+fi
+
+# ------------------------------------------------------------------
 # Resolve otaman root + determine python interpreter
 
 MAESTRO_ROOT="$(find_maestro_root "$PWD" 2>/dev/null || true)"
