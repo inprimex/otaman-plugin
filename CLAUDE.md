@@ -51,7 +51,7 @@ The lint baseline lives in `pyproject.toml` under `[tool.ruff]`. CI runs
 Marketplace-installable, or from source into a Claude Code session:
 
 ```bash
-claude mcp add otaman-plugin --transport stdio -- python -m otaman_plugin.server
+claude mcp add otaman-plugin --transport stdio -- python -m otaman_plugin.servers.bus_server
 ```
 
 Hooks are wired by adding the entries from `hooks/hooks.json` to your
