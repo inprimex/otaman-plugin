@@ -7,6 +7,11 @@
 - `install_policy_files` materializes `policy/index.yaml` and shipped
   `policy/<pack>/standard.yaml` files that are ABSENT — never overwrites
   an existing (possibly CTO-edited) policy file.
+- `install_codeowners_files` materializes a minimal, repo-level
+  `.github/CODEOWNERS` (`* @org`, default-branch owner only) for a repo
+  whose effective git policy requires owner admission and has a
+  resolvable GitHub org from its `remote:` — never overwrites an
+  existing file.
 
 Tests against the REAL `otaman_core.policy` / `otaman_core.human_roster`
 modules (sibling checkout) rather than mocking them, matching this repo's
@@ -291,3 +296,80 @@ def test_narrow_only_baseline_is_enforced_even_before_index_materialized(tmp_pat
     effective, violations = effective_policy(root, config, "git", repo="r")
     assert effective.rules["require_status_checks"] is True
     assert len(violations) == 1
+
+
+class TestInstallCodeownersFiles:
+    def _repo(self, tmp_path, *, remote="git@github.com:inprimex/r.git", extra=None):
+        root = _root(tmp_path)
+        (root / "r").mkdir()
+        repo = {"name": "r", "path": "r", "remote": remote}
+        if extra:
+            repo.update(extra)
+        return root, repo
+
+    def test_creates_codeowners_when_owner_admission_required(self, tmp_path):
+        root, repo = self._repo(tmp_path)
+        config = {"repos": [repo]}
+        results = gen.install_codeowners_files(root, config)
+        codeowners = root / "r" / ".github" / "CODEOWNERS"
+        assert results == ["Created: r/.github/CODEOWNERS"]
+        assert codeowners.is_file()
+        assert "*       @inprimex" in codeowners.read_text(encoding="utf-8")
+
+    def test_skips_repo_with_no_remote(self, tmp_path):
+        root, repo = self._repo(tmp_path, remote=None)
+        del repo["remote"]
+        config = {"repos": [repo]}
+        assert gen.install_codeowners_files(root, config) == []
+        assert not (root / "r" / ".github" / "CODEOWNERS").exists()
+
+    def test_never_overwrites_an_existing_codeowners_file(self, tmp_path):
+        root, repo = self._repo(tmp_path)
+        codeowners = root / "r" / ".github"
+        codeowners.mkdir(parents=True)
+        (codeowners / "CODEOWNERS").write_text("custom\n", encoding="utf-8")
+        config = {"repos": [repo]}
+        assert gen.install_codeowners_files(root, config) == []
+        assert (codeowners / "CODEOWNERS").read_text(encoding="utf-8") == "custom\n"
+
+    def test_skips_gracefully_when_selected_policy_missing_on_disk(self, tmp_path):
+        """owner_admission_required and agents_merge_human_owned_branch_forbidden
+        are both narrow-only (otaman-core PR #40: shipped baseline always
+        enforced), so a real override can never make the "not required"
+        branch true for the git pack — this exercises the OTHER skip path:
+        a per-repo repo["policies"]["git"] override naming a policy that
+        doesn't exist on disk, which effective_policy raises for. The
+        per-repo try/except degrades that to a silent skip, not a crash."""
+        root, repo = self._repo(
+            tmp_path,
+            extra={"policies": {"git": "nonexistent"}},
+        )
+        config = {"repos": [repo]}
+        assert gen.install_codeowners_files(root, config) == []
+        assert not (root / "r" / ".github" / "CODEOWNERS").exists()
+
+    def test_degrades_to_empty_on_older_core_without_policy_module(self, tmp_path, monkeypatch):
+        root, repo = self._repo(tmp_path)
+        config = {"repos": [repo]}
+
+        real_import = __import__
+
+        def _fake_import(name, *a, **k):
+            if name == "otaman_core.policy":
+                raise ImportError("simulated older core")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr("builtins.__import__", _fake_import)
+        assert gen.install_codeowners_files(root, config) == []
+
+    @pytest.mark.parametrize(
+        "remote,expected_org",
+        [
+            ("git@github.com:inprimex/otaman-core.git", "inprimex"),
+            ("https://github.com/inprimex/otaman-core.git", "inprimex"),
+            ("https://github.com/inprimex/otaman-core", "inprimex"),
+            ("ssh://git@github.com/inprimex/otaman-core.git", "inprimex"),
+        ],
+    )
+    def test_github_org_from_remote_variants(self, remote, expected_org):
+        assert gen._github_org_from_remote(remote) == expected_org
