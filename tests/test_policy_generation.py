@@ -245,3 +245,128 @@ def test_policy_section_is_wired_into_the_template():
     ).read_text(encoding="utf-8")
     assert "{policy_section}" in source
     assert "_render_git_policy_section(repo, config, project_root)" in source
+
+
+def test_install_policy_files_runs_before_repo_claude_md_in_main():
+    """Real, verified ordering bug this pins: otaman_core.policy's
+    narrow-only loosening protection only applies once policy/index.yaml
+    registers a pack's narrow-only set. On a fresh program (no policy/ on
+    disk), a repo/agent override CAN silently loosen a narrow-only rule
+    (e.g. require_status_checks) with no LooseningViolation recorded —
+    confirmed by direct effective_policy() calls before/after index.yaml
+    exists. main() MUST call install_policy_files before
+    generate_repo_claude_md so the very first `otaman init` already
+    reflects the protected value everywhere effective_policy is read, not
+    just the second run."""
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "otaman_plugin"
+        / "generate_agent_config.py"
+    ).read_text(encoding="utf-8")
+    policy_files_pos = source.index("policy_results = install_policy_files(project_root, config)")
+    claude_md_pos = source.index("warnings = generate_repo_claude_md(project_root, config)")
+    assert policy_files_pos < claude_md_pos
+
+
+def test_narrow_only_loosening_is_unprotected_before_index_materialized(tmp_path):
+    """Documents the actual otaman_core.policy behavior the ordering fix
+    above exists to work around — not a bug in core (D1/D2 don't promise
+    protection independent of the index being on disk), but a real
+    footgun for any caller (this generator included) that reads
+    effective_policy before ever having called install_policy_files."""
+    from otaman_core.policy import effective_policy
+
+    root = tmp_path / "meta"
+    (root / "policy" / "git").mkdir(parents=True)
+    (root / "policy" / "git" / "no-checks.yaml").write_text(
+        "pack: git\nname: no-checks\nrules:\n  require_status_checks: false\n",
+        encoding="utf-8",
+    )
+    config = {"repos": [{"name": "r", "policies": {"git": "no-checks"}}]}
+
+    before, violations_before = effective_policy(root, config, "git", repo="r")
+    assert before.rules["require_status_checks"] is False
+    assert violations_before == []
+
+    import yaml
+
+    (root / "policy" / "index.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "packs": {"git": {"narrow_only": ["require_status_checks"]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    after, violations_after = effective_policy(root, config, "git", repo="r")
+    assert after.rules["require_status_checks"] is True
+    assert len(violations_after) == 1
+
+
+class TestInstallCiGateTemplates:
+    def _repo_with_jobs(self, tmp_path, job_names):
+        root = _root(tmp_path)
+        repo_dir = root / "r"
+        wf_dir = repo_dir / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        jobs_yaml = "\n".join(f"  {j}:\n    runs-on: ubuntu-latest" for j in job_names)
+        (wf_dir / "ci.yml").write_text(f"name: CI\njobs:\n{jobs_yaml}\n", encoding="utf-8")
+        return root, repo_dir
+
+    def test_creates_gate_when_jobs_discovered_and_checks_required(self, tmp_path):
+        root, repo_dir = self._repo_with_jobs(tmp_path, ["lint", "test"])
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        results = gen.install_ci_gate_templates(root, config)
+        gate = repo_dir / ".github" / "workflows" / "otaman-ci-gate.yml"
+        assert results == ["Created: r/.github/workflows/otaman-ci-gate.yml"]
+        assert gate.is_file()
+
+        import yaml
+
+        doc = yaml.safe_load(gate.read_text(encoding="utf-8"))
+        assert doc["jobs"]["ci-ok"]["needs"] == ["lint", "test"]
+
+    def test_never_overwrites_an_existing_gate_file(self, tmp_path):
+        root, repo_dir = self._repo_with_jobs(tmp_path, ["build"])
+        gate = repo_dir / ".github" / "workflows" / "otaman-ci-gate.yml"
+        gate.write_text("custom: true\n", encoding="utf-8")
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        results = gen.install_ci_gate_templates(root, config)
+        assert results == []
+        assert gate.read_text(encoding="utf-8") == "custom: true\n"
+
+    def test_skips_repo_with_no_discoverable_jobs(self, tmp_path):
+        root = _root(tmp_path)
+        (root / "r").mkdir()
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        assert gen.install_ci_gate_templates(root, config) == []
+
+    def test_skips_when_require_status_checks_is_false(self, tmp_path):
+        root, repo_dir = self._repo_with_jobs(tmp_path, ["build"])
+        (root / "policy" / "git").mkdir(parents=True)
+        (root / "policy" / "git" / "no-checks.yaml").write_text(
+            "pack: git\nname: no-checks\nrules:\n  require_status_checks: false\n",
+            encoding="utf-8",
+        )
+        config = {"repos": [{"name": "r", "path": "r", "policies": {"git": "no-checks"}}]}
+        assert gen.install_ci_gate_templates(root, config) == []
+
+    def test_skips_nonexistent_repo_dir(self, tmp_path):
+        root = _root(tmp_path)
+        config = {"repos": [{"name": "r", "path": "does-not-exist"}]}
+        assert gen.install_ci_gate_templates(root, config) == []
+
+    def test_degrades_to_empty_on_older_core_without_policy_module(self, tmp_path, monkeypatch):
+        root, _ = self._repo_with_jobs(tmp_path, ["build"])
+        real_import = __import__
+
+        def _fake_import(name, *a, **k):
+            if name == "otaman_core.policy":
+                raise ImportError("simulated older core")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr("builtins.__import__", _fake_import)
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        assert gen.install_ci_gate_templates(root, config) == []
