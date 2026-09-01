@@ -397,6 +397,80 @@ the connection check engine lands.
 """
 
 
+def _render_git_policy_section(
+    repo: dict[str, Any], config: dict[str, Any], project_root: Path | None
+) -> str:
+    """policy-engine 2.2: render this repo's effective git-pack policy into
+    the always-loaded CLAUDE.local.md block.
+
+    Resolved through otaman-core's single read point
+    (``otaman_core.policy.effective_policy``) — the composition algebra
+    (org/program/agent, tightest-wins, narrow-only) is never re-implemented
+    here. Only rules actually present/truthy in the EFFECTIVE policy are
+    rendered, so a stricter or looser (where permitted) override at the
+    repo/agent layer is reflected here, not hardcoded.
+
+    Degrades to "" — never blocks generation — when: ``project_root`` is
+    unset, an older core lacks the ``otaman_core.policy``/
+    ``otaman_core.human_roster`` modules, or (for a pack with no shipped
+    standard) resolution raises. Note this does NOT include "``policy/``
+    hasn't been materialized yet" for the ``git`` pack specifically:
+    ``effective_policy`` falls back to ``shipped_standard("git")`` when the
+    selected policy is missing on disk, so this renders real content even
+    before ``install_policy_files``/``init --update`` ever writes
+    ``policy/`` — the two are independent, not sequenced. Narrow-only
+    loosening protection is unconditional as of otaman-core PR #40
+    (shipped baseline always enforced, regardless of whether
+    ``policy/index.yaml`` exists on disk yet).
+    """
+    if project_root is None:
+        return ""
+    try:
+        from otaman_core.human_roster import parse_human_roster, resolve_roster_human
+        from otaman_core.policy import effective_policy
+
+        effective, _violations = effective_policy(project_root, config, "git", repo=repo["name"])
+        rules = effective.rules
+        if not rules:
+            return ""
+
+        roster = parse_human_roster(config.get("human-roster"))
+        is_human_owned = resolve_roster_human(roster, repo.get("owner")) is not None
+
+        lines = ["### Branch & merge policy (git pack)"]
+        if rules.get("owner_admission_required") or rules.get(
+            "agents_merge_human_owned_branch_forbidden"
+        ):
+            lines.append(
+                "- **Only the branch owner (or an explicit delegate) admits merges.** "
+                "**NEVER merge into a branch owned by a human** — your PR waits for "
+                "them (or their delegate) to admit it, no matter how green it is."
+            )
+        if not is_human_owned and rules.get("agent_self_merge_on_owned_repo"):
+            lines.append(
+                "- **This repo is agent-owned (you).** Once your PR's required checks "
+                "pass, **you admit your own merge yourself** — do not wait for a human "
+                'to do it for you. This is the rule that ends the "awaiting human '
+                'merge" ambiguity; it does NOT apply to any branch a human owns (see above).'
+            )
+        if rules.get("force_push_forbidden"):
+            lines.append(
+                "- **Force-push is forbidden** on owned branches. Recovery is a revert "
+                "commit, not a rewritten history."
+            )
+        if rules.get("require_status_checks"):
+            lines.append("- A required CI check must pass before any merge is admitted.")
+        convention = rules.get("branch_owner_convention")
+        if convention:
+            lines.append(f"- Branches follow the `{convention}` naming convention.")
+
+        if len(lines) == 1:
+            return ""  # pack registered but no rules actually asserted
+        return "\n" + "\n".join(lines) + "\n"
+    except Exception:
+        return ""
+
+
 def _build_maestro_block(
     repo: dict[str, Any],
     all_repos: list[dict[str, Any]],
@@ -624,6 +698,11 @@ def _build_maestro_block(
         except Exception:
             connection_section = ""
 
+    # policy-engine 2.2: this repo's effective git-pack policy (branch/merge
+    # rules). Guarded inside the render function itself; degrades to "" on
+    # any resolution failure (older core, git pack not yet materialized).
+    policy_section = _render_git_policy_section(repo, config, project_root)
+
     # Project-wide methodology
     methodology_section = ""
     methodology = standards_cfg.get("methodology", [])
@@ -795,6 +874,7 @@ Send form: `otaman send <to> --type task-assignment --sequence-id <id> --step <n
 {domain_rules_section}
 {knowledge_section}
 {connection_section}
+{policy_section}
 
 ### Git Workflow
 - Work in branches: `agent/{repo["owner"]}/{{feature-name}}`
@@ -1403,6 +1483,72 @@ def install_secrets_infra(project_root: Path, config: dict[str, Any]) -> list[st
     return results
 
 
+def install_policy_files(project_root: Path, config: dict[str, Any]) -> list[str]:
+    """policy-engine: materialize missing ``policy/index.yaml`` and shipped
+    ``policy/<pack>/standard.yaml`` files. NEVER overwrites an existing
+    policy file — CTO edits are canon, not generator output (design D1);
+    only an ABSENT file gets the shipped default written.
+
+    Guarded: an older/absent ``otaman_core.policy`` degrades to a no-op
+    (empty result), the same convention as this file's other
+    optional-core-feature installers (connections, acting-lock).
+    """
+    results: list[str] = []
+    try:
+        import yaml as _yaml
+        from otaman_core.policy import (
+            load_policy_index,
+            policy_dir,
+            shipped_index,
+            shipped_standard,
+        )
+
+        pdir = policy_dir(project_root)
+        index_path = pdir / "index.yaml"
+        if index_path.exists():
+            pack_names = list(load_policy_index(project_root).packs)
+        else:
+            pdir.mkdir(parents=True, exist_ok=True)
+            index = shipped_index()
+            index_doc: dict[str, Any] = {
+                "schema_version": index.schema_version,
+                "packs": {
+                    name: {"narrow_only": sorted(spec.narrow_only)}
+                    for name, spec in index.packs.items()
+                },
+            }
+            index_path.write_text(_yaml.safe_dump(index_doc, sort_keys=False), encoding="utf-8")
+            results.append("Created: policy/index.yaml")
+            pack_names = list(index.packs)
+
+        git_standards = config.get("standards", {})
+        git_standards = git_standards.get("git", {}) if isinstance(git_standards, dict) else {}
+
+        for pack in pack_names:
+            standard_path = pdir / pack / "standard.yaml"
+            if standard_path.exists():
+                continue
+            try:
+                policy = shipped_standard(pack)
+            except Exception:
+                continue  # no shipped standard for this pack (yet)
+            rules = dict(policy.rules)
+            if pack == "git" and isinstance(git_standards, dict):
+                # D8 migration: absorb standards.git.{branching,environments,
+                # merge_policy} as pack content (JTBD-45) instead of shipping
+                # the None placeholders verbatim.
+                for key in ("branching", "environments", "merge_policy"):
+                    if key in git_standards:
+                        rules[key] = git_standards[key]
+            standard_path.parent.mkdir(parents=True, exist_ok=True)
+            policy_doc = {"pack": policy.pack, "name": policy.name, "rules": rules}
+            standard_path.write_text(_yaml.safe_dump(policy_doc, sort_keys=False), encoding="utf-8")
+            results.append(f"Created: policy/{pack}/standard.yaml")
+    except Exception:
+        return results
+    return results
+
+
 def main() -> int:
     # 2B.2-A: dry-run early return. Full per-write gating in 2B.2-B.
     import sys as _sys
@@ -1480,6 +1626,16 @@ def main() -> int:
     queue_created = generate_queue_files(project_root, config)
     for q in queue_created:
         print(f"Created: {q}")
+
+    # Materialize missing policy/ files BEFORE anything reads the effective
+    # policy below, so the very first generation pass on a fresh program
+    # already reflects the shipped policy defaults in CLAUDE.local.md rule
+    # text (otaman-core PR #40 makes narrow-only enforcement unconditional
+    # regardless of call order, but writing policy/ up front keeps any
+    # program-level additions visible immediately too).
+    policy_results = install_policy_files(project_root, config)
+    for r in policy_results:
+        print(r)
 
     _phase("Writing per-repo CLAUDE.local.md", count=len(config["repos"]))
     # Write per-repo orchestration rules to gitignored CLAUDE.local.md
