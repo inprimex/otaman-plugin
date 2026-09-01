@@ -8,7 +8,7 @@ Full documentation, walkthroughs, and architecture notes live at **[docs.otaman.
 
 ## What this plugin provides
 
-- **Plugin manifest** — `plugin.json` / `mcp.json` declaring the plugin to Claude Code.
+- **Plugin manifest** — `.claude-plugin/plugin.json` / `.mcp.json` declaring the plugin to Claude Code.
 - **Slash commands** — every `/otaman:<cmd>` the human or agents invoke in a Claude Code session.
 - **Skills** — reusable instructional modules: `multi-repo-orchestration`, `spec-management`, `cto-advisor`, `ba-skill`, `cpo-skill`, and others.
 - **Agent definitions** — observer and reviewer personas (cto-reviewer, security-observer, spec-validator) that Claude Code instantiates on demand.
@@ -19,14 +19,14 @@ Full documentation, walkthroughs, and architecture notes live at **[docs.otaman.
 ## Dependencies
 
 - Claude Code (the harness)
-- `otaman-core` (shared protocols, identity resolution, secret-source chain)
-- `otaman-bridge` at runtime for remote-approval AFK mode and bus routing (optional — degrades gracefully to stdio MCP)
+- `otaman-core` (shared protocols, identity resolution, secret-source chain), as a sibling checkout
+- `otaman-bridge` at runtime for remote-approval AFK mode (optional — the message bus itself is plain filesystem markdown under `.agents/bus/` and needs no daemon; bridge is only for routing approvals to a phone/remote surface)
 
 ## Quick start (development)
 
 ```bash
-# Install with dev + test extras
-uv sync --package otaman-plugin --extra test
+# From the workspace root (parent of this repo and the otaman-core sibling checkout):
+uv sync --all-packages
 
 # Run the test suite
 uv run --package otaman-plugin pytest
@@ -49,7 +49,6 @@ To wire the hooks, add the `hooks.json` entries from `hooks/hooks.json` to your 
 | `templates/` | Companion-repo templates used during project scaffolding |
 | `examples/` | Worked example of a otaman-managed project layout |
 | `references/` | User-facing setup, walkthrough, and reference documentation |
-| `archive/` | Internal-only material kept in-tree for project history (not user-facing) |
 | `tests/` | pytest suite |
 
 ## See also
@@ -62,4 +61,4 @@ To wire the hooks, add the `hooks.json` entries from `hooks/hooks.json` to your 
 
 ## License
 
-AGPL-3.0 (community edition). Commercial license available for teams that cannot ship source — see [otaman.ai](https://otaman.ai).
+AGPL-3.0-only (community edition). Commercial license available for teams that cannot ship source — see [otaman.ai](https://otaman.ai).
