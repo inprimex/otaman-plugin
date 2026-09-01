@@ -1635,6 +1635,97 @@ def install_codeowners_files(project_root: Path, config: dict[str, Any]) -> list
     return results
 
 
+_JOBS_INDENT_RE = re.compile(r"^jobs:[ \t]*$\n(?:[ \t]*\n)*([ \t]+)\S", re.MULTILINE)
+
+_CI_OK_JOB_TEMPLATE = """
+{indent}ci-ok:
+{indent}  name: ci-ok
+{indent}  runs-on: ubuntu-latest
+{indent}  needs: {needs_list}
+{indent}  if: always()
+{indent}  steps:
+{indent}    - name: Require all upstream jobs to have succeeded
+{indent}      run: |
+{indent}        if [ "${{{{ contains(needs.*.result, 'failure') }}}}" = "true" ] || \\
+{indent}           [ "${{{{ contains(needs.*.result, 'cancelled') }}}}" = "true" ]; then
+{indent}          echo "one or more required jobs did not succeed" >&2
+{indent}          exit 1
+{indent}        fi
+"""
+
+
+def install_ci_gate_templates(project_root: Path, config: dict[str, Any]) -> list[str]:
+    """policy-engine 2.2: for a repo whose EFFECTIVE git policy requires
+    status checks (``require_status_checks``) and has EXACTLY ONE
+    ``.github/workflows/*.yml`` file, append a canonical ``ci-ok``
+    aggregation job to that SAME file (``needs:`` a repo's existing jobs
+    plus the require-all-succeeded gate) — never a separate generated
+    file, since GitHub Actions only resolves ``needs:`` within one
+    workflow file (design D9, policy-engine, 2026-09-01).
+
+    A repo with more than one workflow file gets NO generated aggregator
+    at all, per D9's ruling: the policy contract ("all required checks
+    green") is expressed natively by the generated branch-protection
+    required-checks list (deploy's 3.1), which enumerates each required
+    job name directly — not by an in-repo aggregator job.
+
+    Never touches a file that already defines a ``ci-ok`` job — a repo
+    that already has its own gate keeps it untouched (D1
+    generate-and-diff). Guarded: an older/absent ``otaman_core.policy``
+    degrades to a no-op, same convention as this file's other
+    optional-core-feature installers.
+    """
+    results: list[str] = []
+    try:
+        import yaml as _yaml
+        from otaman_core.policy import effective_policy
+    except Exception:
+        return results
+
+    for repo in config.get("repos", []):
+        try:
+            repo_dir = (project_root / repo["path"]).resolve()
+            if not repo_dir.is_dir():
+                continue
+            workflows_dir = repo_dir / ".github" / "workflows"
+            if not workflows_dir.is_dir():
+                continue
+            workflow_files = sorted(workflows_dir.glob("*.yml")) + sorted(
+                workflows_dir.glob("*.yaml")
+            )
+            if len(workflow_files) != 1:
+                continue  # zero: nothing to gate; multi: D9 says no aggregator
+            workflow_file = workflow_files[0]
+
+            effective, _violations = effective_policy(
+                project_root, config, "git", repo=repo["name"]
+            )
+            if not effective.rules.get("require_status_checks"):
+                continue
+
+            text = workflow_file.read_text(encoding="utf-8")
+            doc = _yaml.safe_load(text)
+            if not isinstance(doc, dict) or not isinstance(doc.get("jobs"), dict):
+                continue
+            job_names = sorted(doc["jobs"].keys())
+            if "ci-ok" in job_names:
+                continue  # already has its own gate
+
+            indent_match = _JOBS_INDENT_RE.search(text)
+            indent = indent_match.group(1) if indent_match else "  "
+
+            addition = _CI_OK_JOB_TEMPLATE.format(indent=indent, needs_list=json.dumps(job_names))
+            new_text = text if text.endswith("\n") else text + "\n"
+            new_text += addition
+            workflow_file.write_text(new_text, encoding="utf-8")
+            results.append(
+                f"Updated: {repo['name']}/.github/workflows/{workflow_file.name} (added ci-ok job)"
+            )
+        except Exception:
+            continue
+    return results
+
+
 def main() -> int:
     # 2B.2-A: dry-run early return. Full per-write gating in 2B.2-B.
     import sys as _sys
@@ -1743,6 +1834,13 @@ def main() -> int:
     # Materialize missing per-repo CODEOWNERS (never overwrites)
     codeowners_results = install_codeowners_files(project_root, config)
     for r in codeowners_results:
+        print(r)
+
+    # Append a ci-ok aggregator job to a single-workflow repo's existing
+    # workflow file when required (D9: no generated aggregator for
+    # multi-workflow repos, or when one already exists)
+    ci_gate_results = install_ci_gate_templates(project_root, config)
+    for r in ci_gate_results:
         print(r)
 
     _phase("Installing per-repo .mcp.json (MCP server config)", count=len(config["repos"]))

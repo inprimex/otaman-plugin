@@ -12,6 +12,13 @@
   whose effective git policy requires owner admission and has a
   resolvable GitHub org from its `remote:` — never overwrites an
   existing file.
+- `install_ci_gate_templates` appends an in-file `ci-ok` aggregator job
+  to a single-workflow repo's existing workflow file (per design D9,
+  2026-09-01: GitHub Actions only resolves `needs:` within one workflow
+  file, so a separate generated aggregator file is invalid for any repo
+  with more than one workflow — those get no generated aggregator at
+  all; the required-checks list is enumerated directly in generated
+  branch protection instead, deploy's job, not this generator's).
 
 Tests against the REAL `otaman_core.policy` / `otaman_core.human_roster`
 modules (sibling checkout) rather than mocking them, matching this repo's
@@ -24,13 +31,6 @@ never been materialized on disk (absent selection defaults to
 shipped standard) — so `_render_git_policy_section` renders real content
 from day one, before `install_policy_files` (this module's own Piece B)
 ever runs. The two pieces are independent, not sequenced.
-
-CI-gate-template generation (a proposed Piece C) is deliberately NOT
-covered here — a same-file `needs:` design question is unresolved (a
-new, separate generated workflow file cannot list jobs defined in a
-repo's OTHER workflow files as `needs:` dependencies; GitHub Actions only
-resolves `needs:` within one workflow file). Tracked separately pending
-design input from spec-agent.
 """
 
 from __future__ import annotations
@@ -373,3 +373,111 @@ class TestInstallCodeownersFiles:
     )
     def test_github_org_from_remote_variants(self, remote, expected_org):
         assert gen._github_org_from_remote(remote) == expected_org
+
+
+class TestInstallCiGateTemplates:
+    """Per design D9 (policy-engine, 2026-09-01): a single-workflow repo
+    gets an IN-FILE ci-ok job (needs: only resolves within one workflow
+    file); a multi-workflow repo gets no generated aggregator at all —
+    the required-checks list is enumerated directly in generated branch
+    protection (deploy's 3.1), not here."""
+
+    _SINGLE_WORKFLOW = """\
+name: test
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    # a comment, to prove yaml parsing + indent detection survive it
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v6
+"""
+
+    def _repo_with_workflow(self, tmp_path, files: dict):
+        root = _root(tmp_path)
+        repo_dir = root / "r"
+        wf_dir = repo_dir / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        for name, content in files.items():
+            (wf_dir / name).write_text(content, encoding="utf-8")
+        return root, repo_dir
+
+    def test_appends_ci_ok_job_to_single_workflow_file(self, tmp_path):
+        root, repo_dir = self._repo_with_workflow(tmp_path, {"ci.yml": self._SINGLE_WORKFLOW})
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        results = gen.install_ci_gate_templates(root, config)
+        assert results == ["Updated: r/.github/workflows/ci.yml (added ci-ok job)"]
+
+        import yaml
+
+        wf_path = repo_dir / ".github" / "workflows" / "ci.yml"
+        doc = yaml.safe_load(wf_path.read_text(encoding="utf-8"))
+        assert set(doc["jobs"]) == {"lint", "test", "ci-ok"}
+        assert doc["jobs"]["ci-ok"]["needs"] == ["lint", "test"]
+        assert doc["jobs"]["lint"]["runs-on"] == "ubuntu-latest"  # original content untouched
+
+    def test_second_run_is_a_no_op(self, tmp_path):
+        root, repo_dir = self._repo_with_workflow(tmp_path, {"ci.yml": self._SINGLE_WORKFLOW})
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        gen.install_ci_gate_templates(root, config)
+        assert gen.install_ci_gate_templates(root, config) == []
+
+    def test_never_touches_a_file_with_an_existing_ci_ok_job(self, tmp_path):
+        already_gated = self._SINGLE_WORKFLOW + "\n  ci-ok:\n    runs-on: ubuntu-latest\n"
+        root, repo_dir = self._repo_with_workflow(tmp_path, {"ci.yml": already_gated})
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        assert gen.install_ci_gate_templates(root, config) == []
+        assert (repo_dir / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        ) == already_gated
+
+    def test_skips_multi_workflow_repo_no_aggregator_generated(self, tmp_path):
+        root, repo_dir = self._repo_with_workflow(
+            tmp_path,
+            {
+                "ci.yml": self._SINGLE_WORKFLOW,
+                "release.yml": ("name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n"),
+            },
+        )
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        assert gen.install_ci_gate_templates(root, config) == []
+        assert "ci-ok" not in (repo_dir / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_skips_repo_with_no_workflows_dir(self, tmp_path):
+        root = _root(tmp_path)
+        (root / "r").mkdir()
+        config = {"repos": [{"name": "r", "path": "r"}]}
+        assert gen.install_ci_gate_templates(root, config) == []
+
+    def test_skips_gracefully_when_selected_policy_missing_on_disk(self, tmp_path):
+        root, repo_dir = self._repo_with_workflow(tmp_path, {"ci.yml": self._SINGLE_WORKFLOW})
+        config = {"repos": [{"name": "r", "path": "r", "policies": {"git": "nonexistent"}}]}
+        assert gen.install_ci_gate_templates(root, config) == []
+
+    def test_degrades_to_empty_on_older_core_without_policy_module(self, tmp_path, monkeypatch):
+        root, repo_dir = self._repo_with_workflow(tmp_path, {"ci.yml": self._SINGLE_WORKFLOW})
+        config = {"repos": [{"name": "r", "path": "r"}]}
+
+        real_import = __import__
+
+        def _fake_import(name, *a, **k):
+            if name == "otaman_core.policy":
+                raise ImportError("simulated older core")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr("builtins.__import__", _fake_import)
+        assert gen.install_ci_gate_templates(root, config) == []
