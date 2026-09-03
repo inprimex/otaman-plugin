@@ -4,9 +4,10 @@ credential/Host map) is `_render_connection_inventory`, covered in
 test_connection_inventory_block.py.
 
 Tests against the REAL `otaman_core._secrets.credential_layer_paths` /
-`credential_provenance` (agent-credential-access 1.1, otaman-core PR #42)
-rather than mocking them, matching this repo's convention
-(test_policy_generation.py, test_connection_inventory_block.py).
+`credential_provenance` (agent-credential-access 1.1, otaman-core PR #42;
+org auto-discovery via `resolve_org_root()` added in PR #43) rather than
+mocking them, matching this repo's convention (test_policy_generation.py,
+test_connection_inventory_block.py).
 
 Values-free by contract (Q5): only layer names, file paths, and key
 NAMES ever render — never a value.
@@ -20,18 +21,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 gen = importlib.import_module("otaman_plugin.generate_agent_config")
-
-
-class TestInferOrgFromPath:
-    def test_matches_orgs_programs_convention(self):
-        path = Path("/home/otaman-dev/orgs/otaman-dev/programs/otaman-dev/otaman-meta")
-        assert gen._infer_org_from_path(path) == "otaman-dev"
-
-    def test_no_orgs_segment_returns_none(self):
-        assert gen._infer_org_from_path(Path("/home/user/projects/myapp")) is None
-
-    def test_orgs_as_final_segment_returns_none(self):
-        assert gen._infer_org_from_path(Path("/home/user/orgs")) is None
 
 
 class TestRenderCredentialCascadeSection:
