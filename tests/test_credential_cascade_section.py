@@ -106,6 +106,64 @@ class TestRenderCredentialCascadeSection:
         assert gen._render_credential_cascade_section(tmp_path) == ""
 
 
+class _FakeWindowsPath:
+    """Duck-typed stand-in for a real ``WindowsPath`` (can't be instantiated
+    on a POSIX test runner — ``pathlib.WindowsPath(...)`` raises
+    ``NotImplementedError`` there). ``str()`` uses backslashes, matching a
+    real Windows path's native rendering; ``as_posix()`` uses forward
+    slashes. Proves the renderer converts to posix before embedding a path
+    into text that later reaches ``re.sub`` as a REPLACEMENT string —
+    otherwise Windows path fragments like ``\\Users``/``\\AppData``/
+    ``\\Local`` are interpreted as invalid regex escapes ("bad escape \\U"),
+    exactly the live bug cli-agent reported (20260903T200442) after this
+    section shipped without the conversion."""
+
+    def __init__(self, posix_str: str):
+        self._posix = posix_str
+
+    def as_posix(self) -> str:
+        return self._posix
+
+    def is_file(self) -> bool:
+        return False
+
+    def __str__(self) -> str:  # pragma: no cover - tripwire, must never be used
+        return self._posix.replace("/", "\\")
+
+
+def test_windows_style_path_never_reaches_output_with_backslashes(monkeypatch):
+    """Regression for the live Windows crash: a raw (non-posix) path
+    reaching re.sub as a REPLACEMENT string crashes with 'bad escape \\U'
+    on segments like Users/AppData/Local. This section must always call
+    as_posix() before embedding a path, never rely on implicit str()."""
+    win_path = _FakeWindowsPath("C:/Users/runneradmin/AppData/Local/.otaman/secrets.env")
+
+    def _fake_layer_paths(*, maestro_root=None, org=None, home=None):
+        return {"program": win_path}
+
+    def _fake_provenance(*, maestro_root=None, org=None, home=None):
+        return {}
+
+    monkeypatch.setattr(
+        "otaman_core._secrets.credential_layer_paths", _fake_layer_paths, raising=False
+    )
+    monkeypatch.setattr(
+        "otaman_core._secrets.credential_provenance", _fake_provenance, raising=False
+    )
+
+    block = gen._render_credential_cascade_section(Path("/some/root"))
+
+    assert "\\" not in block
+    assert "C:/Users/runneradmin/AppData/Local/.otaman/secrets.env" in block
+
+    # The exact failure mode: this text becomes a re.sub REPLACEMENT
+    # string elsewhere in the generator (generate_repo_claude_md). Prove
+    # it survives that call without raising re.error.
+    import re
+
+    re.sub(r"managed-block", block, "managed-block", flags=re.DOTALL)
+
+
 def test_credential_cascade_section_wired_into_the_template():
     """Drop-guard: {credential_cascade_section} must be interpolated into
     the CLAUDE.local.md template, computed via the real render fn — same

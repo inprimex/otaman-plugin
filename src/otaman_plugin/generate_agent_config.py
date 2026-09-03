@@ -451,7 +451,7 @@ def _render_credential_cascade_section(project_root: Path | None) -> str:
         provenance = credential_provenance(maestro_root=project_root, org=org)
 
         layer_lines = "\n".join(
-            f"- **{layer}**: `{path}` ({'exists' if path.is_file() else 'absent'})"
+            f"- **{layer}**: `{path.as_posix()}` ({'exists' if path.is_file() else 'absent'})"
             for layer, path in layers.items()
         )
 
@@ -506,7 +506,8 @@ def _plugin_dir_wiring_note(config: dict[str, Any]) -> str:
     if wired:
         return (
             f"`/otaman:*` slash commands are available in this session "
-            f"(`runner.agent_bootstrap.plugin_dir` is wired to `{plugin_dir}`)."
+            f"(`runner.agent_bootstrap.plugin_dir` is wired to "
+            f"`{Path(str(plugin_dir)).as_posix()}`)."
         )
     return (
         "`/otaman:*` slash commands may NOT be available in this session — "
