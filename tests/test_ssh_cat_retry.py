@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import stat
 import subprocess
 import textwrap
 from pathlib import Path
@@ -52,31 +51,34 @@ def harness_path(tmp_path_factory) -> Path:
 
 @pytest.fixture
 def flaky_ssh_stub(tmp_path) -> Path:
-    """A fake `ssh.exe`: reads FLAKY_FAIL_COUNT (env) and a state file
-    (FLAKY_STATE_FILE) to fail the first N invocations, then succeed —
-    simulating N transient resets followed by a working connection."""
-    stub = tmp_path / "flaky-ssh.sh"
+    """A fake `ssh.exe`, implemented as a .ps1 script invoked via
+    `pwsh -File` (cross-platform — a bash-shebang .sh stub can't execute
+    natively on Windows without WSL, which is exactly the gap this test
+    would otherwise hit on CI's Windows leg). Reads FLAKY_FAIL_COUNT (env)
+    and a state file (FLAKY_STATE_FILE) to fail the first N invocations,
+    then succeed — simulating N transient resets followed by a working
+    connection."""
+    stub = tmp_path / "flaky-ssh.ps1"
     stub.write_text(
         textwrap.dedent(
             """\
-            #!/usr/bin/env bash
-            state="${FLAKY_STATE_FILE:?FLAKY_STATE_FILE not set}"
-            fail_count="${FLAKY_FAIL_COUNT:-0}"
-            count=0
-            if [ -f "$state" ]; then count=$(cat "$state"); fi
-            count=$((count + 1))
-            echo "$count" > "$state"
-            if [ "$count" -le "$fail_count" ]; then
-                echo "simulated transient reset" >&2
+            $state = $env:FLAKY_STATE_FILE
+            if (-not $state) { throw "FLAKY_STATE_FILE not set" }
+            $failCount = if ($env:FLAKY_FAIL_COUNT) { [int]$env:FLAKY_FAIL_COUNT } else { 0 }
+            $count = 0
+            if (Test-Path $state) { $count = [int](Get-Content $state) }
+            $count++
+            Set-Content -Path $state -Value $count
+            if ($count -le $failCount) {
+                Write-Error "simulated transient reset"
                 exit 255
-            fi
-            echo "stub-output-line"
+            }
+            Write-Output "stub-output-line"
             exit 0
             """
         ),
         encoding="utf-8",
     )
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return stub
 
 
@@ -102,12 +104,19 @@ def run_ps(harness_path: Path, body: str, env: dict | None = None) -> dict:
 
 def _shadow_invocation_body(stub_path: Path) -> str:
     """PS body prefix: shadow Get-NativeSshInvocation to route through the
-    flaky stub instead of a real ssh.exe, matching Invoke-SshCatRemoteFile's
-    exact consumption shape (Exe/KeyArgs/Target)."""
+    flaky stub (via `pwsh -File`, cross-platform) instead of a real
+    ssh.exe, matching Invoke-SshCatRemoteFile's exact consumption shape
+    (Exe/KeyArgs/Target) — KeyArgs carries the pwsh invocation flags, so
+    the real function's own Target/remoteCmd tail becomes harmless extra
+    script arguments the stub never reads (it uses env vars only)."""
     return f"""
     function Get-NativeSshInvocation {{
         param([hashtable]$Settings)
-        return @{{ Exe = "{stub_path}"; KeyArgs = @(); Target = 'test@mesh-peer' }}
+        return @{{
+            Exe = "{PWSH}"
+            KeyArgs = @('-NoProfile', '-NonInteractive', '-File', "{stub_path}")
+            Target = 'test@mesh-peer'
+        }}
     }}
     """
 
