@@ -352,8 +352,11 @@ def _read_marker_path(repo_dir: Path) -> str | None:
 def _render_connection_inventory(
     connections: list[Any], checks: dict[str, str] | None = None
 ) -> str:
-    """agent-credential-access 2.1: render the resolved connection inventory
-    into the always-loaded CLAUDE.local.md block.
+    """agent-credential-access 1.4 (originally 2.1): render the resolved
+    connection inventory into the always-loaded CLAUDE.local.md block —
+    "the external-resource -> credential/Host map" half of 1.4's
+    requirement (see also ``_render_credential_cascade_section`` for the
+    "where each cascade layer's secrets file lives" half).
 
     Compaction-durable by construction: this lands in the generator-owned,
     gitignored CLAUDE.local.md that Claude Code reloads every session, so an
@@ -362,15 +365,21 @@ def _render_connection_inventory(
 
     Values are NEVER rendered. ``secret_ref`` is a secret-backend key NAME and
     ``ssh_ref`` is an ``~/.ssh/config`` Host alias / socket handle — both are
-    locators, resolved at use time, never inlined into the bus or context. The
-    ``Connection`` model (otaman-core, frozen contract 20260824T164952) carries
-    no value-bearing field, so there is nothing here to leak. ``last-check`` is
-    joined on ``name`` from the last persisted check report (``checks`` map,
-    ``{name: "status · checked_at"}``) and renders ``—`` when no report exists.
+    locators, resolved at use time, never inlined into the bus or context.
+    ``kind`` (``pat|deploy-key|api-key|oauth|ssh``, agent-credential-access
+    1.2/Q8) and ``ssh_scope`` (a free-text usage note on the ssh Host
+    pointer, Q2) are likewise locators/metadata, never values. The
+    ``Connection`` model (otaman-core) carries no value-bearing field, so
+    there is nothing here to leak. ``last-check`` is joined on ``name``
+    from the last persisted check report (``checks`` map, ``{name: "status
+    · checked_at"}``) and renders ``—`` when no report exists.
 
-    Takes any objects exposing ``name/type/endpoint/scope/secret_ref/ssh_ref``
-    (duck-typed so tests need not import the core dataclass). Returns "" for an
-    empty inventory so CLAUDE.local.md stays clean when nothing is configured.
+    Takes any objects exposing ``name/type/endpoint/scope/secret_ref/
+    ssh_ref/kind/ssh_scope`` (duck-typed so tests need not import the core
+    dataclass; missing attributes render ``—``, so this also degrades
+    cleanly against an older core whose ``Connection`` predates 1.2).
+    Returns "" for an empty inventory so CLAUDE.local.md stays clean when
+    nothing is configured.
     """
     if not connections:
         return ""
@@ -378,7 +387,9 @@ def _render_connection_inventory(
     rows = "\n".join(
         f"| {c.name} | {c.type} | {c.endpoint} | {c.scope} | "
         f"{getattr(c, 'secret_ref', None) or '—'} | "
-        f"{getattr(c, 'ssh_ref', None) or '—'} | {checks.get(c.name, '—')} |"
+        f"{getattr(c, 'ssh_ref', None) or '—'} | "
+        f"{getattr(c, 'kind', None) or '—'} | "
+        f"{getattr(c, 'ssh_scope', None) or '—'} | {checks.get(c.name, '—')} |"
         for c in sorted(connections, key=lambda c: (c.scope, c.name))
     )
     return f"""
@@ -387,14 +398,88 @@ def _render_connection_inventory(
 
 Where THIS agent's credentials live, resolved tenant → org → program (nearest
 scope wins per name). `secret_ref` / `ssh_ref` are POINTERS — a secret-backend
-key name, an ssh Host alias — **never secret values**. Resolve them at use time;
-never inline a value into the bus or your context. `last-check` stays `—` until
-the connection check engine lands.
+key name, an ssh Host alias — **never secret values**. `kind` distinguishes
+pat/deploy-key/api-key/oauth/ssh (affects how you use it); `ssh_scope` is a
+free-text usage note on the ssh Host pointer. Resolve them at use time; never
+inline a value into the bus or your context. `last-check` stays `—` until the
+connection check engine lands.
 
-| name | type | endpoint | scope | secret_ref | ssh_ref | last-check |
-|------|------|----------|-------|------------|---------|------------|
+| name | type | endpoint | scope | secret_ref | ssh_ref | kind | ssh_scope | last-check |
+|------|------|----------|-------|------------|---------|------|-----------|------------|
 {rows}
 """
+
+
+def _infer_org_from_path(project_root: Path) -> str | None:
+    """Best-effort org slug from the fleet's `orgs/<org>/programs/<program>`
+    directory convention (e.g. `.../orgs/otaman-dev/programs/otaman-dev/
+    otaman-meta` -> org ``otaman-dev``). No dedicated org resolver exists
+    yet anywhere in otaman-core/otaman-cli (checked at authoring time) —
+    org is otherwise only ever supplied by a caller who already has it.
+
+    Returns ``None`` on any non-matching layout (a non-fleet-standard
+    install). Callers degrade to program+tenant layers only rather than
+    guess an org name wrong.
+    """
+    parts = project_root.resolve().parts
+    for i, part in enumerate(parts):
+        if part == "orgs" and i + 1 < len(parts):
+            return parts[i + 1]
+    return None
+
+
+def _render_credential_cascade_section(project_root: Path | None) -> str:
+    """agent-credential-access 1.4: state where each credential cascade
+    layer's secrets file lives, and which layer currently wins each key —
+    ambient, compaction-durable, VALUES-FREE (Q5). Reads otaman-core's
+    ``credential_layer_paths``/``credential_provenance`` (1.1) directly;
+    both are explicitly values-free by contract (key NAMES and layer
+    NAMES only, never a value).
+
+    Degrades to "" — never blocks generation — when ``project_root`` is
+    unset, an older core lacks these functions, or resolution raises (same
+    optional-core-feature convention as this file's other ``_render_*``
+    sections).
+    """
+    if project_root is None:
+        return ""
+    try:
+        from otaman_core._secrets import credential_layer_paths, credential_provenance
+
+        org = _infer_org_from_path(project_root)
+        layers = credential_layer_paths(maestro_root=project_root, org=org)
+        provenance = credential_provenance(maestro_root=project_root, org=org)
+
+        layer_lines = "\n".join(
+            f"- **{layer}**: `{path}` ({'exists' if path.is_file() else 'absent'})"
+            for layer, path in layers.items()
+        )
+
+        provenance_block = ""
+        if provenance:
+            keys_by_layer: dict[str, list[str]] = {}
+            for key, layer in provenance.items():
+                keys_by_layer.setdefault(layer, []).append(key)
+            provenance_lines = "\n".join(
+                f"- **{layer}** wins: {', '.join(sorted(keys))}"
+                for layer, keys in sorted(keys_by_layer.items())
+            )
+            provenance_block = (
+                "\n\nKeys currently defined (nearest-scope-wins; names only, "
+                f"values never shown):\n{provenance_lines}"
+            )
+
+        return f"""
+
+### Credential cascade (locations only, NEVER values)
+
+Per-key merge across three layers, nearest scope wins (program > org >
+tenant) — resolve a key at the call site via `resolve_cascade()`, never
+here:
+{layer_lines}{provenance_block}
+"""
+    except Exception:
+        return ""
 
 
 def _plugin_dir_wiring_note(config: dict[str, Any]) -> str:
@@ -737,6 +822,11 @@ def _build_maestro_block(
         except Exception:
             connection_section = ""
 
+    # agent-credential-access 1.4: where each credential cascade layer's
+    # secrets file lives + which layer wins each key. Guarded inside the
+    # render function itself; degrades to "" on any resolution failure.
+    credential_cascade_section = _render_credential_cascade_section(project_root)
+
     # policy-engine 2.2: this repo's effective git-pack policy (branch/merge
     # rules). Guarded inside the render function itself; degrades to "" on
     # any resolution failure (older core, git pack not yet materialized).
@@ -913,6 +1003,7 @@ Send form: `otaman send <to> --type task-assignment --sequence-id <id> --step <n
 {domain_rules_section}
 {knowledge_section}
 {connection_section}
+{credential_cascade_section}
 {policy_section}
 
 ### Destructive-operation guard
