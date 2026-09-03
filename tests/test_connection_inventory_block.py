@@ -36,6 +36,8 @@ class _StubConn:
     scope: str
     secret_ref: str | None = None
     ssh_ref: str | None = None
+    kind: str | None = None
+    ssh_scope: str | None = None
     token: str = "SUPER-SECRET-VALUE-should-never-render"
 
 
@@ -49,10 +51,41 @@ def test_renders_table_with_locator_columns():
     )
     assert "### Connections & credentials" in block
     # Column header + the row's locator fields.
-    for cell in ("name", "type", "endpoint", "scope", "secret_ref", "ssh_ref", "last-check"):
+    for cell in (
+        "name",
+        "type",
+        "endpoint",
+        "scope",
+        "secret_ref",
+        "ssh_ref",
+        "kind",
+        "ssh_scope",
+        "last-check",
+    ):
         assert cell in block
     assert "gh" in block and "git-https" in block and "github.com" in block
     assert "gh-pat" in block  # secret_ref locator IS shown
+
+
+def test_renders_kind_and_ssh_scope_when_present():
+    """agent-credential-access 1.2/Q8: kind + ssh_scope are new locator/
+    metadata fields on Connection — must render like any other locator."""
+    block = gen._render_connection_inventory(
+        [
+            _StubConn(
+                "client-prod",
+                "ssh",
+                "client-prod.example.com",
+                "program",
+                ssh_ref="client-prod-deploy",
+                kind="ssh",
+                ssh_scope="prod deploy, read-only",
+            )
+        ]
+    )
+    row = [ln for ln in block.splitlines() if ln.startswith("| client-prod ")][0]
+    assert "ssh" in row
+    assert "prod deploy, read-only" in row
 
 
 def test_never_renders_values():
@@ -113,9 +146,12 @@ def test_aligns_with_core_connection_dataclass():
         scope="program",
         secret_ref="deploy-key",
         ssh_ref="gh-alias",
+        kind="deploy-key",
+        ssh_scope="ci deploy only",
     )
     block = gen._render_connection_inventory([c])
     assert "core-real" in block and "deploy-key" in block and "gh-alias" in block
+    assert "ci deploy only" in block
 
 
 def _write_program_connections(program_root: Path, entries: list[dict]) -> None:
