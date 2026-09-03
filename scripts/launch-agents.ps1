@@ -184,7 +184,9 @@ function Get-NativeSshInvocation {
 function Invoke-SshCatRemoteFile {
     param(
         [Parameter(Mandatory)][hashtable]$Settings,
-        [Parameter(Mandatory)][string]$RemotePath
+        [Parameter(Mandatory)][string]$RemotePath,
+        [int]$MaxAttempts = 3,
+        [int]$RetryDelaySeconds = 2
     )
     $inv = Get-NativeSshInvocation -Settings $Settings
     # $RemotePath is typically remote-home-relative (e.g. `~/.otaman/runner.endpoint`)
@@ -200,11 +202,30 @@ function Invoke-SshCatRemoteFile {
     # separate argv tokens) -- see Build-SshCommand's $chainedCmd.
     $remoteCmd = "cat $RemotePath"
     $sshArgs = @() + $inv.KeyArgs + @($inv.Target, $remoteCmd)
-    $output = & $inv.Exe @sshArgs 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "ssh-cat: 'cat $RemotePath' on $($inv.Target) failed (exit $LASTEXITCODE)"
+
+    # Retry-with-backoff (deploy-agent 20260903T210006/210830): a transient
+    # P2P/NAT-traversal reset mid-handshake on a mesh (Netbird-relayed) link
+    # kills a single-shot ssh invocation even though the server side is
+    # completely healthy -- observed ~33% single-call failure rate against a
+    # real mesh peer, zero actual auth rejections (sshd logs showed
+    # "Connection reset ... [preauth]" for every failure, including cases
+    # where the CLIENT misleadingly reported "Permission denied (publickey)"
+    # -- that's just ssh's generic fallback message when preauth gets reset,
+    # not a real credential problem). ssh's own exit code (255) does not
+    # distinguish a transient reset from a real failure, so this retries on
+    # ANY non-zero exit rather than pattern-matching stderr text.
+    $finalExitCode = $null
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $output = & $inv.Exe @sshArgs 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            return ($output -join "`n")
+        }
+        $finalExitCode = $LASTEXITCODE
+        if ($attempt -lt $MaxAttempts) {
+            Start-Sleep -Seconds ($RetryDelaySeconds * $attempt)
+        }
     }
-    return ($output -join "`n")
+    throw "ssh-cat: 'cat $RemotePath' on $($inv.Target) failed after $MaxAttempts attempts (exit $finalExitCode)"
 }
 
 # Resolves a bearer token per `runner_token_source`'s grammar (ssh-cat: /
