@@ -410,24 +410,6 @@ connection check engine lands.
 """
 
 
-def _infer_org_from_path(project_root: Path) -> str | None:
-    """Best-effort org slug from the fleet's `orgs/<org>/programs/<program>`
-    directory convention (e.g. `.../orgs/otaman-dev/programs/otaman-dev/
-    otaman-meta` -> org ``otaman-dev``). No dedicated org resolver exists
-    yet anywhere in otaman-core/otaman-cli (checked at authoring time) —
-    org is otherwise only ever supplied by a caller who already has it.
-
-    Returns ``None`` on any non-matching layout (a non-fleet-standard
-    install). Callers degrade to program+tenant layers only rather than
-    guess an org name wrong.
-    """
-    parts = project_root.resolve().parts
-    for i, part in enumerate(parts):
-        if part == "orgs" and i + 1 < len(parts):
-            return parts[i + 1]
-    return None
-
-
 def _render_credential_cascade_section(project_root: Path | None) -> str:
     """agent-credential-access 1.4: state where each credential cascade
     layer's secrets file lives, and which layer currently wins each key —
@@ -435,6 +417,14 @@ def _render_credential_cascade_section(project_root: Path | None) -> str:
     ``credential_layer_paths``/``credential_provenance`` (1.1) directly;
     both are explicitly values-free by contract (key NAMES and layer
     NAMES only, never a value).
+
+    No explicit ``org=`` needed — as of otaman-core #43 (aca 1.5 fix),
+    both functions auto-discover the org layer from ``maestro_root``'s
+    ``orgs/<org>/programs/...`` layout via the shared
+    ``resolve_org_root()`` when ``org`` is omitted. This repo's own
+    earlier hand-rolled ``_infer_org_from_path`` duplicated exactly that
+    walk before the shared resolver existed; removed in favor of the
+    kernel's now that it does (core-agent 20260903T223142).
 
     Degrades to "" — never blocks generation — when ``project_root`` is
     unset, an older core lacks these functions, or resolution raises (same
@@ -446,9 +436,8 @@ def _render_credential_cascade_section(project_root: Path | None) -> str:
     try:
         from otaman_core._secrets import credential_layer_paths, credential_provenance
 
-        org = _infer_org_from_path(project_root)
-        layers = credential_layer_paths(maestro_root=project_root, org=org)
-        provenance = credential_provenance(maestro_root=project_root, org=org)
+        layers = credential_layer_paths(maestro_root=project_root)
+        provenance = credential_provenance(maestro_root=project_root)
 
         layer_lines = "\n".join(
             f"- **{layer}**: `{path.as_posix()}` ({'exists' if path.is_file() else 'absent'})"
