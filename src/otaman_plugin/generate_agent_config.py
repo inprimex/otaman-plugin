@@ -397,6 +397,41 @@ the connection check engine lands.
 """
 
 
+def _plugin_dir_wiring_note(config: dict[str, Any]) -> str:
+    """ce-bootstrap-plugin-wiring 1.3: state the actual precondition for
+    `/otaman:*` slash-command availability, truthfully, per generation
+    pass — a Path-B runner-spawned session only gets them when
+    `runner.agent_bootstrap.plugin_dir` is wired to a real, existing
+    otaman-plugin checkout (deploy root-cause 20260903T151951: bootstrap's
+    platform.yaml patch step historically vendored the plugin tree but
+    left `plugin_dir` unset, so every such session had MCP tools but no
+    slash commands — human SSH-launched sessions were unaffected since
+    the launcher hardcodes `--plugin-dir`). Computed from live config, not
+    hardcoded, so a backfilled program sees this flip on the next
+    `init --update` with no plugin-side code change (D1/D3).
+    """
+    runner_cfg = config.get("runner")
+    plugin_dir = None
+    if isinstance(runner_cfg, dict):
+        bootstrap_cfg = runner_cfg.get("agent_bootstrap")
+        if isinstance(bootstrap_cfg, dict):
+            plugin_dir = bootstrap_cfg.get("plugin_dir")
+
+    wired = bool(plugin_dir) and Path(str(plugin_dir)).expanduser().is_dir()
+    if wired:
+        return (
+            f"`/otaman:*` slash commands are available in this session "
+            f"(`runner.agent_bootstrap.plugin_dir` is wired to `{plugin_dir}`)."
+        )
+    return (
+        "`/otaman:*` slash commands may NOT be available in this session — "
+        "`runner.agent_bootstrap.plugin_dir` is not wired to an existing "
+        "otaman-plugin checkout in platform.yaml. If a `/otaman:...` command "
+        'errors with "Unknown skill", use the equivalent bash CLI form '
+        'instead (e.g. `otaman propose "..."` instead of `/otaman:propose`).'
+    )
+
+
 def _render_git_policy_section(
     repo: dict[str, Any], config: dict[str, Any], project_root: Path | None
 ) -> str:
@@ -527,6 +562,8 @@ def _build_maestro_block(
             except ValueError:
                 m = project_root.resolve().as_posix()
 
+    plugin_dir_note = _plugin_dir_wiring_note(config)
+
     specs_section = ""
     if "specs" in config:
         specs_path = config["specs"].get("path", "./specs")
@@ -552,6 +589,7 @@ def _build_maestro_block(
 - **Shared contracts**: `{specs_path}/openspec/specs/shared-contracts/spec.md` — message schemas, signal classes, security contracts
 - **Active changes for you**: scan `{specs_path}/openspec/changes/` for folders whose `tasks.md` references your repo or domain. Read `proposal.md` → `design.md` → `tasks.md` in each.
 - **All accumulated specs**: `{specs_path}/openspec/specs/`
+- {plugin_dir_note}
 - To propose a spec change, use `/otaman:propose` — do NOT modify specs directly
 
 ### Spec Change Rules (CRITICAL)
@@ -566,6 +604,7 @@ def _build_maestro_block(
             specs_section = f"""
 ### Specs
 - Specs location: `{specs_path}` (READ-ONLY)
+- {plugin_dir_note}
 - To change a spec, use `/otaman:propose` — do NOT modify specs directly
 - Always read relevant specs before implementing API endpoints or clients
 
