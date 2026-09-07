@@ -27,7 +27,7 @@
 #### Information Verification Summary
 
 | Category | Score | Key Findings |
-|----------|-------|-------------|
+|---|---|---|
 | Business Context | X/5 | {findings} |
 | Technical Environment | X/5 | {findings} |
 | Compliance | X/5 | {findings} |
@@ -40,7 +40,7 @@
 #### Assumption Register
 
 | ID | Assumption | Confidence | Impact if Wrong | Verification |
-|----|-----------|------------|----------------|-------------|
+|---|---|---|---|---|
 | A1 | {assumption} | {High/Med/Low} {%} | {hours/cost} | {method} |
 
 ### 3. Requirements Documentation (4-6 pages)
@@ -48,13 +48,13 @@
 #### Functional Requirements
 
 | Epic | Feature | Complexity | Initial Estimate |
-|------|---------|-----------|-----------------|
+|---|---|---|---|
 | {epic} | {feature} | {Low/Med/High} | {hours range} |
 
 #### Non-Functional Requirements
 
 | Requirement | Metric | Target | Notes |
-|------------|--------|--------|-------|
+|---|---|---|---|
 | Response time | p95 latency | < {X}ms | {notes} |
 | Availability | Uptime | {X}% | {notes} |
 | Scale | Concurrent users | {X} | {notes} |
@@ -79,13 +79,13 @@ flowchart TD
 #### Component Traceability
 
 | Component | Requirements | Tech Stack | Rationale |
-|-----------|-------------|-----------|-----------|
+|---|---|---|---|
 | {component} | ASR-1, FR-3 | {tech} | {why} |
 
 #### Tech Stack
 
 | Layer | Choice | Alternative Considered | Rationale |
-|-------|--------|----------------------|-----------|
+|---|---|---|---|
 | Frontend | {tech} | {alt} | {why} |
 | Backend | {tech} | {alt} | {why} |
 | Database | {tech} | {alt} | {why} |
@@ -104,25 +104,25 @@ For each component: Optimistic (O), Most Likely (M), Pessimistic (P).
 #### Component Estimates
 
 | Component | O (hours) | M (hours) | P (hours) | Expected | StdDev | 68% CI |
-|-----------|-----------|-----------|-----------|----------|--------|--------|
+|---|---|---|---|---|---|---|
 | {component} | {O} | {M} | {P} | {E} | {σ} | {range} |
-| **TOTAL** | | | | **{E}** | **{σ}** | **{range}** |
+| **TOTAL** |  |  |  | **{E}** | **{σ}** | **{range}** |
 
 #### Phase Breakdown
 
 | Phase | Duration | Team | Effort | Cost |
-|-------|----------|------|--------|------|
+|---|---|---|---|---|
 | Discovery | {X} weeks | {team} | {hours}h | ${cost} |
 | MVP / Phase 1 | {X} weeks | {team} | {hours}h | ${cost} |
 | Phase 2 | {X} weeks | {team} | {hours}h | ${cost} |
 | Testing & QA | {X} weeks | {team} | {hours}h | ${cost} |
 | Launch | {X} weeks | {team} | {hours}h | ${cost} |
-| **TOTAL** | **{X} months** | | **{hours}h** | **${total}** |
+| **TOTAL** | **{X} months** |  | **{hours}h** | **${total}** |
 
 #### Team Composition
 
 | Role | Count | Phase(s) | Rate | Monthly Cost |
-|------|-------|----------|------|-------------|
+|---|---|---|---|---|
 | {role} | {N} | {phases} | ${rate}/h | ${monthly} |
 
 ### 6. Risk Assessment (3-4 pages)
@@ -130,7 +130,7 @@ For each component: Optimistic (O), Most Likely (M), Pessimistic (P).
 #### Risk Register
 
 | ID | Risk | Category | Prob | Impact | Score | Mitigation | Contingency (hours) |
-|----|------|----------|------|--------|-------|-----------|-------------------|
+|---|---|---|---|---|---|---|---|
 | R1 | {risk} | Technical | H/M/L | H/M/L | {1-9} | {mitigation} | {hours} |
 
 **Risk categories**: Technical, Scope, Organisational, Compliance, External
@@ -144,7 +144,7 @@ For each component: Optimistic (O), Most Likely (M), Pessimistic (P).
 ### 7. Options Comparison (2-3 pages, if applicable)
 
 | Criterion | Option A: {name} | Option B: {name} | Option C: {name} |
-|-----------|-----------------|-----------------|-----------------|
+|---|---|---|---|
 | Scope | {scope} | {scope} | {scope} |
 | Timeline | {months} | {months} | {months} |
 | Investment | ${range} | ${range} | ${range} |
@@ -174,7 +174,7 @@ gantt
 #### Decision Gates
 
 | Gate | Criteria | Artifacts Required |
-|------|----------|-------------------|
+|---|---|---|
 | Discovery => MVP | Assumptions validated, specs approved | Updated estimation, platform.yaml |
 | MVP => Phase 2 | Core features complete, tested | QA report, user acceptance |
 | Phase 2 => Launch | All features complete, compliance ready | Compliance report, pen test |
