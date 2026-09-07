@@ -63,7 +63,7 @@ The short identifier can be a commit hash, slug, or descriptive tag. Must be uni
 ## Message Types
 
 | Type | When to use | Typical `to` |
-|------|-------------|-------------|
+|---|---|---|
 | `info` | General announcements, status updates | `all` |
 | `question` | Need information from another agent's domain | specific agent |
 | `contract-change` | API contract or shared type was modified | affected agents or `all` |
@@ -79,7 +79,7 @@ The short identifier can be a commit hash, slug, or descriptive tag. Must be uni
 ## Priority Levels
 
 | Priority | Meaning | Expected response time |
-|----------|---------|----------------------|
+|---|---|---|
 | `low` | FYI, no action needed | When convenient |
 | `normal` | Standard communication | Same work session |
 | `high` | Important, should be addressed soon | Before next major task |

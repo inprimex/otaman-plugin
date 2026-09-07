@@ -26,7 +26,7 @@ Run `otaman doctor` to confirm tmux is installed. Done.
 | Mode | What it does | Recovery UX | Requirements |
 |---|---|---|---|
 | **none** | Bare SSH, no wrapping. Current default for back-compat. | Drop = lose the session. Relaunch starts a fresh agent. | Nothing extra. |
-| **tmux** ★ recommended | Wraps the inner command in `tmux new -A -s '<name>' bash -lc '<cmd>'` on the remote. The `-A` flag means "create new OR attach to existing" — relaunching the same tab from the launcher reattaches to the in-flight conversation. | Drop = SSH client errors, tab needs relaunch. Relaunch = tmux reattaches; you see your conversation history and the agent picks up where it left off. | `tmux` installed on the remote. |
+| **tmux** ★ recommended | Wraps the inner command in `tmux new -A -s '\<name>' bash -lc '\<cmd>'` on the remote. The `-A` flag means "create new OR attach to existing" — relaunching the same tab from the launcher reattaches to the in-flight conversation. | Drop = SSH client errors, tab needs relaunch. Relaunch = tmux reattaches; you see your conversation history and the agent picks up where it left off. | `tmux` installed on the remote. |
 | **tmux+mosh** | Same tmux wrapping, but the SSH client is replaced with `mosh`. Mosh uses UDP and reconnects automatically on network changes. | Drop = tab pauses with yellow `[disconnected]` indicator, then auto-resumes when the network returns. No relaunch needed. | `tmux` AND `mosh-server` on the remote, plus UDP 60000–61000 reachable from your client. |
 
 ## Session naming

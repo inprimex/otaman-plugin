@@ -272,9 +272,9 @@ Each daemon has its own endpoint file at `~/.otaman/bridge-<account>.endpoint`, 
 | Phone doesn't buzz at all | `otaman afk status` (probably off) + `otaman bridge status` (daemon not running?) |
 | Daemon crashes on startup with `bot_token is required` | `.otaman/secrets.env` missing or key name wrong |
 | `python-telegram-bot not installed` | `pip install -r requirements-bridge.txt` |
-| `createForumTopic` errors in daemon log | Group isn't a forum; Manage group => Topics => ON. Delete `~/.otaman/bridge-<account>-topics.json` to clear cached failures. |
+| `createForumTopic` errors in daemon log | Group isn't a forum; Manage group => Topics => ON. Delete `~/.otaman/bridge-\<account>-topics.json` to clear cached failures. |
 | Taps do nothing, daemon logs "rejected tap from uid=..." | Your user ID isn't in `allowed_user_ids`. Run `configure-telegram` again with the right IDs. |
-| "message thread not found" | Topic was deleted from the group. Delete `~/.otaman/bridge-<account>-topics.json`; next message recreates it. |
-| `endpoint file already exists` on `bridge run` | Stale after a crash. Run `otaman bridge stop --account <name>` or delete `~/.otaman/bridge-<name>.endpoint` and retry. |
+| "message thread not found" | Topic was deleted from the group. Delete `~/.otaman/bridge-\<account>-topics.json`; next message recreates it. |
+| `endpoint file already exists` on `bridge run` | Stale after a crash. Run `otaman bridge stop --account \<name>` or delete `~/.otaman/bridge-\<name>.endpoint` and retry. |
 
 Full live-test walkthrough: `references/t2-live-test.md`.

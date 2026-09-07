@@ -5,7 +5,7 @@ This guide explains how otaman's features map to compliance requirements for HIP
 ## Ownership & Access Control
 
 | Requirement | Otaman Feature | Evidence |
-|------------|----------------|----------|
+|---|---|---|
 | Principle of least privilege | Ownership model — each agent can only write to owned repos | `.agents/ownership.json`, PreToolUse hook logs |
 | Access control documentation | Per-repo CLAUDE.md with explicit ownership rules | CLAUDE.md files in each repo |
 | Segregation of duties | Separate agents for development, review, and security | `agents.yaml` registry |
@@ -13,7 +13,7 @@ This guide explains how otaman's features map to compliance requirements for HIP
 ## Audit Trail
 
 | Requirement | Otaman Feature | Evidence |
-|------------|----------------|----------|
+|---|---|---|
 | Change tracking | All changes go through git commits | Git history per repo |
 | Communication logging | All inter-agent messages stored as files | `.agents/bus/` directory |
 | Decision documentation | Architecture Decision Records | `.agents/decisions/` directory |
@@ -22,7 +22,7 @@ This guide explains how otaman's features map to compliance requirements for HIP
 ## Review & Approval
 
 | Requirement | Otaman Feature | Evidence |
-|------------|----------------|----------|
+|---|---|---|
 | Code review | CTO reviewer and spec validator agents | Review files in `.agents/reviews/` |
 | Security review | Security observer agent | Security review files |
 | Change approval workflow | Proposals require review before implementation | `.agents/proposals/` or OpenSpec proposals |

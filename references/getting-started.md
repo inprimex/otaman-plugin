@@ -225,7 +225,7 @@ You have a working otaman setup. Common next steps:
 | `MCP Dependencies: FAIL — fastmcp not installed` | `uv sync` in the otaman workspace root, or `pip install fastmcp` |
 | Doctor shows `Git Host PAT: skipped` | Expected if you haven't configured `git_host:` in `platform.yaml` — optional feature |
 | MCP servers don't connect inside claude code | `/mcp` slash command in claude shows status. If `otaman-bus: ✘ failed`, check `~/otaman/.venv/bin/python` has `fastmcp` |
-| Per-repo CLAUDE.local.md gets overwritten on re-init | It's regenerated on every `otaman init`/`--update` by design (gitignored, not meant to hold hand notes long-term); your own committed `CLAUDE.md` is never touched. If a repo still has a legacy `<!-- otaman:begin -->` / `<!-- otaman:end -->` block inside its committed `CLAUDE.md`, `otaman init` migrates it out on the next run — verify your custom edits sit outside that block if so |
+| Per-repo CLAUDE.local.md gets overwritten on re-init | It's regenerated on every `otaman init`/`--update` by design (gitignored, not meant to hold hand notes long-term); your own committed `CLAUDE.md` is never touched. If a repo still has a legacy `\<!-- otaman:begin -->` / `\<!-- otaman:end -->` block inside its committed `CLAUDE.md`, `otaman init` migrates it out on the next run — verify your custom edits sit outside that block if so |
 
 ---
 

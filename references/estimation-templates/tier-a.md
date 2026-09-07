@@ -16,7 +16,7 @@
 ### 2. Complexity Assessment (1/2 page)
 
 | Dimension | Score | Rationale |
-|-----------|-------|-----------|
+|---|---|---|
 | Functional Scope | X/5 | {1 sentence} |
 | Technical Complexity | X/5 | {1 sentence} |
 | Integration | X/5 | {1 sentence} |
@@ -31,13 +31,13 @@ Key drivers: {What makes this complex or simple}
 Top 5-8 missing requirements with impact on confidence:
 
 | # | Gap | Impact | Clarification Question |
-|---|-----|--------|----------------------|
+|---|---|---|---|
 | 1 | {gap} | {impact} | {question} |
 
 ### 4. T-Shirt Size Breakdown (1 page)
 
 | Size | Effort | Timeline | Team | Investment |
-|------|--------|----------|------|------------|
+|---|---|---|---|---|
 | XS | < {hours}h | 1-2 months | 1-2 devs | {range} |
 | **S** | **{hours}h** | **2-4 months** | **2-3 devs** | **{range}** |
 | M | {hours}h | 4-7 months | 3-5 devs | {range} |
