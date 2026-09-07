@@ -57,6 +57,15 @@ class TestRenderSpecLifecycleNote:
         assert "otaman ratify" in note
         assert "human-only" in note
 
+    def test_authored_stage_stated_as_undispatchable(self):
+        """interactive-human-console 2.3: one lifecycle paragraph, one
+        source of truth — the un-dispatchable rule extends this note
+        rather than living in a second block."""
+        note = gen._render_spec_lifecycle_note({})
+        assert "UN-DISPATCHABLE" in note
+        assert "authored" in note
+        assert "spec-approved" in note
+
     def test_degrades_to_empty_on_older_core_without_module(self, monkeypatch):
         real_import = __import__
 

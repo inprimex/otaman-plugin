@@ -472,9 +472,12 @@ here:
 
 
 def _render_spec_lifecycle_note(config: dict[str, Any]) -> str:
-    """spec-lifecycle-enforcement 3.1: state the lifecycle stages, the
-    three gates, and this program's resolved enforcement mode — self-waive
-    is ALWAYS visible, never implicit (D2). Reads otaman-core's
+    """spec-lifecycle-enforcement 3.1 + interactive-human-console 2.3:
+    state the lifecycle stages, the three gates, this program's resolved
+    enforcement mode, and that an `authored` change is un-dispatchable
+    until `spec-approved` — self-waive is ALWAYS visible, never implicit
+    (D2). One lifecycle paragraph, one source of truth (IHC 2.3: extend
+    this note rather than add a second block). Reads otaman-core's
     ``spec_lifecycle.resolve_spec_policy`` directly against config's
     ``spec_policy:`` block (program layer only; no org-config layer is
     plumbed into this generator, matching cli's own ``_load_policy``
@@ -506,6 +509,11 @@ program's enforcement mode is **{policy.enforcement}** — {mode_note}.
 and in `otaman spec status`/doctor — never implicit. `otaman ratify
 <change> --reason "..."` is a human-only, audited exception, not a
 normal approval path.
+
+**A change at `authored` is UN-DISPATCHABLE until it reaches
+`spec-approved`** — do not treat "specs are authored" as your cue to
+start implementing; wait for the HITL review to advance the stage (via
+the console or `otaman ratify`), then for a real `task-assignment`.
 """
     except Exception:
         return ""
