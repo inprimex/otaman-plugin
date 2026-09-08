@@ -9,22 +9,17 @@ import pytest
 
 _CORE_SRC = str(Path(__file__).resolve().parent.parent.parent / "otaman-core" / "src")
 
-
-@pytest.fixture(autouse=True)
-def _strip_bus_resolution_env(monkeypatch):
-    """Interim bus-test-isolation hardening (deploy-agent broadcast
-    20260816T193911; structural fix tracked as bus-test-isolation 4.2 —
-    converge onto ``otaman_core.testing`` once core 1.1 lands).
-
-    Live sessions can carry a stale ``OTAMAN_ROOT`` pointing at the org
-    level. Root resolution is marker → env → walk-up, so any test that
-    exercises real bus-write code with an unresolvable cwd would silently
-    recreate and write into a rogue org-level bus (the 2026-08-16
-    incident). Strip the resolution env vars for every test; tests that
-    exercise the env-var path set their own values on top of this.
-    """
-    for var in ("OTAMAN_ROOT", "MAESTRO_ROOT", "OTAMAN_AGENT"):
-        monkeypatch.delenv(var, raising=False)
+# bus-test-isolation 4.2: adopt the shared otaman_core.testing primitive
+# (autouse `isolate_bus` fixture, discovered by name) in place of the
+# interim env-strip-only fixture (deploy-agent broadcast 20260816T193911).
+# Unlike the interim fixture, isolate_bus PINS OTAMAN_ROOT at a fresh tmp
+# sandbox (not just stripped) and exports OTAMAN_TEST_MODE so a resolver
+# call that slips past the fixture still refuses any non-tmp root. Tests
+# that exercise this repo's own scripts/_resolve.py (MAESTRO_ROOT-based,
+# unrelated env var) or that set OTAMAN_ROOT/MAESTRO_ROOT explicitly are
+# unaffected — their own monkeypatch calls run after this autouse fixture
+# and win.
+from otaman_core.testing import isolate_bus  # noqa: E402, F401
 
 
 @pytest.fixture
