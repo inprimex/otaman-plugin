@@ -27,7 +27,16 @@ PRIVILEGED_TYPES = (
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
     """A minimal otaman project + a per-repo `.otaman` agent marker so
-    identity resolves for the non-privileged (allowed) send path."""
+    identity resolves for the non-privileged (allowed) send path.
+
+    bus-test-isolation 4.2 footgun: this fixture's whole purpose is "the
+    project root for this test" — delete OTAMAN_ROOT/MAESTRO_ROOT on top
+    of the shared isolate_bus fixture (which pins OTAMAN_ROOT at an
+    unrelated sandbox) so resolution actually walks up to `root` here
+    instead of the sandbox.
+    """
+    monkeypatch.delenv("OTAMAN_ROOT", raising=False)
+    monkeypatch.delenv("MAESTRO_ROOT", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     root = tmp_path / "proj"
     root.mkdir()
