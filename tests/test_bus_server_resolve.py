@@ -103,6 +103,15 @@ class TestFallbackToServerCwd:
 class TestNoProject:
     """When neither agent cwd nor server cwd points anywhere useful."""
 
+    @pytest.fixture(autouse=True)
+    def _unpin_root(self, monkeypatch):
+        """bus-test-isolation 4.2 footgun: the shared ``isolate_bus``
+        fixture pins OTAMAN_ROOT at a sandbox, which would resolve here
+        instead of the None this class asserts. Delete it (and the legacy
+        MAESTRO_ROOT) on top of isolate_bus for this class only."""
+        monkeypatch.delenv("OTAMAN_ROOT", raising=False)
+        monkeypatch.delenv("MAESTRO_ROOT", raising=False)
+
     def test_returns_none_if_nothing_resolves(self, tmp_path, monkeypatch):
         # Empty workspace, server cwd is also empty.
         monkeypatch.chdir(tmp_path)

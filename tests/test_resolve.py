@@ -17,6 +17,21 @@ from _resolve import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _unpin_root_for_resolution_tests(monkeypatch):
+    """bus-test-isolation 4.2 footgun (documented in the change's own
+    tasks.md): the shared ``isolate_bus`` fixture PINS ``OTAMAN_ROOT`` at a
+    sandbox, but ``find_maestro_root`` checks ``OTAMAN_ROOT`` (falling back
+    to ``MAESTRO_ROOT``) before walk-up — this whole suite exercises that
+    resolution chain from scratch and needs the pin gone. Delete both vars
+    on top of the autouse ``isolate_bus`` fixture; keep ``OTAMAN_TEST_MODE``
+    so the sentinel still guards. Individual tests set their own
+    ``MAESTRO_ROOT`` afterward where they exercise the env-var path.
+    """
+    monkeypatch.delenv("OTAMAN_ROOT", raising=False)
+    monkeypatch.delenv("MAESTRO_ROOT", raising=False)
+
+
 @pytest.fixture
 def workspace(tmp_path):
     """Create a workspace with maestro folder and managed repos."""

@@ -146,6 +146,15 @@ class TestSuccessfulInvocation:
 
 
 class TestNoProject:
+    @pytest.fixture(autouse=True)
+    def _unpin_root(self, monkeypatch):
+        """bus-test-isolation 4.2 footgun: the shared ``isolate_bus``
+        fixture pins OTAMAN_ROOT at a sandbox, which would resolve here
+        instead of the "No otaman project found" error this class asserts.
+        Delete it (and the legacy MAESTRO_ROOT) on top of isolate_bus."""
+        monkeypatch.delenv("OTAMAN_ROOT", raising=False)
+        monkeypatch.delenv("MAESTRO_ROOT", raising=False)
+
     def test_missing_platform_yaml_returns_error(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         empty = tmp_path / "nowhere"
