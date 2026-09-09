@@ -779,8 +779,13 @@ def generate_draft_yaml(
             "path": rel_path,
             "owner": repo["suggested_owner"],
         }
-        if repo.get("is_spec_repo"):
-            entry["is_spec_repo"] = True
+        # is_spec_repo is NOT emitted here (scan-schema-conformance): the
+        # live platform.yaml schema declares repos.items as
+        # additionalProperties:false, and the top-level `specs:` block is
+        # the sole spec-repo marker — `owner: spec-agent` above already
+        # carries the signal a draft needs. The report dict above still
+        # carries `is_spec_repo` internally (it drives `suggested_owner`);
+        # only the schema-validated draft entry must not.
         if repo.get("tech"):
             entry["tech"] = repo["tech"]
         if repo.get("description"):

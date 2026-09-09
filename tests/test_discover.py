@@ -608,7 +608,16 @@ class TestSpecRepoDetectionAndLauncherStub:
         assert "repo_path" in config["launcher"]["ssh"]
 
     def test_draft_marks_spec_repo_in_yaml(self, project_dir: Path) -> None:
-        """An empty `<program>-specs/` gets `owner: spec-agent` + `is_spec_repo: true` in the draft."""
+        """An empty `<program>-specs/` gets `owner: spec-agent` in the draft.
+
+        `is_spec_repo` is deliberately NOT emitted on the draft repos[]
+        entry (scan-schema-conformance): the live platform.yaml schema
+        declares repos.items as additionalProperties:false, so this field
+        used to fail `otaman init`'s own validation on scan output. The
+        internal discovery report still carries it (test_spec_repo_
+        detection_and_launcher_stub above) since it drives suggested_owner
+        — only the schema-validated draft must not.
+        """
         make_git_repo(project_dir / "foo-specs")
         make_git_repo(project_dir / "api")
         (project_dir / "api" / "package.json").write_text("{}", encoding="utf-8")
@@ -621,8 +630,7 @@ class TestSpecRepoDetectionAndLauncherStub:
         config = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
         by_name = {r["name"]: r for r in config["repos"]}
         assert by_name["foo-specs"]["owner"] == "spec-agent"
-        assert by_name["foo-specs"]["is_spec_repo"] is True
-        # Non-spec repo doesn't carry the flag
+        assert "is_spec_repo" not in by_name["foo-specs"]
         assert "is_spec_repo" not in by_name["api"]
 
     def test_update_adds_launcher_when_absent(self, project_dir: Path) -> None:
