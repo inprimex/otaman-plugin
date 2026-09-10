@@ -306,6 +306,21 @@ _SPEC_AUTHORING_GUARD = """### Spec Authoring — NOT your job (CRITICAL)
 - **Never write**: `proposal.md`, `design.md`, `tasks.md`, `spec.md`, ADR files, or any file under `otaman-specs/openspec/`. Even after approval. Even if you think it would be faster.
 - If you feel the urge to "just fill in the spec myself" — stop, send a `question` message to spec-agent instead."""
 
+# specs-guard-owner-aware 1.1: the author-side counterpart to
+# _SPEC_AUTHORING_GUARD, emitted instead of it (never alongside) when the
+# repo being generated for IS the specs repo. Found live 2026-09-10 (Roman's
+# pmeets-specs transcript): generating the requester-side guard for
+# spec-agent's own repo told spec-agent both "this repo is YOURS" (header)
+# and "this repo is READ-ONLY for you" (guard) — the confused spec-agent
+# then offered an informal sign-off shortcut around /otaman:propose for a
+# founding architectural decision, the exact HITL bypass the guard exists
+# to prevent.
+_SPEC_AUTHORING_GUARD_OWNER = """### Spec Authoring — THIS IS your job (CRITICAL)
+- **You author ALL spec artifacts here** — `proposal.md`, `design.md`, `tasks.md`, `specs/*/spec.md`, JSON schemas, ADRs. This repo is YOURS; write here freely.
+- **Other agents reach you via `/otaman:propose`** (a `spec-change-request` bus message) — you turn their request into the actual spec artifacts. They never write here themselves, no matter how confident they are or how much faster it would be.
+- **Never offer an informal sign-off shortcut** in place of the real proposal → human-approval → commit flow — not even for a founding architectural decision under time pressure. The flow IS the audit trail; skipping it defeats the reason it exists.
+- After a human approves a change and you commit the artifacts, send the `spec-change` notifications (mapped from each change's `tasks.md` `@otaman-<repo>` annotations) so implementing agents pick up their `task-assignment`s."""
+
 
 # interactive-human-console 3.1: a mandatory fleet policy that MUST appear in
 # every generated agent's orchestration rules (spec interactive-console,
@@ -696,7 +711,21 @@ def _build_maestro_block(
         if isinstance(specs_dirs, str):
             specs_dirs = [specs_dirs]
 
-        if specs_format == "openspec":
+        # specs-guard-owner-aware 1.1: the repo being generated for IS the
+        # specs repo when its path matches config["specs"]["path"] — the
+        # same comparison install_spec_lifecycle_ci_gate and
+        # install_repo_post_commit_hooks already use to single it out.
+        is_specs_repo = bool(specs_path) and repo.get("path") == specs_path
+
+        if is_specs_repo:
+            specs_section = f"""
+### Specs ({"OpenSpec" if specs_format == "openspec" else "fallback"}) — you author these
+- This repo (`{specs_path}`) is the specs repo — **YOURS, not READ-ONLY**.
+- {plugin_dir_note}
+
+{_SPEC_AUTHORING_GUARD_OWNER}
+{spec_lifecycle_note}"""
+        elif specs_format == "openspec":
             # Build specific spec paths for this agent
             if specs_dirs:
                 my_specs_lines = "\n".join(
