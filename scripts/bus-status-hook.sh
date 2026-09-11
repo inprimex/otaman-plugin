@@ -31,18 +31,23 @@ BUS="$ROOT/.agents/bus/active"
 ACKS="$BUS/acks"
 
 # Determine agent identity.
-# Priority: CWD's CLAUDE.md (per-repo, set by generate-agent-config.py) →
-#          .agents/current-agent (project-global fallback).
-# This used to be inverted — current-agent first — which leaked the last
-# `otaman set-agent` value into every tab and made the [otaman] N pending
-# line wrong in 7/8 tabs of the 2026-04-29 incident.
+# Priority: CWD's CLAUDE.md (per-repo, set by generate-agent-config.py;
+#          approximates cwd-ownership, zero I/O beyond one file read) →
+#          OTAMAN_AGENT env (process-scoped spawn override).
+# team-mode-registers-and-sessions 2.1 (B1, Roman ruling 2026-09-11):
+# .agents/current-agent is RETIRED — one shared file, N sessions,
+# last-writer-wins was exactly the 2026-04-29 incident class (the prior
+# fix here already demoted it below CLAUDE.md; this drops it entirely,
+# no dual-read window). Deliberately still no python3/jq call — this hook
+# fires on every UserPromptSubmit and both remaining signals are zero- or
+# near-zero-cost.
 AGENT=""
 if [[ -f "$CWD/CLAUDE.md" ]]; then
     AGENT="$(sed -n 's/.*You are `\([^`]*\)`.*/\1/p' "$CWD/CLAUDE.md" | head -1)"
 fi
 
-if [[ -z "$AGENT" && -f "$ROOT/.agents/current-agent" ]]; then
-    AGENT="$(tr -d '[:space:]' < "$ROOT/.agents/current-agent")"
+if [[ -z "$AGENT" && -n "${OTAMAN_AGENT:-}" ]]; then
+    AGENT="$OTAMAN_AGENT"
 fi
 
 [[ -z "$AGENT" ]] && exit 0

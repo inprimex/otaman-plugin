@@ -250,7 +250,7 @@ def main() -> int:
         if not gi.exists():
             gi.write_text(
                 "# Runtime artifacts\n.agents/bus/\n.agents/blocked/\n"
-                ".agents/queue/\n.agents/sessions/\n.agents/current-agent\n"
+                ".agents/queue/\n.agents/sessions/\n"
                 "\n# Maestro runtime state (secrets, bridge sockets, AFK flag)\n"  # legacy: pre-rebrand reference
                 ".otaman/secrets.env\n.otaman/bridge-*.endpoint\n.otaman/afk\n",
                 encoding="utf-8",

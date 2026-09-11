@@ -39,7 +39,6 @@ Generate `.gitignore` in the otaman folder:
 .agents/blocked/
 .agents/queue/
 .agents/sessions/
-.agents/current-agent
 ```
 
 ### Step 2: Run the discovery script

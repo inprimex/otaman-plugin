@@ -13,7 +13,8 @@ independently):
     2. Per-repo       models.by_repo.<repo>.{model, effort}
     3. Per-agent      models.by_agent.<agent>.{model, effort}
        (agent can be the repo's owner from platform.yaml repos[].owner,
-       or the active .agents/current-agent, whichever the caller passes)
+       or the resolved session identity — otaman_core.identity.
+       resolve_agent_identity() — whichever the caller passes)
     4. Project default  models.default, models.default_effort
     5. None (launcher leaves env unset; Claude Code's own default applies)
 """

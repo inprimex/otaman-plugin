@@ -3,7 +3,7 @@
 # This allows agents to resume context after compaction.
 #
 # Saves to: .agents/sessions/{agent-name}.md
-# Reads: current-agent, queue, recent bus messages, git status
+# Reads: CLAUDE.md / OTAMAN_AGENT (identity), queue, recent bus messages, git status
 
 set -euo pipefail
 
@@ -13,13 +13,16 @@ source "$SCRIPT_DIR/_resolve.sh"
 
 ROOT="$(find_maestro_root 2>/dev/null)" || exit 0
 
-# Determine agent identity
+# Determine agent identity.
+# team-mode-registers-and-sessions 2.1 (B1): .agents/current-agent is
+# RETIRED (one shared file, N sessions, last-writer-wins). Fallback is
+# OTAMAN_AGENT (process-scoped spawn override), not the deprecated file.
 AGENT=""
 if [ -f "CLAUDE.md" ]; then
     AGENT=$(grep -oP 'You are `\K[^`]+' CLAUDE.md 2>/dev/null || true)
 fi
-if [ -z "$AGENT" ] && [ -f "$ROOT/.agents/current-agent" ]; then
-    AGENT=$(cat "$ROOT/.agents/current-agent" 2>/dev/null | tr -d '[:space:]')
+if [ -z "$AGENT" ] && [ -n "${OTAMAN_AGENT:-}" ]; then
+    AGENT="$OTAMAN_AGENT"
 fi
 
 [ -z "$AGENT" ] && exit 0

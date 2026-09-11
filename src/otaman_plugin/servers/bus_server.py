@@ -462,7 +462,10 @@ def otaman_check(
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
-        return {"error": "No agent identity found. Set via .agents/current-agent or CLAUDE.md"}
+        return {
+            "error": "No agent identity found. Set via 'agent: <name>' in your repo's "
+            ".otaman marker."
+        }
 
     bus = _bus_dir(root)
     acks = _acks_dir(root)

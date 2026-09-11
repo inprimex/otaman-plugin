@@ -72,11 +72,15 @@ class TestBusResolutionRules:
 
 
 class TestIdentityChecklistLine:
-    def test_step_zero_identity_set_present(self, tmp_path):
-        """fswatch finding: re-sync dropped the step-0 identity-set line."""
+    def test_step_zero_current_agent_write_gone(self, tmp_path):
+        """team-mode-registers-and-sessions 2.1 (B1, Roman ruling
+        2026-09-11): .agents/current-agent is retired — the generated
+        First-Session checklist must never instruct writing it again
+        (no dual-read window). Checklist starts at step 1."""
         content = _generate(tmp_path, _REPO)
-        expected = '0. **Set identity for hooks**: `echo "dev-agent" > ../.agents/current-agent`'
-        assert expected in content
+        assert "current-agent" not in content
+        assert "0. **Set identity for hooks**" not in content
+        assert "1. Run `otaman check`" in content
 
 
 class TestMarkerFirstPathDerivation:
