@@ -1847,7 +1847,11 @@ while ($true) {
                     # If the ssh command used `source ~/.nvm/nvm.sh` (bash-only) and local shell is PowerShell, simplify
                     $hasNvm = ($r.launch_commands | Where-Object { $_ -match 'nvm\.sh' }).Count -gt 0
                     if ($hasNvm -and $localShell -eq 'powershell') {
-                        $r.launch_commands = @("claude --version 2>`$null | Out-Null; claude -c '/otaman:check'; if (`$LASTEXITCODE -ne 0) { claude '/otaman:check' }")
+                        # identity-divergence-hardening 1.3: $env:OTAMAN_AGENT is
+                        # process-scoped to this pane's pwsh process — never a
+                        # machine-wide/user env var, never shared across panes.
+                        $agentEnv = if ($r.owner) { $r.owner } else { $r.name }
+                        $r.launch_commands = @("`$env:OTAMAN_AGENT = '$agentEnv'; claude --version 2>`$null | Out-Null; claude -c '/otaman:check'; if (`$LASTEXITCODE -ne 0) { claude '/otaman:check' }")
                     }
                     # For wsl we keep commands as-is (they're bash-compatible inside WSL)
                 }
@@ -1861,10 +1865,15 @@ while ($true) {
             foreach ($r in $launchable) {
                 if ($r.launch_shell -in @('wsl','powershell')) {
                     $r.launch_shell = 'ssh'
+                    # identity-divergence-hardening 1.3: OTAMAN_AGENT is
+                    # exported inside THIS remote pane's own shell env
+                    # (process-scoped) — never set via a machine-wide/
+                    # server-global mechanism.
+                    $agentEnv = if ($r.owner) { $r.owner } else { $r.name }
                     if ($pluginDir) {
-                        $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir --version >/dev/null 2>&1 || true; while :; do { claude -c --plugin-dir $pluginDir /otaman:check || claude --plugin-dir $pluginDir /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
+                        $r.launch_commands = @("export OTAMAN_AGENT='$agentEnv' && source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir --version >/dev/null 2>&1 || true; while :; do { claude -c --plugin-dir $pluginDir /otaman:check || claude --plugin-dir $pluginDir /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                     } else {
-                        $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --version >/dev/null 2>&1 || true; while :; do { claude -c /otaman:check || claude /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
+                        $r.launch_commands = @("export OTAMAN_AGENT='$agentEnv' && source ~/.nvm/nvm.sh && claude --version >/dev/null 2>&1 || true; while :; do { claude -c /otaman:check || claude /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                     }
                 }
             }
@@ -1877,15 +1886,19 @@ while ($true) {
         $pluginDir = $activeConn["ssh_plugin_path"]
         foreach ($r in $launchable) {
             $r.launch_shell = $Shell
+            # identity-divergence-hardening 1.3: OTAMAN_AGENT set per-pane
+            # below (bash export or $env: assignment), never a machine-wide/
+            # server-global mechanism.
+            $agentEnv = if ($r.owner) { $r.owner } else { $r.name }
             if ($Shell -eq 'ssh') {
                 # For SSH: always rebuild commands with remote plugin path (no single quotes)
                 if ($pluginDir) {
-                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir --version >/dev/null 2>&1 || true; while :; do { claude -c --plugin-dir $pluginDir /otaman:check || claude --plugin-dir $pluginDir /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
+                    $r.launch_commands = @("export OTAMAN_AGENT='$agentEnv' && source ~/.nvm/nvm.sh && claude --plugin-dir $pluginDir --version >/dev/null 2>&1 || true; while :; do { claude -c --plugin-dir $pluginDir /otaman:check || claude --plugin-dir $pluginDir /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                 } else {
-                    $r.launch_commands = @("source ~/.nvm/nvm.sh && claude --version >/dev/null 2>&1 || true; while :; do { claude -c /otaman:check || claude /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
+                    $r.launch_commands = @("export OTAMAN_AGENT='$agentEnv' && source ~/.nvm/nvm.sh && claude --version >/dev/null 2>&1 || true; while :; do { claude -c /otaman:check || claude /otaman:check; }; printf '\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done")
                 }
             } elseif (-not $r.launch_commands -or $r.launch_commands.Count -eq 0) {
-                $r.launch_commands = @("claude --version 2>`$null | Out-Null; claude -c '/otaman:check'; if (`$LASTEXITCODE -ne 0) { claude '/otaman:check' }")
+                $r.launch_commands = @("`$env:OTAMAN_AGENT = '$agentEnv'; claude --version 2>`$null | Out-Null; claude -c '/otaman:check'; if (`$LASTEXITCODE -ne 0) { claude '/otaman:check' }")
             }
         }
 

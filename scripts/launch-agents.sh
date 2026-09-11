@@ -464,11 +464,18 @@ fi
 #
 # The continue-or-fresh commands are embedded as literal argv via printf %q so
 # any --  EXTRA_ARGS survive intact inside the `bash -lc` string.
+#
+# identity-divergence-hardening 1.3: OTAMAN_AGENT is exported INSIDE this
+# loop string (process-scoped, this `bash -lc` invocation only) from
+# ACTING_OWNER — the same repos[].owner value already resolved above for the
+# session name. Never `tmux set-environment -g`: that would make identity a
+# shared, last-writer-wins global across every pane on the server.
 _acting_build_loop() {
-    local cont fresh
+    local cont fresh agent_env
     cont="$(printf '%q ' "${claude_cmd_continue[@]}")"
     fresh="$(printf '%q ' "${claude_cmd_fresh[@]}")"
-    printf 'claude --version >/dev/null 2>&1 || true; while :; do %s|| %s|| true; printf "\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] "; read -r || break; done' "$cont" "$fresh"
+    agent_env="$(printf '%q' "${ACTING_OWNER:-otaman}")"
+    printf 'export OTAMAN_AGENT=%s; claude --version >/dev/null 2>&1 || true; while :; do %s|| %s|| true; printf "\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] "; read -r || break; done' "$agent_env" "$cont" "$fresh"
 }
 
 # Surface the current acting holder (pid + reattach command) from cli's probe
@@ -736,6 +743,12 @@ EOF
         # Window name is set to the repo name (task 1.5) so the tmux status
         # bar reads "<project>:<owner>:<repo>" — surfaces project + agent +
         # program at a glance without context-switching.
+        #
+        # identity-divergence-hardening 1.3: OTAMAN_AGENT is exported inside
+        # THIS pane's own send-keys line, per repo — process-scoped, never
+        # `tmux set-environment -g` (that would make every pane on the
+        # server share one last-writer-wins identity). $owner here is the
+        # same repos[].owner value used for the session name above.
         first_session=""
         for row in "${filtered[@]}"; do
             IFS='|' read -r name path owner <<< "$row"
@@ -744,7 +757,8 @@ EOF
                 echo "tmux: session '$session' already running; not respawning" >&2
             else
                 tmux new-session -d -s "$session" -n "$name" -c "$path"
-                tmux send-keys -t "=${session}" "$claude_loop" C-m
+                agent_env="$(printf '%q' "$owner")"
+                tmux send-keys -t "=${session}" "export OTAMAN_AGENT=$agent_env; $claude_loop" C-m
             fi
             [[ -z "$first_session" ]] && first_session="$session"
         done
