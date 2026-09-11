@@ -17,7 +17,7 @@ jobs:
     # Pinned exact version per F182 doctrine; config lives in pyproject.toml.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install ruff (pinned)
         run: pipx install ruff==0.16.3
