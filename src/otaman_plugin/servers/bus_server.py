@@ -10,6 +10,7 @@ Transport: stdio (launched by Claude Code via .mcp.json)
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -266,6 +267,29 @@ def _compute_effective_cc(
         seen.add(name)
         ordered.append(name)
     return ordered
+
+
+def _read_acting_human(root: Path) -> str | None:
+    """Read the acting-human email for a multi-human session (team-mode
+    2.1/B1, plugin's reader half), or None on any absence/failure.
+
+    Reads ``<root>/.otaman/acting-human.json`` — bridge's writer half
+    (``otaman_bridge.acting_human.write_acting_human``) exposes it there,
+    same ``.otaman/`` state-file convention as ``last-user-activity``/
+    ``afk``. Absent file (single-human / CE tenant, or bridge never ran)
+    is the normal case and returns None — never an error.
+    """
+    path = root / ".otaman" / "acting-human.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    email = str(data.get("email") or "").strip()
+    return email or None
 
 
 def _inject_x_cc(content: str) -> str:
@@ -932,6 +956,13 @@ def otaman_send(
     change_line = ""
     if change:
         change_line = f"change: {change}\n"
+    # team-mode-registers-and-sessions 2.1 (B1, reader half): stamp the
+    # sending session's acting-human (multi-human tenants only — absent on
+    # CE/single-human) so recipients can see who was actually driving.
+    acting_human_line = ""
+    acting_human = _read_acting_human(root)
+    if acting_human:
+        acting_human_line = f"acting-human: {acting_human}\n"
     # `from`/`to` keep the bare-name convention every consumer keys on; the
     # canonical URIs travel in from-uri/to-uri with from_org/to_org
     # projections (schema-v2, emitted only when the layout is derivable).
@@ -939,7 +970,7 @@ def otaman_send(
 id: {ts}-{agent[:8]}
 from: {agent}
 to: {to_agent}
-{cc_line}{change_line}{uri_lines}priority: {priority}
+{cc_line}{change_line}{acting_human_line}{uri_lines}priority: {priority}
 type: {msg_type}
 timestamp: {ts_iso}
 status: pending
