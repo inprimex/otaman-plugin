@@ -34,7 +34,7 @@ Once found, resolve to an **absolute path**. All paths below are relative to the
 
 ### 1. Determine agent identity
 
-Read from `$PROJECT_ROOT/.agents/current-agent`, or from the repo's CLAUDE.md otaman block, or ask the user.
+Read from the repo's CLAUDE.md otaman block (the `You are \`<agent>\`` line), or ask the user. `.agents/current-agent` is retired (team-mode-registers-and-sessions B1) — never write or read it.
 
 ### 2. Gather proposal details
 

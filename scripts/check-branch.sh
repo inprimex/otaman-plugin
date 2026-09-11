@@ -51,11 +51,17 @@ for pb in $PROTECTED; do
     fi
 done
 
-# Validate branch naming (only when agent identity exists)
-AGENT=""
-if [[ -n "$ROOT" && -f "$ROOT/.agents/current-agent" ]]; then
-    AGENT="$(tr -d '[:space:]' < "$ROOT/.agents/current-agent")"
-fi
+# Validate branch naming (only when agent identity exists).
+# team-mode-registers-and-sessions 2.1 (B1, Roman ruling 2026-09-11):
+# .agents/current-agent is RETIRED (one shared file, N sessions,
+# last-writer-wins — the incident class B1 exists to close). Delegate to
+# the shared resolve_agent_identity (cwd-ownership authoritative,
+# OTAMAN_AGENT override, kernel-implemented) instead of a per-repo copy —
+# a git pre-commit hook can afford the one python3 spawn it costs, unlike
+# a per-prompt hook. Any failure (no python3, no otaman_core, genuinely
+# unresolved) degrades to no-agent-context — this check is a naming
+# WARNING, never a hard block on identity.
+AGENT="$(resolve_agent_identity "$ROOT" 2>/dev/null || true)"
 
 # No agent context = human working directly, allow any branch name
 [[ -z "$AGENT" ]] && exit 0

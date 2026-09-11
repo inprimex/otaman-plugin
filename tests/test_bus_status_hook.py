@@ -23,9 +23,11 @@ HOOK = REPO / "scripts" / "bus-status-hook.sh"
 
 def _make_bus(root: Path) -> Path:
     """A minimal otaman project root: .otaman marker (self-pointing),
-    .agents/current-agent, and an empty bus/active/acks tree."""
+    a CLAUDE.md carrying the identity line the hook sniffs (team-mode
+    2.1/B1: .agents/current-agent is retired), and an empty
+    bus/active/acks tree."""
     (root / ".agents" / "bus" / "active" / "acks").mkdir(parents=True)
-    (root / ".agents" / "current-agent").write_text("plugin-agent\n", encoding="utf-8")
+    (root / "CLAUDE.md").write_text("You are `plugin-agent`.\n", encoding="utf-8")
     (root / ".otaman").write_text(".\n", encoding="utf-8")
     return root / ".agents" / "bus" / "active"
 
@@ -176,6 +178,55 @@ class TestBusStatusHookCorrectness:
         )
         result, _ = _run_hook(tmp_path)
         assert "2 blocked" in result["systemMessage"]
+
+
+class TestIdentityResolutionRetiresCurrentAgent:
+    """team-mode-registers-and-sessions 2.1 (B1, Roman ruling 2026-09-11):
+    .agents/current-agent is retired — this hook must never resolve
+    identity from it, even when present."""
+
+    def test_current_agent_file_alone_is_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OTAMAN_AGENT", raising=False)
+        (tmp_path / ".agents" / "bus" / "active" / "acks").mkdir(parents=True)
+        (tmp_path / ".otaman").write_text(".\n", encoding="utf-8")
+        (tmp_path / ".agents" / "current-agent").write_text("plugin-agent\n", encoding="utf-8")
+        bus = tmp_path / ".agents" / "bus" / "active"
+        (bus / "m1.md").write_text(
+            "id: m1\nto: plugin-agent\nfrom: spec-agent\npriority: normal\n---\nbody\n",
+            encoding="utf-8",
+        )
+        # No CLAUDE.md, no OTAMAN_AGENT — only the retired file names an
+        # agent. Identity must NOT resolve, so the pending message (real,
+        # addressed to plugin-agent) is never surfaced.
+        result, _ = _run_hook(tmp_path)
+        assert result is None
+
+    def test_otaman_agent_env_is_the_fallback(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OTAMAN_AGENT", "plugin-agent")
+        bus = _make_bus(tmp_path)
+        (tmp_path / "CLAUDE.md").unlink()  # force the fallback path
+        (bus / "m1.md").write_text(
+            "id: m1\nto: plugin-agent\nfrom: spec-agent\npriority: normal\n---\nbody\n",
+            encoding="utf-8",
+        )
+        result, _ = _run_hook(tmp_path)
+        assert result is not None
+        assert "1 pending" in result["systemMessage"]
+
+    def test_claude_md_wins_over_otaman_agent(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OTAMAN_AGENT", "cli-agent")
+        bus = _make_bus(tmp_path)  # CLAUDE.md says plugin-agent
+        (bus / "m1.md").write_text(
+            "id: m1\nto: plugin-agent\nfrom: spec-agent\npriority: normal\n---\nbody\n",
+            encoding="utf-8",
+        )
+        (bus / "m2.md").write_text(
+            "id: m2\nto: cli-agent\nfrom: spec-agent\npriority: normal\n---\nbody\n",
+            encoding="utf-8",
+        )
+        result, _ = _run_hook(tmp_path)
+        assert result is not None
+        assert "1 pending" in result["systemMessage"]
 
 
 class TestBusStatusHookPerformance:

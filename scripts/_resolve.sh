@@ -298,65 +298,53 @@ expand_config_dir() {
     esac
 }
 
-# Resolve the current agent identity via the standard priority chain:
-#   1. OTAMAN_AGENT env var (process-scoped — set by launcher or OTAMAN_AGENT=x prefix)
-#   2. .otaman agent: field — CWD walk up, both file-shape and directory-shape
-#   3. current-agent file at $project_root/.agents/current-agent (deprecated fallback)
+# Resolve the current agent's DISPLAY / session identity (team-mode B1,
+# Roman ruling 2026-09-11) via the single shared kernel implementation —
+# otaman_core.identity.resolve_agent_identity() — instead of reimplementing
+# the priority chain here. Previous versions of this function walked the
+# `.otaman` marker and fell back to the (now-retired) `.agents/
+# current-agent` file; that reimplementation used a DIFFERENT notion of
+# "ownership" (the per-repo `.otaman` marker) than the kernel resolver
+# (platform.yaml's ownership map) and is exactly the kind of
+# independently-maintained resolver drift B1 exists to close (one kernel
+# implementation; cli/bridge/plugin/runner all consume the same import).
 #
-# NOTE (F013, 2026-07-08): this chain is for DISPLAY / convenience use only
-# (status lines, non-enforcement bus tooling) — it trusts two signals any
-# agent's own tool calls can freely set (OTAMAN_AGENT env, the shared
-# current-agent file). PreToolUse enforcement hooks (check-ownership.sh,
-# check-blocked.sh) must NOT use this function for their allow/deny
-# decision; use resolve_enforcement_identity below instead.
+# Semantics (delegated, not reimplemented): cwd-ownership via
+# platform.yaml is AUTHORITATIVE; OTAMAN_AGENT (process env) applies only
+# when cwd is unowned. No `.otaman` marker reads, no `.agents/
+# current-agent` reads.
+#
+# NOTE: this chain is for DISPLAY / convenience use only (status lines,
+# non-enforcement bus tooling). PreToolUse enforcement hooks
+# (check-ownership.sh, check-blocked.sh) must NOT use this function for
+# their allow/deny decision; use resolve_enforcement_identity below
+# instead (marker-only, audited, non-spoofable).
 #
 # Usage: resolve_agent_identity [project_root]
-# Echoes agent name and returns 0 on success; returns 1 if identity cannot be determined.
+# Echoes agent name and returns 0 on success; returns 1 if identity cannot
+# be determined (no python3 available, no otaman_core, or genuinely
+# unresolved).
 resolve_agent_identity() {
     local project_root="${1:-}"
+    local self_dir
+    self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # 1. OTAMAN_AGENT env var
-    if [[ -n "${OTAMAN_AGENT:-}" ]]; then
-        echo "$OTAMAN_AGENT"
-        return 0
-    fi
+    local py
+    py="$(resolve_otaman_python "$(dirname "$self_dir")" 2>/dev/null)" || return 1
 
-    # 2. .otaman agent: field — walk up from CWD
-    local check="$PWD"
-    local prev=""
-    while [[ "$check" != "/" && "$check" != "." && "$check" != "$prev" ]]; do
-        if [[ -f "$check/.otaman" ]]; then
-            # File shape: YAML with agent: field
-            local agent_val
-            agent_val="$(grep '^agent:' "$check/.otaman" 2>/dev/null | sed 's/^agent:[[:space:]]*//' | tr -d '[:space:]')"
-            if [[ -n "$agent_val" ]]; then
-                echo "$agent_val"
-                return 0
-            fi
-        elif [[ -d "$check/.otaman" && -f "$check/.otaman/agent" ]]; then
-            # Directory shape: single-line text file
-            local agent_val
-            agent_val="$(tr -d '[:space:]' < "$check/.otaman/agent" 2>/dev/null)"
-            if [[ -n "$agent_val" ]]; then
-                echo "$agent_val"
-                return 0
-            fi
-        fi
-        prev="$check"
-        check="$(dirname "$check")"
-    done
+    local agent_val
+    agent_val="$("$py" -c '
+import sys
+from pathlib import Path
+from otaman_core.identity import resolve_agent_identity
+project_root = Path(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1] else None
+agent = resolve_agent_identity(project_root=project_root)
+print(agent or "")
+' "$project_root" 2>/dev/null)" || return 1
 
-    # 3. current-agent deprecated fallback
-    if [[ -n "$project_root" && -f "$project_root/.agents/current-agent" ]]; then
-        local agent_val
-        agent_val="$(tr -d '[:space:]' < "$project_root/.agents/current-agent")"
-        if [[ -n "$agent_val" ]]; then
-            echo "$agent_val"
-            return 0
-        fi
-    fi
-
-    return 1
+    [[ -n "$agent_val" ]] || return 1
+    echo "$agent_val"
+    return 0
 }
 
 # Resolve agent identity for an ENFORCEMENT decision (F013 security fix,

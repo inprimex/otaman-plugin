@@ -33,8 +33,7 @@ parent-directory/
 │   │   ├── reviews/            # Observer review results
 │   │   ├── decisions/          # Architecture Decision Records
 │   │   ├── knowledge/          # Shared tech docs
-│   │   ├── ownership.json      # Ownership map
-│   │   └── current-agent       # Active agent identity
+│   │   └── ownership.json      # Ownership map
 │   └── ...
 ├── repo-auth-service/          # Managed repo (owner: backend-agent)
 │   ├── .otaman                # Marker file → points to ../myproject-otaman
@@ -56,7 +55,7 @@ From a managed repo, read `.otaman` to get the relative path to the otaman folde
 When starting a new session on a otaman-managed project, orient yourself before doing any work:
 
 1. **Locate otaman folder**: Read `.otaman` in your repo → resolve the path to the otaman folder
-2. **Identity**: Read `{otaman}/.agents/current-agent` or your repo's CLAUDE.md → confirm which agent you are and which repos you own
+2. **Identity**: Your repo's CLAUDE.md (the `You are \`<agent>\`` line) → confirm which agent you are and which repos you own. `.agents/current-agent` is retired (team-mode-registers-and-sessions B1, Roman ruling 2026-09-11) — never read or write it; a stale shared file across N sessions was exactly the last-writer-wins bug class this replaces.
 3. **Bus check**: Run `otaman check` (Bash) → see pending messages and blocked tasks. Pre-allowed in `.claude/settings.local.json` so no permission prompt. The CLI auto-detects project root and your identity.
 4. **Task queue**: Read `{otaman}/.agents/queue/{your-agent-name}.md` → see your active/queued/blocked tasks
 5. **Specs**: Read specs relevant to your repo (the `specs_dir` paths listed in your repo's CLAUDE.md)
@@ -79,7 +78,7 @@ Each repository has exactly one **owner agent**. The ownership map is in `{otama
 - **The `specs/` directory is read-only for all agents** unless going through the proposal workflow.
 
 ### Checking your identity
-Your agent identity is stored in `{otaman}/.agents/current-agent`. Read this file to know which agent you are and which repos you own.
+Read your repo's CLAUDE.md — the `You are \`<agent>\`` line names which agent you are and which repos you own. There is no shared identity file: `.agents/current-agent` is retired (team-mode-registers-and-sessions B1).
 
 ## Communication Protocol
 

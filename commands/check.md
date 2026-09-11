@@ -4,7 +4,7 @@ description: "Check the message bus for messages addressed to the current agent"
 effort: low
 arguments:
   - name: agent
-    description: "Agent name to check messages for (default: auto-detected from .agents/current-agent)"
+    description: "Agent name to check messages for (default: auto-detected from cwd ownership / OTAMAN_AGENT)"
     required: false
   - name: status
     description: "Filter by status: pending, read, resolved, all (default: pending)"
@@ -19,7 +19,7 @@ Run this single Bash command and display its output verbatim:
 otaman check {{agent}}
 ```
 
-That's it. The CLI handles project root detection, agent identity (auto-resolved from `.agents/current-agent` when `{{agent}}` is empty), bus parsing, ack-status lookup, blocked-task surfacing, and priority sorting. Display the stdout to the user as-is.
+That's it. The CLI handles project root detection, agent identity (auto-resolved from cwd ownership / `OTAMAN_AGENT` when `{{agent}}` is empty — `.agents/current-agent` is retired, team-mode-registers-and-sessions B1), bus parsing, ack-status lookup, blocked-task surfacing, and priority sorting. Display the stdout to the user as-is.
 
 ## After showing results
 
