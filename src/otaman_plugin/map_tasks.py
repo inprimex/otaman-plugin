@@ -22,6 +22,7 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -37,6 +38,11 @@ except ImportError:
 
 
 from otaman_core._resolve import find_maestro_root as find_project_root  # shared resolver
+
+# spec-gate-hardening 1.3(c): same slug shape otaman-core's validate_message
+# enforces on x-gate-waived, so an invalid/malformed env value is dropped
+# here rather than shipped as a message that fails validation downstream.
+_GATE_WAIVED_SLUG = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
 
 
 def load_ownership(project_root: Path) -> dict[str, str]:
@@ -160,11 +166,28 @@ def create_bus_messages(
     feature_name: str,
     config: dict[str, Any],
 ) -> list[str]:
-    """Create bus messages for each agent with their assigned tasks."""
+    """Create bus messages for each agent with their assigned tasks.
+
+    spec-gate-hardening 1.3(c): when the dispatching `otaman assign` ran
+    under an active gate waiver, it sets OTAMAN_GATE_WAIVED=<violation-slug>
+    before calling into this module (in-process, per the agreed seam —
+    map_tasks is the actual frontmatter emitter for dispatch assignments,
+    cli's own code never writes these files directly). Every assignment
+    created in that call carries `x-gate-waived: <slug>` so recipients can
+    see the dispatch proceeded despite an unresolved gate violation. Absent
+    or malformed env value (doesn't match the slug shape otaman-core's
+    validate_message enforces) is silently treated as no active waiver —
+    the normal case.
+    """
     bus_rel = config.get("communication", {}).get("bus_path", ".agents/bus")
     active_dir = project_root / bus_rel / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
     (active_dir / "acks").mkdir(exist_ok=True)
+
+    gate_waived = os.environ.get("OTAMAN_GATE_WAIVED", "").strip()
+    if gate_waived and not _GATE_WAIVED_SLUG.match(gate_waived):
+        gate_waived = ""
+    gate_waived_line = f"x-gate-waived: {gate_waived}\n" if gate_waived else ""
 
     # Group tasks by owner
     by_owner: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -204,7 +227,7 @@ priority: normal
 type: task-assignment
 timestamp: {now_iso}
 status: pending
----
+{gate_waived_line}---
 
 ## Subject: Tasks assigned from "{feature_name}"
 
