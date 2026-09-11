@@ -13,9 +13,12 @@ hermetic PATH, same harness as test_launch_acting_lock.py.
 
 from __future__ import annotations
 
+import os
+import shlex
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -63,6 +66,21 @@ def _write_exec(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _link_coreutils(bindir: Path) -> None:
+    """Same wrapper-not-symlink trick as test_launch_acting_lock.py: a venv
+    python3 symlinked outside its venv loses PyYAML (pyvenv.cfg discovery
+    fails), so exec it by absolute path instead."""
+    for name in _COREUTILS:
+        if name == "python3":
+            wrapper = bindir / "python3"
+            wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+            wrapper.chmod(0o755)
+            continue
+        src = shutil.which(name)
+        if src and not (bindir / name).exists():
+            os.symlink(src, bindir / name)
+
+
 def _make_bindir(
     tmp_path: Path,
     *,
@@ -72,10 +90,7 @@ def _make_bindir(
 ) -> Path:
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for tool in _COREUTILS:
-        real = shutil.which(tool)
-        if real:
-            (bindir / tool).symlink_to(real)
+    _link_coreutils(bindir)
 
     _write_exec(
         bindir / "otaman",
