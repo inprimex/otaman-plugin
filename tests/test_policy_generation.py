@@ -19,6 +19,13 @@
   with more than one workflow — those get no generated aggregator at
   all; the required-checks list is enumerated directly in generated
   branch protection instead, deploy's job, not this generator's).
+- `install_changelog_fragment_scaffold` materializes `changelog.d/` +
+  a convention README (release-notes-fragments 1.4) for a repo whose
+  effective git policy sets `require_changelog_fragment` — reads the
+  dir/filename/categories/exemption_marker schema from the effective
+  policy's `changelog_fragment` config (otaman-core PR #59) rather than
+  hardcoding it, so a program override flows through; never overwrites
+  an existing README.md.
 
 Tests against the REAL `otaman_core.policy` / `otaman_core.human_roster`
 modules (sibling checkout) rather than mocking them, matching this repo's
@@ -90,6 +97,13 @@ class TestRenderGitPolicySection:
         assert "Force-push is forbidden" in block
         assert "required CI check must pass" in block
         assert "<type>/<owner>/<topic>" in block
+
+    def test_changelog_fragment_line_renders_from_shipped_schema(self, tmp_path):
+        root = _root(tmp_path)
+        block = gen._render_git_policy_section(AGENT_REPO, ROSTER_CONFIG, root)
+        assert "changelog.d/<pr>.<category>.md" in block
+        assert "feature/fix/doc/removal/misc" in block
+        assert '"changelog: exempt"' in block
 
     def test_resolves_even_before_policy_dir_is_materialized(self, tmp_path):
         """Verified behavior: otaman_core.policy.effective_policy falls back to
@@ -373,6 +387,74 @@ class TestInstallCodeownersFiles:
     )
     def test_github_org_from_remote_variants(self, remote, expected_org):
         assert gen._github_org_from_remote(remote) == expected_org
+
+
+class TestInstallChangelogFragmentScaffold:
+    def _repo(self, tmp_path):
+        root = _root(tmp_path)
+        (root / "r").mkdir()
+        return root, {"name": "r", "path": "r"}
+
+    def test_creates_changelog_dir_and_readme(self, tmp_path):
+        root, repo = self._repo(tmp_path)
+        config = {"repos": [repo]}
+        results = gen.install_changelog_fragment_scaffold(root, config)
+        readme = root / "r" / "changelog.d" / "README.md"
+        assert results == ["Created: r/changelog.d/README.md"]
+        assert readme.is_file()
+        content = readme.read_text(encoding="utf-8")
+        assert "<pr>.<category>.md" in content
+        assert "`feature`" in content and "`fix`" in content
+        assert '"changelog: exempt"' in content
+
+    def test_never_overwrites_an_existing_readme(self, tmp_path):
+        root, repo = self._repo(tmp_path)
+        changelog_dir = root / "r" / "changelog.d"
+        changelog_dir.mkdir()
+        (changelog_dir / "README.md").write_text("custom\n", encoding="utf-8")
+        config = {"repos": [repo]}
+        assert gen.install_changelog_fragment_scaffold(root, config) == []
+        assert (changelog_dir / "README.md").read_text(encoding="utf-8") == "custom\n"
+
+    def test_second_run_is_a_no_op(self, tmp_path):
+        root, repo = self._repo(tmp_path)
+        config = {"repos": [repo]}
+        gen.install_changelog_fragment_scaffold(root, config)
+        assert gen.install_changelog_fragment_scaffold(root, config) == []
+
+    def test_leaves_existing_fragment_files_alone(self, tmp_path):
+        """A repo that already has real fragments (no README yet) still gets
+        the README written alongside them — install never touches the
+        fragment files themselves."""
+        root, repo = self._repo(tmp_path)
+        changelog_dir = root / "r" / "changelog.d"
+        changelog_dir.mkdir()
+        (changelog_dir / "142.feature.md").write_text("Added X.\n", encoding="utf-8")
+        config = {"repos": [repo]}
+        gen.install_changelog_fragment_scaffold(root, config)
+        assert (changelog_dir / "142.feature.md").read_text(encoding="utf-8") == "Added X.\n"
+        assert (changelog_dir / "README.md").is_file()
+
+    def test_skips_gracefully_when_selected_policy_missing_on_disk(self, tmp_path):
+        root, repo = self._repo(tmp_path)
+        repo["policies"] = {"git": "nonexistent"}
+        config = {"repos": [repo]}
+        assert gen.install_changelog_fragment_scaffold(root, config) == []
+        assert not (root / "r" / "changelog.d").exists()
+
+    def test_degrades_to_empty_on_older_core_without_policy_module(self, tmp_path, monkeypatch):
+        root, repo = self._repo(tmp_path)
+        config = {"repos": [repo]}
+
+        real_import = __import__
+
+        def _fake_import(name, *a, **k):
+            if name == "otaman_core.policy":
+                raise ImportError("simulated older core")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr("builtins.__import__", _fake_import)
+        assert gen.install_changelog_fragment_scaffold(root, config) == []
 
 
 class TestInstallCiGateTemplates:
