@@ -135,9 +135,23 @@ def resolve(
             if config_dir_raw:
                 config_dir_expanded = expand_config_dir(config_dir_raw, shell)
 
-    # platform.yaml for repos list
+    # platform.yaml for repos list + the runner's plugin_dir (deploy-agent
+    # finding 20260916T205241: launch-agents.sh built its claude invocations
+    # with no --plugin-dir at all, so a bash-launched session has NO otaman
+    # slash commands regardless of what platform.yaml declares — the .ps1
+    # only threaded it through its SSH-remote-bash branch via a DIFFERENT,
+    # Windows-only per-connection field (launch-settings.yaml's
+    # ssh_plugin_path), so local bash launches were never covered by either
+    # launcher. Reusing the SAME field `_plugin_dir_wiring_note`
+    # (generate_agent_config.py) already validates —
+    # `runner.agent_bootstrap.plugin_dir` — so a repo owner sets ONE value
+    # that both the runner-mediated path and this direct-launch fallback
+    # honor. Validated exactly like that check: must expand to a real,
+    # existing directory, or it's silently treated as unset (never crashes
+    # the launcher over a stale/misconfigured path).
     platform_path = maestro_root / "platform.yaml"
     repos: list[str] = []
+    plugin_dir_expanded = ""
     if platform_path.exists():
         platform = _load_yaml(platform_path)
         for r in platform.get("repos", []) or []:
@@ -148,6 +162,14 @@ def resolve(
             name = r.get("name")
             if name:
                 repos.append(name)
+
+        raw_plugin_dir = ((platform.get("runner") or {}).get("agent_bootstrap") or {}).get(
+            "plugin_dir"
+        )
+        if raw_plugin_dir:
+            candidate = Path(str(raw_plugin_dir)).expanduser()
+            if candidate.is_dir():
+                plugin_dir_expanded = str(candidate)
 
     secrets = load_dotenv(maestro_root)
 
@@ -165,6 +187,7 @@ def resolve(
         "config_dir_expanded": config_dir_expanded,
         "secrets": secrets,
         "repos": repos,
+        "plugin_dir": plugin_dir_expanded,
         "warnings": warnings,
         "model": tier.model,
         "effort": tier.effort,
@@ -227,6 +250,8 @@ def emit_exports(state: dict[str, Any]) -> str:
         lines.append(f"export CLAUDE_CODE_EFFORT_LEVEL={_bash_single_quote(state['effort'])}")
     if state["config_dir_expanded"]:
         lines.append(f"export CLAUDE_CONFIG_DIR={_bash_single_quote(state['config_dir_expanded'])}")
+    if state.get("plugin_dir"):
+        lines.append(f"export OTAMAN_PLUGIN_DIR={_bash_single_quote(state['plugin_dir'])}")
     for k, v in state["secrets"].items():
         lines.append(f"export {k}={_bash_single_quote(v)}")
     lines.append(f"# repos: {','.join(state['repos'])}")

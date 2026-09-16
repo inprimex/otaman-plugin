@@ -448,11 +448,27 @@ fi
 # back to a no-flag launch — that makes the launcher idempotent across
 # SSH reconnects (the second-and-later launches keep context) without
 # breaking the first launch. (Backlog M-3 + first-run fix.)
-claude_cmd_continue=("claude" "-c" "/otaman:check")
-claude_cmd_fresh=("claude" "/otaman:check")
+#
+# `--plugin-dir` (deploy-agent finding 20260916T205241): resolved by
+# launch-resolve.py from platform.yaml's `runner.agent_bootstrap.plugin_dir`
+# and exported as OTAMAN_PLUGIN_DIR (only when it expands to a real,
+# existing directory). Without it, every bash-launched session had NO
+# otaman slash commands at all — the .ps1 only covered its own SSH-remote
+# branch via a different, Windows-only field. Threaded in unconditionally
+# here (both the continue and fresh forms) so every downstream builder of
+# claude_cmd_continue/claude_cmd_fresh gets it for free.
+claude_cmd_continue=("claude" "-c")
+claude_cmd_fresh=("claude")
+if [[ -n "${OTAMAN_PLUGIN_DIR:-}" ]]; then
+    claude_cmd_continue+=("--plugin-dir" "$OTAMAN_PLUGIN_DIR")
+    claude_cmd_fresh+=("--plugin-dir" "$OTAMAN_PLUGIN_DIR")
+fi
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-    claude_cmd_continue=("claude" "-c" "${EXTRA_ARGS[@]}")
-    claude_cmd_fresh=("claude" "${EXTRA_ARGS[@]}")
+    claude_cmd_continue+=("${EXTRA_ARGS[@]}")
+    claude_cmd_fresh+=("${EXTRA_ARGS[@]}")
+else
+    claude_cmd_continue+=("/otaman:check")
+    claude_cmd_fresh+=("/otaman:check")
 fi
 
 # single-acting-session-guard: build the claude RESPAWN LOOP that cli's
@@ -581,6 +597,9 @@ case "$SHELL_MODE" in
         if [[ "$_rc" -eq 2 ]]; then
             acting_print_holder "$ACTING_SESSION"
             echo "acting: no tmux here — running claude -c as a PASSIVE read-only mirror (NOT acting on the bus)." >&2
+            if [[ -n "${OTAMAN_PLUGIN_DIR:-}" ]]; then
+                exec claude -c --plugin-dir "$OTAMAN_PLUGIN_DIR"
+            fi
             exec claude -c
         fi
         exit "$_rc"
@@ -734,7 +753,15 @@ EOF
         # before the first `/otaman:check` reaches the prompt parser. Cheap
         # (~50ms) and silent. Subsequent loop iterations rely on the
         # already-warm process state.
-        claude_loop="claude --version >/dev/null 2>&1 || true; while :; do claude -c /otaman:check || claude /otaman:check; printf '\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
+        # --plugin-dir (deploy-agent finding 20260916T205241): same
+        # OTAMAN_PLUGIN_DIR export as claude_cmd_continue/fresh above —
+        # this loop is a separate hardcoded string, not built from those
+        # arrays, so it needs the flag threaded in independently.
+        _plugin_dir_flag=""
+        if [[ -n "${OTAMAN_PLUGIN_DIR:-}" ]]; then
+            _plugin_dir_flag=" --plugin-dir $(printf '%q' "$OTAMAN_PLUGIN_DIR")"
+        fi
+        claude_loop="claude${_plugin_dir_flag} --version >/dev/null 2>&1 || true; while :; do claude -c${_plugin_dir_flag} /otaman:check || claude${_plugin_dir_flag} /otaman:check; printf '\\n[claude exited -- Enter to respawn, Ctrl-C to drop to shell] '; read -r || break; done"
 
         # One session per repo. Session name: "${project}:${owner}". The `=`
         # prefix on -t forces exact match (tmux 2.5+) so `otaman:plugin-agent`
