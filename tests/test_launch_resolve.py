@@ -156,6 +156,51 @@ class TestResolve:
         state = lr.resolve(maestro_root, None, "bash")
         assert state["repos"] == ["auth", "web"]
 
+    def test_plugin_dir_resolved_when_directory_exists(self, maestro_root, tmp_path):
+        """deploy-agent finding 20260916T205241: launch-agents.sh built its
+        claude invocations with no --plugin-dir at all, so a bash-launched
+        session had NO otaman slash commands. Reads the SAME field
+        `_plugin_dir_wiring_note` (generate_agent_config.py) already
+        validates — runner.agent_bootstrap.plugin_dir — so one platform.yaml
+        value covers both the runner-mediated path and this fallback."""
+        plugin_tree = tmp_path / "otaman-plugin-tree"
+        plugin_tree.mkdir()
+        (maestro_root / "platform.yaml").write_text(
+            yaml.dump(
+                {
+                    "project": "test",
+                    "version": "1.0",
+                    "repos": [],
+                    "runner": {"agent_bootstrap": {"plugin_dir": str(plugin_tree)}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = lr.resolve(maestro_root, None, "bash")
+        assert state["plugin_dir"] == str(plugin_tree)
+
+    def test_plugin_dir_empty_when_path_missing_on_disk(self, maestro_root):
+        """A stale/misconfigured plugin_dir degrades to unset, never crashes
+        the launcher — matches _plugin_dir_wiring_note's own is_dir() check."""
+        (maestro_root / "platform.yaml").write_text(
+            yaml.dump(
+                {
+                    "project": "test",
+                    "version": "1.0",
+                    "repos": [],
+                    "runner": {"agent_bootstrap": {"plugin_dir": "/no/such/dir"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = lr.resolve(maestro_root, None, "bash")
+        assert state["plugin_dir"] == ""
+
+    def test_plugin_dir_empty_when_unset(self, maestro_root):
+        _write_platform(maestro_root, [])
+        state = lr.resolve(maestro_root, None, "bash")
+        assert state["plugin_dir"] == ""
+
     def test_ssh_defers_path_expansion(self, maestro_root):
         _write_settings(
             maestro_root,
@@ -208,6 +253,30 @@ class TestEmitExports:
         state = lr.resolve(maestro_root, None, "bash")
         out = lr.emit_exports(state)
         assert "CLAUDE_CONFIG_DIR" not in out
+
+    def test_plugin_dir_exported_when_set(self, maestro_root, tmp_path):
+        plugin_tree = tmp_path / "otaman-plugin-tree"
+        plugin_tree.mkdir()
+        (maestro_root / "platform.yaml").write_text(
+            yaml.dump(
+                {
+                    "project": "test",
+                    "version": "1.0",
+                    "repos": [],
+                    "runner": {"agent_bootstrap": {"plugin_dir": str(plugin_tree)}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = lr.resolve(maestro_root, None, "bash")
+        out = lr.emit_exports(state)
+        assert f"export OTAMAN_PLUGIN_DIR='{plugin_tree}'" in out
+
+    def test_plugin_dir_not_exported_when_unset(self, maestro_root):
+        _write_platform(maestro_root, [])
+        state = lr.resolve(maestro_root, None, "bash")
+        out = lr.emit_exports(state)
+        assert "OTAMAN_PLUGIN_DIR" not in out
 
 
 class TestModelEffortInjection:
