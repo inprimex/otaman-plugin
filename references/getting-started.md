@@ -115,6 +115,12 @@ mv platform.yaml.draft platform.yaml
 
 ## Step 4: Initialize (2 min)
 
+> `otaman init` must run from INSIDE the `otaman-quickstart-otaman/` folder
+> (the one containing `platform.yaml`) — not the parent directory with your
+> repos. If you opened a new shell since Step 3, `cd` into the folder
+> containing `platform.yaml` first; running it a level up offers to
+> scaffold a fresh draft on top of your completed setup instead.
+
 ```bash
 otaman init
 ```
