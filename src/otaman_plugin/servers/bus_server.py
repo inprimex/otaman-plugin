@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -620,24 +621,38 @@ def otaman_check(
 
 
 # ---------------------------------------------------------------------------
-# auto-clear-blocked-entries — tombstone helper (tasks 1.1, 1.3, 1.4)
+# auto-clear-blocked-entries / blocked-entry-lifecycle — tombstone helper
+# (auto-clear-blocked-entries 1.1, 1.3, 1.4; blocked-entry-lifecycle 1.2)
 # ---------------------------------------------------------------------------
 #
 # When `otaman_send` emits a spec-change-approved / spec-change-rejected /
-# task-assignment message, scan every agent's `.agents/blocked/<agent>.md`
-# file and tombstone matching `## Blocked:` entries by wrapping them in an
-# HTML comment with a `cleared <date> — <reason>` trailer. The
-# `check-blocked.sh` PreToolUse hook then no longer sees the entry as
-# active because its regex matches `^## Blocked:` line-leading headers only.
+# task-assignment / task-complete message, scan every agent's
+# `.agents/blocked/<agent>.md` file and tombstone matching `## Blocked:`
+# entries by wrapping them in an HTML comment with a
+# `cleared <date> — <reason>` trailer. The `check-blocked.sh` PreToolUse
+# hook then no longer sees the entry as active because its regex matches
+# `^## Blocked:` line-leading headers only.
 #
 # Matching strategy by message type:
 #   - spec-change-approved / spec-change-rejected: extract proposal stems
 #     from the message body and match them against the `**Proposal**:` field
-#     in each blocked entry. Reason: "approved" or "rejected".
-#   - task-assignment (fallback): compare the message's `change:` value
-#     against the `**Change**:` field in each blocked entry. Entries that
-#     lack the field are skipped silently for back-compat with entries
-#     created before this change. Reason: "task-assigned".
+#     in each blocked entry (an "awaiting-approval" entry, per
+#     blocked-entry-lifecycle's Kind). Reason: "approved" or "rejected".
+#   - task-assignment / task-complete: compare the message's `change:` value
+#     against the `**Change**:` field in each blocked entry (an
+#     "awaiting-dependency" entry — cleared when the work it names ships).
+#     Entries that lack the field are skipped silently for back-compat with
+#     entries created before this change. Reason: "task-assigned" or
+#     "task-completed".
+#
+# blocked-entry-lifecycle's canon clause ("a lifecycle side effect SHALL
+# fire for every producer of its triggering event") means this cannot stay
+# an MCP-`otaman_send`-only mechanism: `otaman approve` (cli) and the
+# specs-repo post-commit hook (spec-change-hook.sh, archive sweeps) both
+# write bus messages directly, bypassing this module entirely. This
+# function is therefore PUBLIC (no leading underscore) and importable by
+# otaman-cli's write paths — see `sweep_archived_blocked` below for the
+# archive backstop, called from the same class of non-MCP producer.
 
 # Bus filenames follow `<ts>-<from>-to-<to>-<slug>` where every component
 # uses kebab-case. Spec wrote `[a-z0-9]+` for the agent part, but real
@@ -650,6 +665,7 @@ _TOMBSTONE_REASONS: dict[str, str] = {
     "spec-change-approved": "approved",
     "spec-change-rejected": "rejected",
     "task-assignment": "task-assigned",
+    "task-complete": "task-completed",
 }
 
 
@@ -663,20 +679,37 @@ def _extract_proposal_stems(body: str) -> list[str]:
     return _PROPOSAL_STEM_RE.findall(body or "")
 
 
-def _auto_tombstone_blocked(
-    root: Path,
-    msg_type: str,
-    body: str,
-    change_name: str | None = None,
-) -> list[dict[str, str]]:
-    """Tombstone matching `## Blocked:` entries across all agents' blocked files.
+# An entry runs from a line-leading `## Blocked:` to the next such line or
+# end of string. ``re.MULTILINE`` makes ``^`` match line starts; ``re.DOTALL``
+# makes ``.`` match newlines. Non-greedy ``.+?`` plus the lookahead keeps
+# each entry small without swallowing the next entry.
+_BLOCKED_ENTRY_RE = re.compile(
+    r"^(## Blocked: .+?)(?=\n## Blocked: |\Z)",
+    re.DOTALL | re.MULTILINE,
+)
+_PROPOSAL_FIELD_RE = re.compile(r"^\s*-\s*\*\*Proposal\*\*:\s*(\S+)", re.MULTILINE)
+_CHANGE_FIELD_RE = re.compile(r"^\s*-\s*\*\*Change\*\*:\s*(\S+)", re.MULTILINE)
+_BLOCKED_TITLE_RE = re.compile(r"^## Blocked:\s*(.+)$", re.MULTILINE)
 
-    Per auto-clear-blocked-entries spec. Returns a list of dicts —
-    ``[{"agent", "title", "reason"}, ...]`` — describing each tombstoned
-    entry. An empty list means nothing matched (no side effect).
+
+def _tombstone_entries_matching(
+    root: Path,
+    reason: str,
+    should_tombstone: Callable[[str], bool],
+) -> list[dict[str, str]]:
+    """Shared low-level sweep for every terminator in this module: wrap each
+    matching ``## Blocked:`` entry, across EVERY agent's blocked file, in a
+    ``cleared <date> — <reason>`` HTML comment.
+
+    ``should_tombstone`` receives one entry's raw block (from ``## Blocked:``
+    to the next such header or EOF) and decides whether it matches; callers
+    own the match strategy (proposal-stem, change-field, archived-change
+    membership) while this function owns only the file I/O and the
+    tombstone format — one format, so an entry cleared by any terminator, or
+    by otaman-cli's own writer, reads identically everywhere.
 
     Idempotent: already-commented entries (wrapped in ``<!-- ... -->``) are
-    not matched because the `^## Blocked:` regex requires a line-leading
+    not matched because the ``^## Blocked:`` regex requires a line-leading
     header. Calling this twice with the same input is a no-op the second
     time.
     """
@@ -684,35 +717,8 @@ def _auto_tombstone_blocked(
     if not blocked_dir.is_dir():
         return []
 
-    reason = _TOMBSTONE_REASONS.get(msg_type)
-    if not reason:
-        return []
-
-    if msg_type in ("spec-change-approved", "spec-change-rejected"):
-        match_stems = set(_extract_proposal_stems(body))
-        match_change: str | None = None
-        if not match_stems:
-            return []
-    else:  # task-assignment
-        match_stems = set()
-        match_change = (change_name or "").strip() or None
-        if not match_change:
-            return []
-
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     tombstoned: list[dict[str, str]] = []
-
-    # An entry runs from a line-leading `## Blocked:` to the next such line
-    # or end of string. ``re.MULTILINE`` makes ``^`` match line starts;
-    # ``re.DOTALL`` makes ``.`` match newlines. Non-greedy ``.+?`` plus the
-    # lookahead keeps each entry small without swallowing the next entry.
-    entry_re = re.compile(
-        r"^(## Blocked: .+?)(?=\n## Blocked: |\Z)",
-        re.DOTALL | re.MULTILINE,
-    )
-    proposal_field_re = re.compile(r"^\s*-\s*\*\*Proposal\*\*:\s*(\S+)", re.MULTILINE)
-    change_field_re = re.compile(r"^\s*-\s*\*\*Change\*\*:\s*(\S+)", re.MULTILINE)
-    title_re = re.compile(r"^## Blocked:\s*(.+)$", re.MULTILINE)
 
     for blocked_file in sorted(blocked_dir.glob("*.md")):
         agent_name = blocked_file.stem
@@ -725,24 +731,14 @@ def _auto_tombstone_blocked(
         new_parts: list[str] = []
         last_end = 0
 
-        for m in entry_re.finditer(text):
+        for m in _BLOCKED_ENTRY_RE.finditer(text):
             entry_block = m.group(1)
 
             # Preserve unchanged text between matches.
             new_parts.append(text[last_end : m.start()])
 
-            should_tombstone = False
-            if msg_type in ("spec-change-approved", "spec-change-rejected"):
-                prop_m = proposal_field_re.search(entry_block)
-                if prop_m and prop_m.group(1) in match_stems:
-                    should_tombstone = True
-            else:  # task-assignment
-                change_m = change_field_re.search(entry_block)
-                if change_m and change_m.group(1) == match_change:
-                    should_tombstone = True
-
-            if should_tombstone:
-                title_m = title_re.search(entry_block)
+            if should_tombstone(entry_block):
+                title_m = _BLOCKED_TITLE_RE.search(entry_block)
                 title = title_m.group(1).strip() if title_m else "(untitled)"
                 tombstoned.append({"agent": agent_name, "title": title, "reason": reason})
                 trailer = f"\ncleared {today} — {reason} -->"
@@ -762,6 +758,116 @@ def _auto_tombstone_blocked(
                 continue
 
     return tombstoned
+
+
+def auto_tombstone_blocked(
+    root: Path,
+    msg_type: str,
+    body: str,
+    change_name: str | None = None,
+) -> list[dict[str, str]]:
+    """Tombstone matching `## Blocked:` entries across all agents' blocked files.
+
+    Per auto-clear-blocked-entries / blocked-entry-lifecycle 1.2. Returns a
+    list of dicts — ``[{"agent", "title", "reason"}, ...]`` — describing
+    each tombstoned entry. An empty list means nothing matched (no side
+    effect).
+
+    PUBLIC on purpose: blocked-entry-lifecycle's canon clause requires the
+    same terminator to fire for EVERY producer of its triggering event, not
+    just the MCP `otaman_send` path this module owns. otaman-cli's bash
+    `otaman approve` / `otaman complete` write bus messages directly and
+    should call this same function from their own write paths — same
+    signature, same tombstone format, one matcher.
+
+    Idempotent: already-commented entries (wrapped in ``<!-- ... -->``) are
+    not matched because the `^## Blocked:` regex requires a line-leading
+    header. Calling this twice with the same input is a no-op the second
+    time.
+    """
+    reason = _TOMBSTONE_REASONS.get(msg_type)
+    if not reason:
+        return []
+
+    if msg_type in ("spec-change-approved", "spec-change-rejected"):
+        match_stems = set(_extract_proposal_stems(body))
+        if not match_stems:
+            return []
+
+        def _should_tombstone(entry_block: str) -> bool:
+            m = _PROPOSAL_FIELD_RE.search(entry_block)
+            return bool(m and m.group(1) in match_stems)
+    else:  # task-assignment / task-complete — both are dependency-wait terminators
+        match_change = (change_name or "").strip() or None
+        if not match_change:
+            return []
+
+        def _should_tombstone(entry_block: str) -> bool:
+            m = _CHANGE_FIELD_RE.search(entry_block)
+            return bool(m and m.group(1) == match_change)
+
+    return _tombstone_entries_matching(root, reason, _should_tombstone)
+
+
+def sweep_archived_blocked(
+    root: Path, archived_names: set[str] | frozenset[str]
+) -> list[dict[str, str]]:
+    """Archive backstop (blocked-entry-lifecycle 1.2): tombstone ANY live
+    blocked entry — either Kind — whose ``**Change**:`` field names an
+    archived change.
+
+    An awaiting-approval entry normally ends on its proposal's
+    spec-change-approved/-rejected, and an awaiting-dependency entry on the
+    referenced task's task-complete; this is the safety net for the case
+    where that specific message was never delivered (predates this
+    mechanism, was lost, or a future producer misses it) yet the change
+    shipped and archived regardless — canon: "archival of the referenced
+    change SHALL sweep either kind as a backstop."
+
+    Empty *archived_names* is a deliberate no-op (never sweeps everything).
+    """
+    names = {n for n in archived_names if n}
+    if not names:
+        return []
+
+    def _should_tombstone(entry_block: str) -> bool:
+        m = _CHANGE_FIELD_RE.search(entry_block)
+        return bool(m and m.group(1) in names)
+
+    return _tombstone_entries_matching(root, "change archived", _should_tombstone)
+
+
+def archived_change_names(root: Path) -> set[str]:
+    """Names of every change directory under the specs repo's
+    ``openspec/changes/archive/``, for ``sweep_archived_blocked``.
+
+    Reads ``specs.path`` from ``platform.yaml`` the same simple line-scan
+    ``otaman_read_spec`` uses (no yaml import at module scope). Degrades to
+    an empty set — never raises — when ``platform.yaml`` is absent/
+    unconfigured or the specs repo isn't checked out at that path; callers
+    treat that identically to "nothing archived yet".
+    """
+    config_file = root / "platform.yaml"
+    if not config_file.exists():
+        return set()
+
+    specs_rel = ""
+    for line in config_file.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("path:") and specs_rel == "_pending":
+            specs_rel = stripped.split(":", 1)[1].strip()
+            break
+        if stripped == "specs:":
+            specs_rel = "_pending"
+
+    if not specs_rel or specs_rel == "_pending":
+        return set()
+
+    archive_dir = (root / specs_rel / "openspec" / "changes" / "archive").resolve()
+    if not archive_dir.is_dir():
+        return set()
+
+    return {p.name for p in archive_dir.iterdir() if p.is_dir()}
 
 
 def _resolve_send_target(
@@ -1011,16 +1117,16 @@ status: pending
             cc_path.write_text(cc_content, encoding="utf-8")
             cc_copies.append(cc_path.stem)
 
-    # auto-clear-blocked-entries (task 1.2): tombstone matching ## Blocked:
-    # entries in the data layer when sending an approval/rejection (primary
-    # signal via proposal-stem match) or a task-assignment (fallback signal
-    # via the message's `change` field). The helper is idempotent — already
-    # commented-out entries are not re-tombstoned.
+    # blocked-entry-lifecycle 1.2: tombstone matching ## Blocked: entries in
+    # the data layer when sending an approval/rejection (awaiting-approval,
+    # via proposal-stem match) or a task-assignment/task-complete
+    # (awaiting-dependency, via the message's `change` field). The helper is
+    # idempotent — already commented-out entries are not re-tombstoned.
     auto_tombstoned: list[dict[str, str]] = []
     if msg_type in ("spec-change-approved", "spec-change-rejected"):
-        auto_tombstoned = _auto_tombstone_blocked(delivery_root, msg_type, body, None)
-    elif msg_type == "task-assignment" and change:
-        auto_tombstoned = _auto_tombstone_blocked(delivery_root, msg_type, body, change)
+        auto_tombstoned = auto_tombstone_blocked(delivery_root, msg_type, body, None)
+    elif msg_type in ("task-assignment", "task-complete") and change:
+        auto_tombstoned = auto_tombstone_blocked(delivery_root, msg_type, body, change)
 
     result: dict[str, Any] = {
         "sent": True,
@@ -1350,14 +1456,20 @@ def otaman_complete(
     except (json.JSONDecodeError, ValueError):
         report = {"raw_output": result.stdout}
 
-    # Send bus notification
+    # Send bus notification. `otaman_send` is an `@mcp.tool`-wrapped
+    # FunctionTool, not directly callable — must go through `.fn` like any
+    # other cross-tool call in this module (real bug found while wiring
+    # `change=` through for blocked-entry-lifecycle 1.2: every real
+    # `otaman_complete` invocation crashed here with "'FunctionTool' object
+    # is not callable" before reaching this notification).
     task_label = "all tasks" if mark_all else f"tasks {tasks}"
-    send_result = otaman_send(
+    send_result = otaman_send.fn(
         cwd=cwd,
         to="all",
         subject=f"Tasks complete: {change_name}",
         body=f"**Agent**: {agent}\n**Change**: {change_name}\n**Completed**: {task_label}\n**Updated**: {report.get('updated', 0)} task(s) in tasks.md",
         msg_type="task-complete",
+        change=change_name,
         priority="normal",
     )
 

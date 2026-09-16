@@ -17,10 +17,13 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from otaman_plugin.servers.bus_server import (  # noqa: E402
-    _auto_tombstone_blocked,
     _extract_proposal_stems,
+    archived_change_names,
+    auto_tombstone_blocked,
+    otaman_complete,
     otaman_propose,
     otaman_send,
+    sweep_archived_blocked,
 )
 
 # ---------------------------------------------------------------------------
@@ -85,7 +88,7 @@ class TestExtractProposalStems:
 
 
 # ---------------------------------------------------------------------------
-# _auto_tombstone_blocked — 7 unit cases per task 1.6
+# auto_tombstone_blocked — 7 unit cases per task 1.6
 # ---------------------------------------------------------------------------
 
 
@@ -97,7 +100,7 @@ class TestAutoTombstoneBlocked:
             project / ".agents" / "blocked" / "plugin-agent.md",
             {"title": "foo bar", "stem": stem, "change": "foo-bar"},
         )
-        result = _auto_tombstone_blocked(
+        result = auto_tombstone_blocked(
             project,
             "spec-change-approved",
             f"**Original proposal**: {stem}",
@@ -119,7 +122,7 @@ class TestAutoTombstoneBlocked:
             project / ".agents" / "blocked" / "plugin-agent.md",
             {"title": "bad idea", "stem": stem, "change": "bad-idea"},
         )
-        result = _auto_tombstone_blocked(
+        result = auto_tombstone_blocked(
             project,
             "spec-change-rejected",
             f"Original proposal {stem} rejected",
@@ -138,7 +141,7 @@ class TestAutoTombstoneBlocked:
                 "change": "ship-the-feature",
             },
         )
-        result = _auto_tombstone_blocked(
+        result = auto_tombstone_blocked(
             project,
             "task-assignment",
             body="Tasks 1.1-1.5 of ship-the-feature assigned to plugin-agent.",
@@ -153,11 +156,11 @@ class TestAutoTombstoneBlocked:
         path = project / ".agents" / "blocked" / "plugin-agent.md"
         _write_blocked(path, {"title": "thing", "stem": stem, "change": "thing"})
         # First call tombstones
-        first = _auto_tombstone_blocked(project, "spec-change-approved", stem)
+        first = auto_tombstone_blocked(project, "spec-change-approved", stem)
         assert len(first) == 1
         before = path.read_text()
         # Second call should be a no-op
-        second = _auto_tombstone_blocked(project, "spec-change-approved", stem)
+        second = auto_tombstone_blocked(project, "spec-change-approved", stem)
         assert second == []
         assert path.read_text() == before
 
@@ -167,7 +170,7 @@ class TestAutoTombstoneBlocked:
         path = project / ".agents" / "blocked" / "plugin-agent.md"
         _write_blocked(path, {"title": "thing", "stem": stem, "change": "thing"})
         before = path.read_text()
-        result = _auto_tombstone_blocked(
+        result = auto_tombstone_blocked(
             project,
             "spec-change-approved",
             "Original proposal 20260610T161500-other-agent-to-human-spec-change-request approved",
@@ -191,7 +194,7 @@ class TestAutoTombstoneBlocked:
             encoding="utf-8",
         )
         before = path.read_text()
-        result = _auto_tombstone_blocked(
+        result = auto_tombstone_blocked(
             project,
             "task-assignment",
             body="Tasks for legacy assigned",
@@ -214,7 +217,7 @@ class TestAutoTombstoneBlocked:
             {"title": "other", "stem": other_stem, "change": "other"},
         )
         before_cli = cli_path.read_text()
-        result = _auto_tombstone_blocked(project, "spec-change-approved", match_stem)
+        result = auto_tombstone_blocked(project, "spec-change-approved", match_stem)
         assert len(result) == 1
         assert result[0]["agent"] == "plugin-agent"
         # cli-agent's file untouched
@@ -259,7 +262,7 @@ def test_full_propose_approve_tombstone_lifecycle(integration_workspace):
     interactive human confirmation is possible there); real approvals go
     through the CLI's human-confirmed `otaman approve` instead (see
     test_otaman_send_refuses_privileged_approval below). This test now
-    exercises `_auto_tombstone_blocked` directly with the same body that a
+    exercises `auto_tombstone_blocked` directly with the same body that a
     CLI-written approval message would carry, to keep the tombstone-
     matching logic itself under regression coverage.
     """
@@ -281,7 +284,7 @@ def test_full_propose_approve_tombstone_lifecycle(integration_workspace):
         "The spec-change-request from **plugin-agent** has been **approved**.\n\n"
         f"**Original proposal**: {proposal_stem}\n"
     )
-    tombstoned = _auto_tombstone_blocked(
+    tombstoned = auto_tombstone_blocked(
         integration_workspace["otaman"], "spec-change-approved", approval_body
     )
     assert len(tombstoned) == 1
@@ -361,3 +364,134 @@ def test_change_field_written_to_outgoing_frontmatter(integration_workspace):
     msg_file = bus / f"{result['stem']}.md"
     text = msg_file.read_text()
     assert "change: some-change-name" in text
+
+
+def test_task_complete_uses_change_field(integration_workspace):
+    """blocked-entry-lifecycle 1.2: task-complete is a dependency-wait
+    terminator, exactly like task-assignment, and — because
+    ``auto_tombstone_blocked`` scans EVERY agent's blocked file, not just
+    the sender's — it clears a genuinely cross-agent wait: cli-agent is
+    blocked on plugin-agent's change, plugin-agent completes it."""
+    other_blocked = integration_workspace["otaman"] / ".agents" / "blocked" / "cli-agent.md"
+    _write_blocked(
+        other_blocked,
+        {
+            "title": "waiting on plugin's work",
+            "stem": "20260101T000000-cli-agent-to-human-spec-change-request",
+            "change": "the-change",
+        },
+    )
+    send_result = otaman_send.fn(
+        cwd=str(integration_workspace["plugin"]),
+        to="all",
+        subject="Tasks complete: the-change",
+        body="done",
+        msg_type="task-complete",
+        change="the-change",
+    )
+    assert send_result["auto_tombstoned"][0]["agent"] == "cli-agent"
+    assert send_result["auto_tombstoned"][0]["reason"] == "task-completed"
+    text = other_blocked.read_text()
+    assert "— task-completed -->" in text
+
+
+def test_otaman_complete_stamps_change_so_cross_agent_sweep_fires(
+    integration_workspace, monkeypatch
+):
+    """The real defect this closes: ``otaman_complete`` called ``otaman_send``
+    with ``msg_type="task-complete"`` but never passed ``change=``, so the
+    dispatch table's dependency-wait branch (``elif msg_type in (...) and
+    change:``) could never fire no matter how correct its own logic was.
+    Mocks ``subprocess.run`` (the ``actualize_tasks`` call) so this doesn't
+    need a real specs-repo tasks.md — only the bus side effect is under
+    test here."""
+    import subprocess as _subprocess
+
+    monkeypatch.setattr(
+        _subprocess,
+        "run",
+        lambda *a, **k: _subprocess.CompletedProcess(
+            args=a, returncode=0, stdout='{"updated": 3}', stderr=""
+        ),
+    )
+
+    other_blocked = integration_workspace["otaman"] / ".agents" / "blocked" / "cli-agent.md"
+    _write_blocked(
+        other_blocked,
+        {
+            "title": "waiting on release-notes-fragments",
+            "stem": "20260101T000000-cli-agent-to-human-spec-change-request",
+            "change": "release-notes-fragments",
+        },
+    )
+
+    result = otaman_complete.fn(
+        cwd=str(integration_workspace["plugin"]),
+        change_name="release-notes-fragments",
+        mark_all=True,
+    )
+    assert result["bus_message"]["sent"] is True
+    assert result["bus_message"]["auto_tombstoned"][0]["agent"] == "cli-agent"
+    assert other_blocked.read_text().count("— task-completed -->") == 1
+
+
+# ---------------------------------------------------------------------------
+# sweep_archived_blocked / archived_change_names — blocked-entry-lifecycle
+# 1.2's archive backstop
+# ---------------------------------------------------------------------------
+
+
+class TestSweepArchivedBlocked:
+    def test_sweeps_matching_change_regardless_of_kind(self, project):
+        _write_blocked(
+            project / ".agents" / "blocked" / "plugin-agent.md",
+            {"title": "old work", "stem": "x", "change": "long-gone-change"},
+        )
+        result = sweep_archived_blocked(project, {"long-gone-change"})
+        assert len(result) == 1
+        assert result[0]["reason"] == "change archived"
+        text = (project / ".agents" / "blocked" / "plugin-agent.md").read_text()
+        assert "— change archived -->" in text
+
+    def test_empty_archived_set_is_a_noop(self, project):
+        _write_blocked(
+            project / ".agents" / "blocked" / "plugin-agent.md",
+            {"title": "t", "stem": "x", "change": "c"},
+        )
+        assert sweep_archived_blocked(project, set()) == []
+
+    def test_non_matching_change_left_alone(self, project):
+        path = project / ".agents" / "blocked" / "plugin-agent.md"
+        _write_blocked(path, {"title": "t", "stem": "x", "change": "still-active"})
+        before = path.read_text()
+        assert sweep_archived_blocked(project, {"some-other-change"}) == []
+        assert path.read_text() == before
+
+
+class TestArchivedChangeNames:
+    def test_reads_archive_dir_from_platform_yaml(self, tmp_path):
+        root = tmp_path / "otaman-root"
+        root.mkdir()
+        (root / "platform.yaml").write_text("specs:\n  path: ../otaman-specs\n", encoding="utf-8")
+        archive = tmp_path / "otaman-specs" / "openspec" / "changes" / "archive"
+        (archive / "old-change-1").mkdir(parents=True)
+        (archive / "old-change-2").mkdir(parents=True)
+        assert archived_change_names(root) == {"old-change-1", "old-change-2"}
+
+    def test_no_platform_yaml_returns_empty(self, tmp_path):
+        root = tmp_path / "otaman-root"
+        root.mkdir()
+        assert archived_change_names(root) == set()
+
+    def test_specs_path_missing_on_disk_returns_empty(self, tmp_path):
+        root = tmp_path / "otaman-root"
+        root.mkdir()
+        (root / "platform.yaml").write_text("specs:\n  path: ../nonexistent\n", encoding="utf-8")
+        assert archived_change_names(root) == set()
+
+    def test_no_archive_dir_returns_empty(self, tmp_path):
+        root = tmp_path / "otaman-root"
+        root.mkdir()
+        (root / "platform.yaml").write_text("specs:\n  path: ../otaman-specs\n", encoding="utf-8")
+        (tmp_path / "otaman-specs").mkdir()
+        assert archived_change_names(root) == set()
