@@ -636,6 +636,19 @@ def _render_git_policy_section(
         convention = rules.get("branch_owner_convention")
         if convention:
             lines.append(f"- Branches follow the `{convention}` naming convention.")
+        if rules.get("require_changelog_fragment"):
+            frag = rules.get("changelog_fragment") or {}
+            frag_dir = frag.get("dir", "changelog.d")
+            frag_filename = frag.get("filename", "<pr>.<category>.md")
+            categories = frag.get("categories") or []
+            cats = "/".join(categories) if categories else "feature/fix/doc/removal/misc"
+            marker = frag.get("exemption_marker", "changelog: exempt")
+            lines.append(
+                f"- **Every shipped-code PR needs a changelog fragment**: "
+                f"`{frag_dir}/{frag_filename}` (category one of `{cats}`), human-written, "
+                f"customer-facing. CI blocks the merge without one. Docs/CI-only PRs are "
+                f'exempt by putting `"{marker}"` in the PR body.'
+            )
 
         if len(lines) == 1:
             return ""  # pack registered but no rules actually asserted
@@ -1848,6 +1861,71 @@ def install_codeowners_files(project_root: Path, config: dict[str, Any]) -> list
     return results
 
 
+def install_changelog_fragment_scaffold(project_root: Path, config: dict[str, Any]) -> list[str]:
+    """release-notes-fragments 1.4: materialize the ``changelog.d/`` directory
+    + a convention README for each repo whose EFFECTIVE git policy sets
+    ``require_changelog_fragment`` — reads the schema (dir/filename/
+    categories/exemption_marker) from the effective policy rather than
+    hardcoding it, mirroring ``install_codeowners_files``.
+
+    Never overwrites an existing ``changelog.d/README.md`` (D1
+    generate-and-diff); the directory itself gets a ``.gitkeep`` only if
+    empty, so real fragment files already present are left alone. Skipped
+    (no-op) for a repo whose effective policy doesn't set the rule, or
+    when ``otaman_core.policy`` is absent/older (same degrade convention
+    as this file's other optional-core-feature installers).
+    """
+    results: list[str] = []
+    try:
+        from otaman_core.policy import effective_policy
+    except Exception:
+        return results
+
+    for repo in config.get("repos", []):
+        try:
+            repo_dir = (project_root / repo["path"]).resolve()
+            if not repo_dir.is_dir():
+                continue
+
+            effective, _violations = effective_policy(
+                project_root, config, "git", repo=repo["name"]
+            )
+            rules = effective.rules
+            if not rules.get("require_changelog_fragment"):
+                continue
+
+            frag = rules.get("changelog_fragment") or {}
+            frag_dir = frag.get("dir", "changelog.d")
+            frag_filename = frag.get("filename", "<pr>.<category>.md")
+            categories = frag.get("categories") or ["feature", "fix", "doc", "removal", "misc"]
+            marker = frag.get("exemption_marker", "changelog: exempt")
+
+            changelog_dir = repo_dir / frag_dir
+            readme_path = changelog_dir / "README.md"
+            if readme_path.exists():
+                continue
+
+            changelog_dir.mkdir(parents=True, exist_ok=True)
+            content = (
+                f"# Changelog fragments\n\n"
+                f"Every PR touching shipped code carries one fragment here, named\n"
+                f"`{frag_filename}` (e.g. `142.feature.md`), category one of:\n"
+                f"{', '.join(f'`{c}`' for c in categories)}.\n\n"
+                f"Write it human, customer-facing — this is release-notes source\n"
+                f"material, not a commit-message dump. At release-cut, the\n"
+                f"accumulated fragments (and only the fragments) are assembled into\n"
+                f"the published notes; nothing from commit history, PR bodies, or\n"
+                f"source strings leaks in.\n\n"
+                f'Docs/CI-only PRs are exempt: put `"{marker}"` in the PR body\n'
+                f"instead of adding a fragment.\n"
+            )
+            readme_path.write_text(content, encoding="utf-8")
+            results.append(f"Created: {repo['name']}/{frag_dir}/README.md")
+        except Exception:
+            continue
+    return results
+
+
 _JOBS_INDENT_RE = re.compile(r"^jobs:[ \t]*$\n(?:[ \t]*\n)*([ \t]+)\S", re.MULTILINE)
 
 _CI_OK_JOB_TEMPLATE = """
@@ -2202,6 +2280,12 @@ def main() -> int:
     # Materialize missing per-repo CODEOWNERS (never overwrites)
     codeowners_results = install_codeowners_files(project_root, config)
     for r in codeowners_results:
+        print(r)
+
+    # Materialize changelog.d/ + convention README where the effective git
+    # policy requires a changelog fragment (never overwrites)
+    changelog_fragment_results = install_changelog_fragment_scaffold(project_root, config)
+    for r in changelog_fragment_results:
         print(r)
 
     # Append a ci-ok aggregator job to a single-workflow repo's existing
