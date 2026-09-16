@@ -233,4 +233,29 @@ if echo "$CHANGED_FILES" | grep -qiE 'tasks\.md$'; then
     fi
 fi
 
+# Archive backstop (blocked-entry-lifecycle 1.2): a change moving into
+# openspec/changes/archive/ sweeps any live blocked entry — either Kind —
+# whose **Change**: field names it, across EVERY agent's blocked file. The
+# safety net for the case where the terminating spec-change-approved /
+# task-complete message was never delivered yet the change shipped anyway.
+# This is itself a write path that bypasses `otaman_send`/MCP (a raw git
+# post-commit hook, same class of producer as `otaman approve`), so it
+# calls the same shared tombstone matcher directly rather than duplicating
+# it. Never allowed to fail the hook: any error is swallowed.
+if echo "$CHANGED_FILES" | grep -qE '^openspec/changes/archive/'; then
+    SWEEP_PYTHON="$(resolve_otaman_python 2>/dev/null)" || SWEEP_PYTHON=""
+    if [[ -n "$SWEEP_PYTHON" ]]; then
+        "$SWEEP_PYTHON" -c '
+import sys
+from pathlib import Path
+try:
+    from otaman_plugin.servers.bus_server import archived_change_names, sweep_archived_blocked
+    root = Path(sys.argv[1])
+    sweep_archived_blocked(root, archived_change_names(root))
+except Exception:
+    pass
+' "$PROJECT_ROOT" >/dev/null 2>&1 || true
+    fi
+fi
+
 exit 0
