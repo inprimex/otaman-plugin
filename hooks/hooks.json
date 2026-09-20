@@ -38,6 +38,16 @@
         ]
       },
       {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-heartbeat.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Bash|Write|Edit|NotebookEdit",
         "hooks": [
           {
@@ -73,6 +83,11 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/user-activity.sh",
             "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-heartbeat.sh",
+            "timeout": 5
           }
         ]
       }
