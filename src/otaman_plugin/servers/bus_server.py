@@ -669,6 +669,46 @@ _TOMBSTONE_REASONS: dict[str, str] = {
 }
 
 
+def _scr_template():
+    """otaman-core's shared SCR template module, or None on a laggard bundle.
+
+    generated-artifact-quality 1.2: ONE template source, consumed by both
+    transports. It lives in otaman-core (PR #63) rather than otaman-cli
+    because otaman-cli declares otaman-plugin as a runtime dependency — a
+    plugin->cli import is circular, and a tenant install (wheel +
+    otaman-core, see tests/test_wheel_smoke.py) has no otaman_cli at all.
+    Note this repo's pytest `pythonpath` DOES include ../otaman-cli/src, so
+    that mistake would pass the whole suite and CI and only fail on real
+    installs; the import direction here is load-bearing, not stylistic.
+
+    Attribute-probed, not just import-guarded: the plugin and its bundled
+    otaman-core version independently, so a released bundle can carry a core
+    that predates this module. A laggard bundle degrades to "no refusal"
+    rather than ImportError-ing a bus write — losing a quality gate is
+    recoverable, losing the ability to send is not.
+    """
+    try:
+        from otaman_core import scr_template
+    except Exception:
+        return None
+    required = ("render", "validate", "is_hollow", "SECTIONS")
+    if not all(hasattr(scr_template, name) for name in required):
+        return None
+    return scr_template
+
+
+#: Legacy ``otaman_propose`` params -> decision-grade section keys. The three
+#: old free-text args predate the seven-section template; mapping them keeps
+#: what a caller already typed instead of dropping it, exactly as cli maps its
+#: legacy ``-d`` onto ``problem``. Callers still get refused for the sections
+#: nobody filled — which is the point: the refusal names what to type.
+_LEGACY_SCR_PARAM_SECTIONS = {
+    "why_needed": "problem",
+    "what_needs_to_change": "direction",
+    "affected_repos": "routing",
+}
+
+
 def _extract_proposal_stems(body: str) -> list[str]:
     """Find proposal-stem references in a message body.
 
@@ -1023,6 +1063,33 @@ def otaman_send(
                 "`otaman send --type emergency-halt` (human-confirmed) instead."
             )
         }
+
+    # generated-artifact-quality 1.2, SECOND ENTRANCE. The refusal belongs on
+    # the propose path, but this tool writes an arbitrary body with
+    # msg_type='spec-change-request' and sailed straight past it — a
+    # TODO-bodied SCR landed on the bus with no complaint. cli had the
+    # identical hole on their `otaman send`; closing one door per transport
+    # is how the two diverged in the first place, so both close here.
+    #
+    # Deliberately NARROWER than the propose-path check: is_hollow() passes a
+    # LEGACY-shaped body carrying real content. Every SCR filed before this
+    # template used the old five headings, and refusing those at a shared bus
+    # door would break senders over a format change rather than over
+    # hollowness. What is refused is a body that answers nothing.
+    if msg_type == "spec-change-request":
+        scr = _scr_template()
+        if scr is not None:
+            hollow, why = scr.is_hollow(body or "")
+            if hollow:
+                return {
+                    "error": f"Refusing to send a hollow spec-change-request — {why}.",
+                    "detail": "An SCR is a decision request, not a research assignment.",
+                    "sections": {s.key: s.heading for s in scr.SECTIONS},
+                    "hint": (
+                        "Answer each section, or write 'n/a because <reason>'. "
+                        "Or use otaman_propose, which builds the template for you."
+                    ),
+                }
 
     agent = _get_agent_identity(root, cwd)
     if not agent:
@@ -1485,6 +1552,14 @@ def otaman_complete(
 def otaman_propose(
     cwd: str,
     title: str,
+    problem: str = "",
+    evidence: str = "",
+    impact: str = "",
+    direction: str = "",
+    scope: str = "",
+    routing: str = "",
+    workaround: str = "",
+    evidence_level: str = "",
     what_needs_to_change: str = "",
     why_needed: str = "",
     affected_repos: str = "",
@@ -1495,12 +1570,27 @@ def otaman_propose(
     needed during implementation. After proposing, STOP working on the blocked
     feature and switch to other tasks.
 
+    Every section below is answerable from what you already know at the moment
+    you hit the problem. A section that genuinely does not apply takes
+    ``n/a because <reason>`` — the refusal never forces invention, it only
+    forbids silence. An SCR left with TODO sections is REFUSED (45% of SCRs
+    ever filed carried them; one approved with three of four reading TODO
+    produced two day-one implementation blockers).
+
     Args:
         cwd: Current working directory
         title: Short title for the proposed change (e.g., "add pagination to /users")
-        what_needs_to_change: Description of the proposed spec change
-        why_needed: What was discovered during implementation that triggered this
-        affected_repos: Which repos will need changes after spec updates
+        problem: Problem as observed — what actually happened, not the fix
+        evidence: Evidence — what you ran/read/measured that shows it is real
+        impact: Impact — who or what is affected, and how badly
+        direction: Proposed direction — the change you are asking for
+        scope: Scope boundary — explicitly what this does NOT cover
+        routing: Routing — which repos/agents implement it
+        workaround: Workaround in use — what you are doing meanwhile
+        evidence_level: One of measured | reproduced | observed-once | inferred
+        what_needs_to_change: DEPRECATED alias, mapped to `direction`
+        why_needed: DEPRECATED alias, mapped to `problem`
+        affected_repos: DEPRECATED alias, mapped to `routing`
     """
     root = _find_project_root(cwd)
     if not root:
@@ -1522,6 +1612,59 @@ def otaman_propose(
     bus.mkdir(parents=True, exist_ok=True)
     _acks_dir(root).mkdir(parents=True, exist_ok=True)
 
+    # ONE template, shared with cli's `otaman propose` (1.1/1.2) — this path
+    # used to hand-roll three old headings AND emit literal "TODO:" text,
+    # i.e. it manufactured exactly the TODO theater the standard refuses.
+    # Both transports must produce byte-identical section structure, so the
+    # body is rendered by otaman-core rather than formatted here.
+    scr = _scr_template()
+    sections = {
+        "problem": problem,
+        "evidence": evidence,
+        "impact": impact,
+        "direction": direction,
+        "scope": scope,
+        "routing": routing,
+        "workaround": workaround,
+    }
+    # Legacy args fill their mapped section only when the caller did not use
+    # the explicit one — never silently overwrite a real answer with an alias.
+    legacy_values = {
+        "what_needs_to_change": what_needs_to_change,
+        "why_needed": why_needed,
+        "affected_repos": affected_repos,
+    }
+    for legacy_name, section_key in _LEGACY_SCR_PARAM_SECTIONS.items():
+        value = legacy_values.get(legacy_name, "")
+        if value and not sections.get(section_key):
+            sections[section_key] = value
+    sections = {k: v for k, v in sections.items() if v}
+    level = evidence_level.strip() or None
+
+    if scr is None:
+        # Laggard bundle: no shared template available. Degrade to a minimal
+        # body rather than refusing the write — see _scr_template().
+        body = f"## Subject: Spec change request: {title}\n\n" + "\n\n".join(
+            f"### {key.replace('_', ' ').title()}\n{value}" for key, value in sections.items()
+        )
+    else:
+        body = scr.render(title, sections=sections, evidence_level=level)
+        ok, errors = scr.validate(body, evidence_level=level)
+        if not ok:
+            # Refuse, and NAME the sections — "your SCR is incomplete" sends
+            # the author back to the template; "Evidence, Impact are still
+            # TODO" tells them what to type.
+            return {
+                "error": "Refusing to propose — this SCR is not decision-grade yet.",
+                "errors": errors,
+                "sections": {s.key: s.heading for s in scr.SECTIONS},
+                "hint": (
+                    "Fill each section, or write 'n/a because <reason>'. "
+                    "Optional evidence_level: measured | reproduced | "
+                    "observed-once | inferred"
+                ),
+            }
+
     content = f"""---
 id: {msg_id}
 from: {agent}
@@ -1532,17 +1675,7 @@ timestamp: {now_iso}
 status: pending
 ---
 
-## Subject: Spec change request: {title}
-
-### What needs to change
-{what_needs_to_change or "TODO: Describe the proposed spec change."}
-
-### Why this is needed
-{why_needed or "TODO: What was discovered during implementation that triggered this."}
-
-### Affected repos
-{affected_repos or "TODO: Which repos will need implementation changes."}
-"""
+{body}"""
 
     filepath = bus / filename
     filepath.write_text(content, encoding="utf-8")

@@ -40,6 +40,22 @@ _BLOCKED_ENTRY_TEMPLATE = """
 """
 
 
+# generated-artifact-quality 1.2: otaman_propose now REFUSES an SCR with
+# unfilled sections, so these lifecycle tests must file a decision-grade one.
+# The content is deliberately minimal-but-real — `n/a because <reason>` is the
+# supported way to say a section does not apply, and exercising it here keeps
+# these tests honest about the escape hatch the refusal depends on.
+_SCR_SECTIONS = {
+    "problem": "The thing is broken.",
+    "evidence": "Observed once in a local run.",
+    "impact": "Blocks this test's lifecycle.",
+    "direction": "Add the thing.",
+    "scope": "n/a because this is a fixture.",
+    "routing": "otaman-plugin",
+    "workaround": "n/a because none is needed for a fixture.",
+}
+
+
 def _write_blocked(path: Path, *entries: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(_BLOCKED_ENTRY_TEMPLATE.format(**e) for e in entries)
@@ -269,8 +285,7 @@ def test_full_propose_approve_tombstone_lifecycle(integration_workspace):
     propose_result = otaman_propose.fn(
         cwd=str(integration_workspace["plugin"]),
         title="my new feature",
-        what_needs_to_change="add the thing",
-        why_needed="because",
+        **_SCR_SECTIONS,
     )
     assert propose_result["proposed"] is True
     proposal_stem = propose_result["message"]
@@ -305,8 +320,7 @@ def test_otaman_send_refuses_privileged_approval(integration_workspace):
     otaman_propose.fn(
         cwd=str(integration_workspace["plugin"]),
         title="self-approval attempt",
-        what_needs_to_change=".",
-        why_needed=".",
+        **_SCR_SECTIONS,
     )
     send_result = otaman_send.fn(
         cwd=str(integration_workspace["human"]),
@@ -327,8 +341,7 @@ def test_task_assignment_uses_change_field(integration_workspace):
     otaman_propose.fn(
         cwd=str(integration_workspace["plugin"]),
         title="another feature",
-        what_needs_to_change=".",
-        why_needed=".",
+        **_SCR_SECTIONS,
     )
     blocked_file = integration_workspace["otaman"] / ".agents" / "blocked" / "plugin-agent.md"
     assert "## Blocked: another feature" in blocked_file.read_text()
