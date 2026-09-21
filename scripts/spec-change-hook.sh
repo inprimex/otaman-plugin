@@ -30,6 +30,22 @@ fi
 # Allow legacy OTAMAN_PROJECT_ROOT env var
 [[ -n "${OTAMAN_PROJECT_ROOT:-}" ]] && export OTAMAN_ROOT="${OTAMAN_PROJECT_ROOT}"
 
+# Say something when the hook cannot load its own dependency. deploy-agent's
+# point (20260921T184535): three silences were stacked on this path — the
+# git-hook shim's `|| true`, this `|| exit 0`, and the annotation loop skipping
+# unmatched repos — and together they made a completely DEAD hook
+# indistinguishable from a quiet one. Each is individually defensible; the
+# combination is what cost haulops a working dispatch path unnoticed.
+#
+# Distinguish "I could not load _resolve.sh" (a broken install — say so) from
+# "no otaman root here" (normal for an unmanaged repo — stay quiet).
+if ! declare -F find_maestro_root >/dev/null 2>&1; then
+    echo "[spec-change-hook] cannot load scripts/_resolve.sh — this install is" \
+         "incomplete and the hook is inert. Task dispatch will NOT happen;" \
+         "use \`otaman notify-change\` after spec commits until it is fixed." >&2
+    exit 0
+fi
+
 PROJECT_ROOT="$(find_maestro_root 2>/dev/null)" || exit 0
 
 BUS_ACTIVE="$PROJECT_ROOT/.agents/bus/active"
@@ -114,14 +130,33 @@ if [[ -n "$_SPEC_CHANGE_DIRS" ]]; then
                 _any_annotations="true"
                 while IFS= read -r _ann; do
                     [[ -z "$_ann" ]] && continue
-                    _repo="${_ann#@}"  # strip @, giving "otaman-<repo>"
+                    # Try the annotation AS-IS, then prefix-stripped — the
+                    # same two-step otaman-cli's notify_change._lookup_owners
+                    # does, so both naming conventions resolve.
+                    #
+                    # This used to look up only "otaman-<suffix>", which
+                    # happens to work on this fleet by coincidence of naming
+                    # (@otaman-cli -> otaman-cli) and never matches for a
+                    # program whose repos are not otaman-prefixed: haulops'
+                    # @otaman-haulops-firmware looked up
+                    # "otaman-haulops-firmware" against a repo actually named
+                    # "haulops-firmware", missed, and fell back to
+                    # "spec-agent, human" without a word. `repos[].name` has
+                    # no documented prefix constraint. Verified against
+                    # haulops' real platform.yaml (deploy-agent 20260921T184535).
+                    _repo="${_ann#@}"          # "otaman-<suffix>" as written
+                    _repo_alt="${_repo#otaman-}"  # "<suffix>" for unprefixed programs
                     _owner=""
                     if [[ -f "$PLATFORM_YAML" ]]; then
-                        _owner="$(awk -v r="$_repo" '
-                            $0 ~ ("name: +" r "$") { found=1; next }
-                            found && /owner:/ { sub(/.*owner:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit }
-                            found && /^[^[:space:]]/ { exit }
-                        ' "$PLATFORM_YAML" 2>/dev/null | head -1 || true)"
+                        for _candidate in "$_repo" "$_repo_alt"; do
+                            [[ -z "$_candidate" ]] && continue
+                            _owner="$(awk -v r="$_candidate" '
+                                $0 ~ ("name: +" r "$") { found=1; next }
+                                found && /owner:/ { sub(/.*owner:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print; exit }
+                                found && /^[^[:space:]]/ { exit }
+                            ' "$PLATFORM_YAML" 2>/dev/null | head -1 || true)"
+                            [[ -n "$_owner" ]] && break
+                        done
                     fi
                     if [[ -n "$_owner" ]] && ! echo "$_agents_found" | grep -qxF "$_owner" 2>/dev/null; then
                         _agents_found="${_agents_found}${_owner}"$'\n'

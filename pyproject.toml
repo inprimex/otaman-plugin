@@ -34,10 +34,24 @@ packages = ["src/otaman_plugin"]
 # not found" because Path(__file__).parent.parent.parent / "scripts" resolves
 # to a directory that doesn't exist in installed mode.
 # See `_find_plugin_script()` in src/otaman_plugin/generate_agent_config.py.
+# A shipped hook's TRANSITIVE dependencies must ship too. Shipping the three
+# entry points but not `_resolve.sh` made every one of them inert in a wheel
+# install: each sources it at line ~20, `find_maestro_root` was therefore never
+# defined, and `PROJECT_ROOT="$(find_maestro_root)" || exit 0` took the exit —
+# silently, with status 0. Verified on haulops by deploy-agent
+# (20260921T184535); the vendored tree has 20 files, the wheel shipped 3.
+#
+# Closure audited rather than guessed (grep for sourced/exec'd paths across
+# scripts/*.sh): spec-change-hook -> _resolve.sh + map-tasks.py;
+# post-commit-hook -> _resolve.sh; check-branch -> _resolve.sh; and
+# _resolve.sh itself sources nothing. `tests/test_wheel_smoke.py` now asserts
+# this closure so a new `source` line cannot silently reintroduce the gap.
 [tool.hatch.build.targets.wheel.force-include]
 "scripts/spec-change-hook.sh" = "src/otaman_plugin/scripts/spec-change-hook.sh"
 "scripts/post-commit-hook.sh" = "src/otaman_plugin/scripts/post-commit-hook.sh"
 "scripts/check-branch.sh"    = "src/otaman_plugin/scripts/check-branch.sh"
+"scripts/_resolve.sh"        = "src/otaman_plugin/scripts/_resolve.sh"
+"scripts/map-tasks.py"       = "src/otaman_plugin/scripts/map-tasks.py"
 "servers/run-server.sh"      = "src/otaman_plugin/servers/run-server.sh"
 
 [tool.pytest.ini_options]
