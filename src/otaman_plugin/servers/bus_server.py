@@ -574,32 +574,59 @@ def otaman_check(
     )
     cc_messages.sort(key=lambda m: priority_order.get(m["priority"], 2))
 
-    # Check blocked tasks
+    # Check blocked tasks (shared-logic-single-home 1.1, conformance half).
+    #
+    # This surface had its OWN inline regex that REQUIRED `- **Proposal**:`,
+    # so an awaiting-dependency entry — keyed by `**Change**:`, with no
+    # proposal at all — was SILENTLY DROPPED from the agent's own blocked
+    # list over MCP while the CLI showed it. Verified on a two-entry fixture
+    # before the fix: cli's parser saw both, otaman_check reported one. Same
+    # class as the defect blocked-entry-lifecycle killed, except silently
+    # incomplete rather than stale.
+    #
+    # It was also a FIFTH parse site in this file (the four terminator
+    # regexes above being the others) — my own survey counted four and
+    # missed this one, which is the argument for one parser rather than a
+    # carefully-maintained set.
     blocked: list[dict[str, str]] = []
     blocked_file = root / ".agents" / "blocked" / f"{agent}.md"
     if blocked_file.exists():
         text = blocked_file.read_text(encoding="utf-8")
-        for block_match in re.finditer(
-            r"## Blocked: (.+?)\n.*?- \*\*Proposal\*\*: (.+?)\n.*?- \*\*Blocked since\*\*: (.+?)\n",
-            text,
-            re.DOTALL,
-        ):
-            task_name, proposal, since = block_match.groups()
-            # Cross-reference with messages
+        parser = _blocked_entries()
+        if parser is None:
+            # Laggard bundle: keep the pre-fix regex rather than reporting
+            # nothing. Losing the dependency-entry fix is recoverable;
+            # hiding EVERY block would be strictly worse than the defect.
+            entries = _legacy_blocked_entries(text)
+        else:
+            entries = [
+                {
+                    # display_title yields `[malformed]` for an entry that hit
+                    # the detection floor but not the well-formed shape, so the
+                    # same flag shows on CLI, console and MCP — never a blank
+                    # line one surface quietly drops (spec-agent's ruling:
+                    # "never silently invisible in one transport").
+                    "task": e.display_title,
+                    "proposal": e.proposal,
+                    "change": e.change,
+                    "ref": e.ref,
+                    "kind": e.kind,
+                    "blocked_since": e.get("blocked since"),
+                }
+                for e in parser.parse_entries(text)
+            ]
+
+        for entry in entries:
+            # Cross-reference with messages by the entry's STABLE REF, not by
+            # proposal alone — a dependency entry's ref is its change slug.
+            ref = entry.get("ref") or entry.get("proposal") or ""
             status_note = "waiting for approval"
             for msg in messages:
-                if msg["type"] == "spec-change-approved" and proposal in msg.get("stem", ""):
+                if msg["type"] == "spec-change-approved" and ref and ref in msg.get("stem", ""):
                     status_note = "approved — waiting for spec commit"
                 if msg["type"] == "spec-change" and msg["status"] == "pending":
                     status_note = "READY TO RESUME — specs updated"
-            blocked.append(
-                {
-                    "task": task_name.strip(),
-                    "proposal": proposal.strip(),
-                    "blocked_since": since.strip(),
-                    "status_note": status_note,
-                }
-            )
+            blocked.append({**entry, "status_note": status_note})
 
     # Counts cover primary messages only — keeps the existing semantics
     # stable for legacy consumers. CC copies are informational; consumers
@@ -667,6 +694,56 @@ _TOMBSTONE_REASONS: dict[str, str] = {
     "task-assignment": "task-assigned",
     "task-complete": "task-completed",
 }
+
+
+def _blocked_entries():
+    """otaman-core's shared blocked-entry parser, or None on a laggard bundle.
+
+    shared-logic-single-home 1.1: ONE parser for a format that both
+    transports read AND write. cli's five ad-hoc regexes were consolidated
+    into their `blocked_entries.py`, then absorbed into otaman-core (#64) so
+    plugin can consume it too — plugin cannot import otaman_cli, which
+    declares otaman-plugin as a runtime dependency.
+
+    Attribute-probed for the same release-lag reason as `_scr_template()`:
+    plugin and its bundled core version move independently.
+    """
+    try:
+        from otaman_core import blocked_entries
+    except Exception:
+        return None
+    if not all(hasattr(blocked_entries, n) for n in ("parse_entries", "MALFORMED_TITLE")):
+        return None
+    return blocked_entries
+
+
+def _legacy_blocked_entries(text: str) -> list[dict[str, str]]:
+    """Pre-fix blocked-entry read, retained ONLY for a core too old to carry
+    `blocked_entries`.
+
+    Knowingly carries the defect it replaced: it requires `**Proposal**:` and
+    so omits awaiting-dependency entries. Kept because the alternative on a
+    laggard bundle is reporting no blocks at all, which is worse than
+    reporting some. Delete once the bundle floor guarantees core #64.
+    """
+    out: list[dict[str, str]] = []
+    for m in re.finditer(
+        r"## Blocked: (.+?)\n.*?- \*\*Proposal\*\*: (.+?)\n.*?- \*\*Blocked since\*\*: (.+?)\n",
+        text,
+        re.DOTALL,
+    ):
+        task_name, proposal, since = m.groups()
+        out.append(
+            {
+                "task": task_name.strip(),
+                "proposal": proposal.strip(),
+                "change": "",
+                "ref": proposal.strip(),
+                "kind": "",
+                "blocked_since": since.strip(),
+            }
+        )
+    return out
 
 
 def _scr_template():
