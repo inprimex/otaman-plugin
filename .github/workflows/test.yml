@@ -112,6 +112,65 @@ jobs:
         working-directory: workspace/otaman-plugin
         run: uv run pytest tests/ -v
 
+  # Changelog-fragment gate (release-notes-sibling-coverage 2.5). Every
+  # shipped-code PR carries a customer-facing fragment, or the release notes
+  # silently understate the release.
+  #
+  # CORE-INVOKABLE — `python -m otaman_core.changelog_fragment --check`, the
+  # one identical entry point every sibling wires (1.3), NOT a repo-local
+  # script and NOT cli's `otaman policy check-changelog` (same logic, human
+  # surface). Deliberately not copied verbatim from core's #69: this repo's
+  # CI is a uv WORKSPACE (plugin + sibling checkouts), so core is installed
+  # from its own checkout rather than by a bare `uv sync` here.
+  changelog:
+    name: changelog-fragment
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout otaman-plugin
+        uses: actions/checkout@v7
+        with:
+          path: otaman-plugin
+          fetch-depth: 0  # full history so the base...HEAD merge-base diff resolves
+
+      - name: Checkout otaman-core (hosts the gate)
+        uses: actions/checkout@v7
+        with:
+          repository: inprimex/otaman-core
+          path: otaman-core
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install otaman-core
+        run: uv pip install --system ./otaman-core
+
+      - name: Fetch base ref
+        working-directory: otaman-plugin
+        run: git fetch --no-tags origin "${{ github.base_ref }}"
+
+      - name: Write PR body
+        env:
+          # Via env, never interpolated into the shell — a PR body is
+          # attacker-controlled text and must not reach a command line.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > "${RUNNER_TEMP}/pr_body.txt"
+
+      - name: Changelog fragment gate
+        working-directory: otaman-plugin
+        run: |
+          python -m otaman_core.changelog_fragment --check \
+            --base "origin/${{ github.base_ref }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --pr-body-file "${RUNNER_TEMP}/pr_body.txt"
+
   # Single stable status check for branch protection. `lint` and `test`
   # (the latter a 3-OS matrix) expand into several context names that are
   # brittle to require individually; require `ci-ok` instead. `if: always()`
@@ -119,15 +178,25 @@ jobs:
   # ci-ok FAIL (not skip) — a skipped required check would otherwise let a
   # broken PR through.
   ci-ok:
-    needs: [lint, test]
+    needs: [lint, test, changelog]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Verify required jobs passed
         run: |
-          echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }}"
+          echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} changelog=${{ needs.changelog.result }}"
           if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ]; then
             echo "::error::A required job did not succeed."
+            exit 1
+          fi
+          # `changelog` is PR-only by design, so on a push to main it is
+          # SKIPPED — and this job's whole point is that a skipped dependency
+          # must not silently pass. So skipped is accepted for THIS job only,
+          # and only because its `if:` makes the skip deterministic rather
+          # than a sign something went wrong. Any other result must succeed.
+          if [ "${{ needs.changelog.result }}" != "success" ] \
+             && [ "${{ needs.changelog.result }}" != "skipped" ]; then
+            echo "::error::changelog-fragment gate did not pass."
             exit 1
           fi
           echo "All required jobs passed."
