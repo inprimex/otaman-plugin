@@ -26,11 +26,28 @@ import yaml
 
 from otaman_plugin.servers.bus_server import (
     _compute_effective_cc,
-    _parse_cc_field,
-    _parse_frontmatter,
+    _frontmatter,
     evaluate_routing_rules,
     otaman_send,
 )
+
+
+def _cc_of(text: str) -> list[str]:
+    """CC recipients of a written message, via the SHARED parser.
+
+    `_parse_cc_field` was plugin's bespoke recovery of list semantics YAML
+    already has; it is deleted (shared-logic-single-home 1.2). Its five pure
+    unit tests are retired rather than ported: otaman-core's
+    tests/test_frontmatter.py covers strictly more of the same shapes —
+    inline, block, quoted, scalar-to-single-item, blank, blank-entry
+    dropping, plus x-cc as a bool AND as a legacy string. Verified those
+    exist before deleting, rather than on the strength of the claim.
+    """
+    from otaman_core.frontmatter import cc_recipients, parse
+
+    fm, _ = parse(text)
+    return cc_recipients(fm)
+
 
 # ---------------------------------------------------------------------------
 # Task 1.2 (a)-(d) — pure evaluator tests, no filesystem
@@ -152,7 +169,7 @@ def workspace(tmp_path, monkeypatch):
 
 
 def _read_msg(path: Path) -> dict[str, str]:
-    return _parse_frontmatter(path.read_text(encoding="utf-8"))
+    return _frontmatter(path.read_text(encoding="utf-8"))
 
 
 class TestTypeRuleFanOut:
@@ -183,14 +200,14 @@ class TestTypeRuleFanOut:
         assert primary_fm["type"] == "outcome-proposal"
         assert primary_fm.get("x-cc", "") != "true"
         # Primary carries the cc list so the recipient sees who else got copies
-        primary_cc = _parse_cc_field(primary.read_text(encoding="utf-8"))
+        primary_cc = _cc_of(primary.read_text(encoding="utf-8"))
         assert set(primary_cc) == {"cofounder-agent", "cpo-agent", "spec-agent"}
 
         for cc_file in (cc_cofounder, cc_cpo, cc_spec):
             fm = _read_msg(cc_file)
             assert fm["to"] == "human"
             assert fm["type"] == "outcome-proposal"
-            assert fm["x-cc"] == "true"
+            assert fm["x-cc"] is True
 
     def test_f_no_cc_duplication_when_multiple_rules_fire(self, workspace):
         # Two distinct rules both naming the same agent must produce exactly
