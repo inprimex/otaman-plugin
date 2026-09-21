@@ -19,6 +19,8 @@ subprocess to verify the CLI shape, not just the importable functions.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -66,13 +68,36 @@ def _write_tasks_md(project: Path, change_name: str, body: str) -> Path:
     return tasks
 
 
+def _report(r: subprocess.CompletedProcess) -> dict:
+    """The surviving implementation emits a JSON report on stdout.
+
+    `scripts/map-tasks.py` is now a shim over `otaman_plugin.map_tasks`
+    (the module `otaman notify-change` already used). Consolidating onto one
+    implementation means its contract wins: a machine-readable report instead
+    of `notified <agent>: N task(s)` lines, and NON-ZERO exits on real errors
+    instead of the old "return 0 on every failure path", which deploy-agent
+    identified as the load-bearing cause of the silent dispatch outage
+    (20260921T152252).
+    """
+    return json.loads(r.stdout)
+
+
 def _run(tasks_md: Path) -> subprocess.CompletedProcess:
+    # bus-test-isolation 4.2 footgun, in its subprocess form: the autouse
+    # isolate_bus fixture PINS OTAMAN_ROOT at a sandbox, and the child
+    # inherits it. map-tasks now resolves the root through the SHARED
+    # resolver, which prefers OTAMAN_ROOT over an ancestor walk — so without
+    # stripping it the child resolves the isolation sandbox instead of this
+    # test's own workspace and finds no repos. The old script ignored the env
+    # entirely, which is why these tests did not need this before.
+    env = {k: v for k, v in os.environ.items() if k not in ("OTAMAN_ROOT", "MAESTRO_ROOT")}
     return subprocess.run(
         [sys.executable, str(SCRIPT), str(tasks_md)],
         capture_output=True,
         text=True,
         check=False,
         timeout=15,
+        env=env,
     )
 
 
@@ -97,9 +122,10 @@ class TestAgentTaskMapping:
         r = _run(tasks_md)
         assert r.returncode == 0, f"stderr: {r.stderr}"
         # Stdout should mention one summary line per agent
-        assert "notified cli-agent: 2 task(s)" in r.stdout
-        assert "notified plugin-agent: 1 task(s)" in r.stdout
-        assert "notified core-agent: 1 task(s)" in r.stdout
+        rep = _report(r)
+        assert len(rep["by_owner"]["cli-agent"]) == 2
+        assert len(rep["by_owner"]["plugin-agent"]) == 1
+        assert len(rep["by_owner"]["core-agent"]) == 1
 
     def test_same_line_with_multiple_annotations_does_not_double_count(self, workspace):
         # A single task line carrying the same annotation twice must still
@@ -111,7 +137,7 @@ class TestAgentTaskMapping:
         )
         r = _run(tasks_md)
         assert r.returncode == 0
-        assert "notified cli-agent: 1 task(s)" in r.stdout
+        assert len(_report(r)["by_owner"]["cli-agent"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +154,13 @@ class TestUnknownAnnotationSkipped:
         )
         r = _run(tasks_md)
         assert r.returncode == 0
-        assert "notified cli-agent: 1 task(s)" in r.stdout
+        assert len(_report(r)["by_owner"]["cli-agent"]) == 1
         # No agent named for the unknown repo
-        assert "nonexistent" not in r.stdout
+        # The report NAMES what it could not assign, rather than dropping it
+        # silently. Surfacing an unknown annotation is the point.
+        rep = _report(r)
+        assert list(rep["by_owner"]) == ["cli-agent"], "the known annotation still dispatches"
+        assert any("nonexistent" in task for task in rep["unassigned_tasks"])
 
     def test_no_recognized_annotations_exits_0_silently(self, workspace):
         tasks_md = _write_tasks_md(
@@ -140,7 +170,10 @@ class TestUnknownAnnotationSkipped:
         )
         r = _run(tasks_md)
         assert r.returncode == 0
-        assert r.stdout.strip() == ""  # nothing notified, nothing written
+        # Not an error: a report with nothing assigned, and no messages.
+        rep = _report(r)
+        assert rep["assigned"] == 0
+        assert rep["bus_messages_created"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -158,30 +191,46 @@ class TestBusMessageShape:
         r = _run(tasks_md)
         assert r.returncode == 0
         bus = workspace / ".agents" / "bus" / "active"
-        files = list(bus.glob("*-map-tasks-to-cli-agent-msg-shape.md"))
+        # The surviving implementation writes `<ts>-otaman-to-<agent>-tasks-<change>.md`
+        # (the convention `otaman notify-change` has always produced); the
+        # retired script used `-map-tasks-to-`.
+        files = list(bus.glob("*-otaman-to-cli-agent-tasks-msg-shape.md"))
         assert len(files) == 1, f"expected exactly one message file: {list(bus.glob('*.md'))}"
         body = files[0].read_text(encoding="utf-8")
         # Frontmatter shape
-        assert "from: otaman-specs\n" in body
+        assert "from: otaman\n" in body
         assert "to: cli-agent\n" in body
         assert "type: task-assignment\n" in body
-        assert "priority: high\n" in body
+        assert "priority: normal\n" in body
         assert "status: pending\n" in body
-        # Subject + body
-        assert "## Subject: task-assignment: msg-shape" in body
+        # Subject + body. The surviving implementation's subject names the
+        # CHANGE ("Tasks assigned from ..."), which is what every real
+        # dispatch on the bus already reads.
+        assert '## Subject: Tasks assigned from "msg-shape"' in body
         assert "1.1 @otaman-cli Refactor the thing" in body
         assert "1.2 @otaman-cli Test the refactor" in body
-        # Spec path footer
-        assert "openspec/changes/msg-shape/" in body
+        # The retired script appended an openspec path footer; the surviving
+        # implementation names the change in the subject and lists the task
+        # lines instead. Assert what it DOES carry rather than pinning a
+        # footer that no longer exists.
+        assert "Please implement these in your owned repos" in body
 
 
 # ---------------------------------------------------------------------------
-# (d) exits 0 on missing platform.yaml
+# (d) real errors exit NON-ZERO
+#
+# These used to assert exit 0 on every failure. That contract IS the defect
+# deploy-agent root-caused (20260921T152252): the retired script returned 0
+# from every error path ("caller ignores exit codes anyway"), so a total
+# dispatch outage was invisible — even removing the hook's `|| true` would
+# have changed nothing. The surviving implementation exits non-zero and says
+# why; the hook keeps `|| true` so a commit never fails, but no longer
+# discards stderr.
 # ---------------------------------------------------------------------------
 
 
-class TestGracefulExits:
-    def test_missing_platform_yaml_exits_0(self, tmp_path):
+class TestLoudExits:
+    def test_unresolvable_root_exits_nonzero(self, tmp_path):
         # Create a tasks.md with no platform.yaml anywhere above it.
         # Use /tmp which is far above any otaman project.
         bare = tmp_path / "lonely" / "openspec" / "changes" / "x"
@@ -189,11 +238,10 @@ class TestGracefulExits:
         tasks_md = bare / "tasks.md"
         tasks_md.write_text("- [ ] 1.1 @otaman-cli Task\n", encoding="utf-8")
         r = _run(tasks_md)
-        assert r.returncode == 0  # graceful exit
-        # No stdout — nothing was dispatched
-        assert r.stdout.strip() == ""
+        assert r.returncode == 2, "an unresolvable root must not look like success"
+        assert r.stderr.strip(), "and must say why"
 
-    def test_missing_tasks_md_exits_0(self, workspace):
+    def test_missing_tasks_md_exits_nonzero(self, workspace):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), str(workspace / "no-such.md")],
             capture_output=True,
@@ -201,9 +249,9 @@ class TestGracefulExits:
             check=False,
             timeout=15,
         )
-        assert r.returncode == 0
+        assert r.returncode == 2
 
-    def test_no_args_exits_0(self):
+    def test_no_args_exits_nonzero_with_usage(self):
         r = subprocess.run(
             [sys.executable, str(SCRIPT)],
             capture_output=True,
@@ -211,13 +259,28 @@ class TestGracefulExits:
             check=False,
             timeout=15,
         )
-        assert r.returncode == 0
-        assert "usage:" in r.stderr
+        assert r.returncode == 2
+        assert "usage:" in r.stderr.lower()
 
 
 # ---------------------------------------------------------------------------
 # Pure-function unit tests for parse_annotations
 # ---------------------------------------------------------------------------
+
+
+def _pure_annotations(tasks_md: Path) -> list[dict]:
+    """Checklist tasks parsed by the SURVIVING implementation.
+
+    These pure tests used to load `scripts/map-tasks.py` and call its
+    `parse_annotations`. That function went with the duplicate; the module's
+    `parse_tasks_md` is the one definition now.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from otaman_plugin.map_tasks import parse_tasks_md
+
+    return parse_tasks_md(tasks_md)
 
 
 class TestParseAnnotationsPure:
@@ -231,9 +294,10 @@ class TestParseAnnotationsPure:
             "- [ ] 1.1 @otaman-cli Real task\n",
             encoding="utf-8",
         )
-        mod = _load_module()
-        out = mod.parse_annotations(f, {"otaman-cli": "cli-agent"})
-        assert out == {"cli-agent": ["- [ ] 1.1 @otaman-cli Real task"]}
+        out = _pure_annotations(f)
+        # One entry: the checklist line. The heading and the prose line both
+        # mention @otaman-cli and must NOT become tasks.
+        assert [task["text"] for task in out] == ["1.1 @otaman-cli Real task"]
 
     def test_checked_and_unchecked_both_included(self, tmp_path):
         f = tmp_path / "t.md"
@@ -241,9 +305,9 @@ class TestParseAnnotationsPure:
             "- [ ] 1.1 @otaman-cli Open\n- [x] 1.2 @otaman-cli Done\n",
             encoding="utf-8",
         )
-        mod = _load_module()
-        out = mod.parse_annotations(f, {"otaman-cli": "cli-agent"})
-        assert len(out["cli-agent"]) == 2
+        out = _pure_annotations(f)
+        assert len(out) == 2, "checked and unchecked items both count as tasks"
+        assert {task["done"] for task in out} == {True, False}
 
 
 # ---------------------------------------------------------------------------

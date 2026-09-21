@@ -45,19 +45,45 @@ from otaman_core._resolve import find_maestro_root as find_project_root  # share
 _GATE_WAIVED_SLUG = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
 
 
-def load_ownership(project_root: Path) -> dict[str, str]:
-    """Load ownership.json and return {repo_name: owner} for active repos only.
-
-    Disabled repos (archived/suspended) are skipped so tasks aren't assigned to them.
-    """
-    path = project_root / ".agents" / "ownership.json"
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+def _owner_map(entries: Any) -> dict[str, str]:
+    """``{repo_name: owner}`` from a ``repos`` list, skipping disabled repos
+    (archived/suspended) so tasks are never assigned to them."""
+    if not isinstance(entries, list):
+        return {}
     return {
         repo["name"]: repo["owner"]
-        for repo in data.get("repos", [])
-        if not repo.get("disabled", False)
+        for repo in entries
+        if isinstance(repo, dict)
+        and repo.get("name")
+        and repo.get("owner")
+        and not repo.get("disabled", False)
     }
+
+
+def load_ownership(project_root: Path) -> dict[str, str]:
+    """Owner map from ``.agents/ownership.json``, falling back to
+    ``platform.yaml`` ``repos[]``.
+
+    The fallback is not cosmetic. This module replaced a second
+    implementation (``scripts/map-tasks.py``) that read owners from
+    platform.yaml and never looked at ownership.json, so a tree carrying only
+    platform.yaml used to dispatch fine through the hook. Requiring
+    ownership.json here would have quietly narrowed that while fixing the
+    root-resolution bug — trading one silent dispatch failure for another.
+
+    ownership.json still WINS when present: `otaman init` generates it, and it
+    is the file that records `disabled` repos.
+    """
+    path = project_root / ".agents" / "ownership.json"
+    if path.is_file():
+        try:
+            with open(path, encoding="utf-8") as f:
+                owners = _owner_map(json.load(f).get("repos", []))
+            if owners:
+                return owners
+        except (OSError, json.JSONDecodeError):
+            pass  # fall through — a broken file should not kill dispatch
+    return _owner_map(load_platform_config(project_root).get("repos", []))
 
 
 def load_platform_config(project_root: Path) -> dict[str, Any]:

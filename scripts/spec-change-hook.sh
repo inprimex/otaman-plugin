@@ -212,23 +212,33 @@ if echo "$CHANGED_FILES" | grep -qiE 'tasks\.md$'; then
     done
 
     if [[ -n "$MAP_TASKS" ]]; then
-        # Find python interpreter
-        PYTHON=""
-        if command -v python3 &>/dev/null; then
-            PYTHON="python3"
-        elif command -v py &>/dev/null; then
-            PYTHON="py"
-        elif command -v python &>/dev/null; then
-            PYTHON="python"
-        fi
+        # map-tasks is now a shim over otaman_plugin.map_tasks, so the
+        # interpreter MUST be able to import otaman_plugin. A bare `python3`
+        # frequently cannot even when the workspace venv can, which is what
+        # resolve_otaman_python exists for (and what the archive sweep below
+        # already uses). The old bare-python3 chain is why this path could
+        # only ever have worked by accident.
+        PYTHON="$(resolve_otaman_python "$(dirname "$SCRIPT_DIR")" 2>/dev/null)" || PYTHON=""
 
         if [[ -n "$PYTHON" ]]; then
-            # Run map-tasks.py on each changed tasks.md
+            # Run map-tasks on each changed tasks.md.
+            #
+            # `|| true` stays — a post-commit hook must never fail a commit —
+            # but stderr is NO LONGER discarded. Silence was the actual
+            # defect: the script returned 0 on every failure path, so even
+            # removing `|| true` would have changed nothing, and >/dev/null
+            # 2>&1 hid the one message that said dispatch had not happened.
             while IFS= read -r tasks_file; do
                 if [[ -f "$PWD/$tasks_file" ]]; then
-                    $PYTHON "$MAP_TASKS" "$PWD/$tasks_file" >/dev/null 2>&1 || true
+                    "$PYTHON" "$MAP_TASKS" "$PWD/$tasks_file" >/dev/null || {
+                        echo "[spec-change-hook] map-tasks failed for $tasks_file" \
+                             "— agents were NOT dispatched for it" >&2
+                    }
                 fi
             done <<< "$(echo "$CHANGED_FILES" | grep -iE 'tasks\.md$')"
+        else
+            echo "[spec-change-hook] no Python able to import otaman_plugin;" \
+                 "task dispatch SKIPPED (use \`otaman notify-change\` manually)" >&2
         fi
     fi
 fi
