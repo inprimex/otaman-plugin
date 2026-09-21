@@ -1477,31 +1477,41 @@ def otaman_blocked(
         if not blocked_file.exists():
             return {"error": f"No blocked tasks file for {agent}"}
 
-        # KNOWN GAP, deliberately not fixed in this PR.
+        # TOMBSTONE, do not delete. This used to re.sub the entry out of the
+        # file, which violates canon ("clearing must never destroy the record
+        # of why") and diverged from cli, which tombstones via this same core
+        # helper. An entry cleared over MCP and one cleared over the CLI must
+        # leave the file in the same state.
         #
-        # This deletes the entry outright, which violates canon ("clearing
-        # must never destroy the record of why") and diverges from cli, which
-        # tombstones. The fix is to call `parser.tombstone(...)` — but
-        # otaman_core.blocked_entries.tombstone currently rstrip()s the
-        # separator newline into the closing `-->`, gluing it to the next
-        # entry's header and making every LATER live entry invisible to
-        # parse_entries. Reported with a repro + one-line fix
-        # (20260921T151120); shipping this half now would trade destroying a
-        # record for hiding live blocks, which is the worse of the two.
-        #
-        # A local workaround is deliberately NOT applied — working around the
-        # shared helper is how six parsers happened in the first place.
-        # Re-do this the day core's fix lands.
+        # Held for one PR while core's tombstone() lost the entry separator
+        # (reported 20260921T151120, fixed in core #66) — shipping it then
+        # would have traded destroying a record for hiding every LATER live
+        # entry. Landed now that the fix is in.
+        parser = _blocked_entries()
+        if parser is None:
+            return {"error": _BLOCKED_PARSER_REMEDY}
+
         text = blocked_file.read_text(encoding="utf-8")
-        pattern = rf"## Blocked: {re.escape(task_name)}.*?(?=\n## Blocked:|\Z)"
-        updated = re.sub(pattern, "", text, flags=re.DOTALL).strip()
+        matches = [e for e in parser.parse_entries(text) if task_name in (e.title, e.display_title)]
+        if not matches:
+            # The old re.sub silently matched nothing and still reported
+            # success, so a typo looked like a successful clear.
+            return {
+                "error": f"No live blocked entry titled {task_name!r} for {agent}",
+                "hint": "Titles come from otaman_blocked(action='list').",
+            }
 
-        if updated:
-            blocked_file.write_text(updated + "\n", encoding="utf-8")
-        else:
-            blocked_file.unlink()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        updated = parser.tombstone(text, matches, reason="manually-cleared", today=today)
+        blocked_file.write_text(updated, encoding="utf-8")
 
-        return {"cleared": True, "task": task_name, "agent": agent}
+        return {
+            "cleared": True,
+            "task": task_name,
+            "agent": agent,
+            "count": len(matches),
+            "note": "tombstoned (record preserved), not deleted",
+        }
 
     return {"error": f"Unknown action: {action}. Use 'list' or 'clear'."}
 

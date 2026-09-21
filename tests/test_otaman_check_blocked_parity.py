@@ -181,45 +181,55 @@ class TestOtamanBlockedTool:
         got = otaman_blocked.fn(cwd=str(workspace["repo"]), action="list")
         assert [t["task"] for t in got["blocked_tasks"]] == ["[malformed]"]
 
-    def test_clear_is_a_known_gap_pending_a_core_fix(self, workspace):
-        """`clear` still DELETES rather than tombstoning, which violates canon
-        ("clearing must never destroy the record of why") and diverges from
-        cli. Held deliberately: the fix is to call core's `tombstone()`, but
-        that currently rstrip()s the separator newline into the closing
-        `-->`, gluing it to the next entry's header and making every LATER
-        live entry invisible. Reported with a repro + one-line fix
-        (20260921T151120). Shipping it would trade destroying a record for
-        hiding live blocks — the worse of the two.
+    def test_clear_tombstones_rather_than_deleting(self, workspace):
+        """Canon: "clearing must never destroy the record of why". This used
+        to re.sub the entry out of the file, which also diverged from cli.
 
-        This test PINS the current behaviour so the gap is visible in the
-        suite rather than only in a comment, and fails loudly when someone
-        fixes it — at which point swap it for the tombstone assertions.
+        Held for one PR while core's tombstone() lost the entry separator
+        (reported 20260921T151120, fixed in core #66); the guard below is
+        what said it was safe to land.
         """
         _write(workspace, APPROVAL)
         otaman_blocked.fn(cwd=str(workspace["repo"]), action="clear", task_name="approval wait")
-        path = workspace["root"] / ".agents" / "blocked" / "plugin-agent.md"
-        remaining = path.read_text(encoding="utf-8") if path.exists() else ""
-        assert "approval wait" not in remaining, (
-            "clear now preserves the record — core's tombstone() is fixed; "
-            "replace this test with the tombstone assertions"
-        )
+        text = (workspace["root"] / ".agents" / "blocked" / "plugin-agent.md").read_text()
+        assert "approval wait" in text, "the record was destroyed, not tombstoned"
+        assert "— manually-cleared -->" in text
+        assert parse_entries(text) == [], "entry must no longer read as live"
 
-    def test_core_tombstone_bug_is_still_present(self):
-        """Guards the REASON the gap above exists, so it cannot be quietly
-        forgotten. When core lands the fix this fails, which is the signal to
-        re-do `clear` properly."""
-        mod = _blocked_entries()
-        text = (
-            "\n## Blocked: first\n- **Proposal**: p\n- **Blocked since**: t\n"
-            "\n## Blocked: second\n- **Change**: d\n- **Blocked since**: t\n"
+    def test_clear_leaves_later_entries_live(self, workspace):
+        """The exact shape of the core bug that held this back: tombstoning
+        the FIRST entry must not hide the second."""
+        _write(workspace, APPROVAL + DEPENDENCY)
+        otaman_blocked.fn(cwd=str(workspace["repo"]), action="clear", task_name="approval wait")
+        text = (workspace["root"] / ".agents" / "blocked" / "plugin-agent.md").read_text()
+        assert [e.display_title for e in parse_entries(text)] == ["dependency wait"]
+
+    def test_clear_refuses_an_unknown_title(self, workspace):
+        """The old re.sub matched nothing and still reported success, so a
+        typo looked like a successful clear."""
+        _write(workspace, APPROVAL)
+        got = otaman_blocked.fn(
+            cwd=str(workspace["repo"]), action="clear", task_name="no such entry"
         )
-        first = [e for e in mod.parse_entries(text) if e.title == "first"]
-        out = mod.tombstone(text, first, reason="r", today="2026-09-21")
-        survivors = [e.display_title for e in mod.parse_entries(out)]
-        assert survivors == [], (
-            "core's tombstone() no longer hides later entries — fix landed; "
-            "re-do otaman_blocked clear to tombstone, and drop this guard"
-        )
+        assert "error" in got
+        assert got.get("cleared") is not True
+
+    def test_clear_matches_cli_byte_for_byte(self, workspace):
+        """Both transports write the same tombstone through the same helper,
+        so an entry cleared either way must read identically."""
+        from datetime import datetime, timezone
+
+        from otaman_core.blocked_entries import tombstone
+
+        _write(workspace, APPROVAL)
+        path = workspace["root"] / ".agents" / "blocked" / "plugin-agent.md"
+        before = path.read_text()
+        otaman_blocked.fn(cwd=str(workspace["repo"]), action="clear", task_name="approval wait")
+        via_mcp = path.read_text()
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        via_core = tombstone(before, parse_entries(before), reason="manually-cleared", today=today)
+        assert via_mcp == via_core
 
 
 class TestLaggardBundleFallback:
