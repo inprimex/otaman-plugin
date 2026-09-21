@@ -594,10 +594,19 @@ def otaman_check(
         text = blocked_file.read_text(encoding="utf-8")
         parser = _blocked_entries()
         if parser is None:
-            # Laggard bundle: keep the pre-fix regex rather than reporting
-            # nothing. Losing the dependency-entry fix is recoverable;
-            # hiding EVERY block would be strictly worse than the defect.
-            entries = _legacy_blocked_entries(text)
+            # REFUSE, don't degrade — matching cli's blocked_gate.REMEDY.
+            #
+            # An earlier version of this fell back to the pre-fix regex,
+            # reasoning that reporting SOME blocks beats reporting none. That
+            # framing missed the third option cli took: refuse and name the
+            # remedy. Degrading hands the caller a silently-incomplete blocked
+            # list — the exact failure this change exists to remove — and it
+            # would diverge the two transports on the one surface they are
+            # being made to agree on: cli refusing while MCP quietly answers
+            # wrong. A wrong answer is worse than a loud refusal, and
+            # refusing is already this function's convention for
+            # can't-answer-correctly (see the no-project / no-identity paths).
+            return {"error": _BLOCKED_PARSER_REMEDY}
         else:
             entries = [
                 {
@@ -696,6 +705,17 @@ _TOMBSTONE_REASONS: dict[str, str] = {
 }
 
 
+#: Shown when the bundled otaman-core predates the shared blocked-entry
+#: parser. Deliberately mirrors cli's `blocked_gate.REMEDY` so both
+#: transports refuse with the same instruction rather than two different
+#: descriptions of one bundle problem.
+_BLOCKED_PARSER_REMEDY = (
+    "This otaman-plugin needs a newer otaman-core (it hosts the "
+    "blocked-entry parser as of shared-logic-single-home). Update the "
+    "bundle — `otaman upgrade` — then retry."
+)
+
+
 def _blocked_entries():
     """otaman-core's shared blocked-entry parser, or None on a laggard bundle.
 
@@ -715,35 +735,6 @@ def _blocked_entries():
     if not all(hasattr(blocked_entries, n) for n in ("parse_entries", "MALFORMED_TITLE")):
         return None
     return blocked_entries
-
-
-def _legacy_blocked_entries(text: str) -> list[dict[str, str]]:
-    """Pre-fix blocked-entry read, retained ONLY for a core too old to carry
-    `blocked_entries`.
-
-    Knowingly carries the defect it replaced: it requires `**Proposal**:` and
-    so omits awaiting-dependency entries. Kept because the alternative on a
-    laggard bundle is reporting no blocks at all, which is worse than
-    reporting some. Delete once the bundle floor guarantees core #64.
-    """
-    out: list[dict[str, str]] = []
-    for m in re.finditer(
-        r"## Blocked: (.+?)\n.*?- \*\*Proposal\*\*: (.+?)\n.*?- \*\*Blocked since\*\*: (.+?)\n",
-        text,
-        re.DOTALL,
-    ):
-        task_name, proposal, since = m.groups()
-        out.append(
-            {
-                "task": task_name.strip(),
-                "proposal": proposal.strip(),
-                "change": "",
-                "ref": proposal.strip(),
-                "kind": "",
-                "blocked_since": since.strip(),
-            }
-        )
-    return out
 
 
 def _scr_template():
@@ -1455,24 +1446,28 @@ def otaman_blocked(
         if not blocked_file.exists():
             return {"agent": agent, "blocked_tasks": [], "count": 0}
 
+        # Sixth parse site, found by this change's own "no second parser"
+        # test. Milder than otaman_check's (it did not require Proposal, so
+        # dependency entries were listed) but still non-conformant: no kind,
+        # no ref, and its `## Blocked: (.+?)` requires a non-empty title, so a
+        # malformed entry was invisible here while core surfaces it as
+        # [malformed].
+        parser = _blocked_entries()
+        if parser is None:
+            return {"error": _BLOCKED_PARSER_REMEDY}
+
         text = blocked_file.read_text(encoding="utf-8")
-        tasks: list[dict[str, str]] = []
-        for m in re.finditer(
-            r"## Blocked: (.+?)\n(.*?)(?=\n## Blocked:|\Z)",
-            text,
-            re.DOTALL,
-        ):
-            name = m.group(1).strip()
-            body = m.group(2).strip()
-            proposal = ""
-            since = ""
-            pm = re.search(r"\*\*Proposal\*\*: (.+)", body)
-            if pm:
-                proposal = pm.group(1).strip()
-            sm = re.search(r"\*\*Blocked since\*\*: (.+)", body)
-            if sm:
-                since = sm.group(1).strip()
-            tasks.append({"task": name, "proposal": proposal, "blocked_since": since})
+        tasks = [
+            {
+                "task": e.display_title,
+                "proposal": e.proposal,
+                "change": e.change,
+                "ref": e.ref,
+                "kind": e.kind,
+                "blocked_since": e.get("blocked since"),
+            }
+            for e in parser.parse_entries(text)
+        ]
 
         return {"agent": agent, "blocked_tasks": tasks, "count": len(tasks)}
 
@@ -1482,8 +1477,22 @@ def otaman_blocked(
         if not blocked_file.exists():
             return {"error": f"No blocked tasks file for {agent}"}
 
+        # KNOWN GAP, deliberately not fixed in this PR.
+        #
+        # This deletes the entry outright, which violates canon ("clearing
+        # must never destroy the record of why") and diverges from cli, which
+        # tombstones. The fix is to call `parser.tombstone(...)` — but
+        # otaman_core.blocked_entries.tombstone currently rstrip()s the
+        # separator newline into the closing `-->`, gluing it to the next
+        # entry's header and making every LATER live entry invisible to
+        # parse_entries. Reported with a repro + one-line fix
+        # (20260921T151120); shipping this half now would trade destroying a
+        # record for hiding live blocks, which is the worse of the two.
+        #
+        # A local workaround is deliberately NOT applied — working around the
+        # shared helper is how six parsers happened in the first place.
+        # Re-do this the day core's fix lands.
         text = blocked_file.read_text(encoding="utf-8")
-        # Remove the matching blocked section
         pattern = rf"## Blocked: {re.escape(task_name)}.*?(?=\n## Blocked:|\Z)"
         updated = re.sub(pattern, "", text, flags=re.DOTALL).strip()
 

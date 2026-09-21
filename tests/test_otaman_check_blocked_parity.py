@@ -32,7 +32,7 @@ from otaman_core.blocked_entries import parse_entries  # noqa: E402
 from otaman_plugin.servers import bus_server  # noqa: E402
 from otaman_plugin.servers.bus_server import (  # noqa: E402
     _blocked_entries,
-    _legacy_blocked_entries,
+    otaman_blocked,
     otaman_check,
 )
 
@@ -153,6 +153,75 @@ class TestConsumesCoreNotCli:
         assert "parse_entries" in body, "otaman_check must go through the shared parser"
 
 
+class TestOtamanBlockedTool:
+    """The SIXTH parse site, found by this file's own "no second parser" test.
+
+    Milder than otaman_check's — it did not require Proposal, so dependency
+    entries were listed — but still non-conformant: no kind, no ref, and its
+    `## Blocked: (.+?)` required a non-empty title, so a malformed entry was
+    invisible here while core surfaces it as [malformed].
+    """
+
+    def test_list_matches_core(self, workspace):
+        _write(workspace, APPROVAL + DEPENDENCY + MALFORMED)
+        got = otaman_blocked.fn(cwd=str(workspace["repo"]), action="list")
+        assert [t["task"] for t in got["blocked_tasks"]] == [
+            e.display_title for e in parse_entries(APPROVAL + DEPENDENCY + MALFORMED)
+        ]
+
+    def test_list_reports_kind_and_ref(self, workspace):
+        _write(workspace, DEPENDENCY)
+        got = otaman_blocked.fn(cwd=str(workspace["repo"]), action="list")
+        assert got["blocked_tasks"][0]["kind"] == "awaiting-dependency"
+        assert got["blocked_tasks"][0]["ref"] == "some-dependency"
+
+    def test_malformed_entry_is_visible_here_too(self, workspace):
+        """It was invisible before: the old regex required a non-empty title."""
+        _write(workspace, MALFORMED)
+        got = otaman_blocked.fn(cwd=str(workspace["repo"]), action="list")
+        assert [t["task"] for t in got["blocked_tasks"]] == ["[malformed]"]
+
+    def test_clear_is_a_known_gap_pending_a_core_fix(self, workspace):
+        """`clear` still DELETES rather than tombstoning, which violates canon
+        ("clearing must never destroy the record of why") and diverges from
+        cli. Held deliberately: the fix is to call core's `tombstone()`, but
+        that currently rstrip()s the separator newline into the closing
+        `-->`, gluing it to the next entry's header and making every LATER
+        live entry invisible. Reported with a repro + one-line fix
+        (20260921T151120). Shipping it would trade destroying a record for
+        hiding live blocks — the worse of the two.
+
+        This test PINS the current behaviour so the gap is visible in the
+        suite rather than only in a comment, and fails loudly when someone
+        fixes it — at which point swap it for the tombstone assertions.
+        """
+        _write(workspace, APPROVAL)
+        otaman_blocked.fn(cwd=str(workspace["repo"]), action="clear", task_name="approval wait")
+        path = workspace["root"] / ".agents" / "blocked" / "plugin-agent.md"
+        remaining = path.read_text(encoding="utf-8") if path.exists() else ""
+        assert "approval wait" not in remaining, (
+            "clear now preserves the record — core's tombstone() is fixed; "
+            "replace this test with the tombstone assertions"
+        )
+
+    def test_core_tombstone_bug_is_still_present(self):
+        """Guards the REASON the gap above exists, so it cannot be quietly
+        forgotten. When core lands the fix this fails, which is the signal to
+        re-do `clear` properly."""
+        mod = _blocked_entries()
+        text = (
+            "\n## Blocked: first\n- **Proposal**: p\n- **Blocked since**: t\n"
+            "\n## Blocked: second\n- **Change**: d\n- **Blocked since**: t\n"
+        )
+        first = [e for e in mod.parse_entries(text) if e.title == "first"]
+        out = mod.tombstone(text, first, reason="r", today="2026-09-21")
+        survivors = [e.display_title for e in mod.parse_entries(out)]
+        assert survivors == [], (
+            "core's tombstone() no longer hides later entries — fix landed; "
+            "re-do otaman_blocked clear to tombstone, and drop this guard"
+        )
+
+
 class TestLaggardBundleFallback:
     def test_degrades_when_core_lacks_the_module(self, monkeypatch):
         real_import = __import__
@@ -165,24 +234,38 @@ class TestLaggardBundleFallback:
         monkeypatch.setattr("builtins.__import__", _fake)
         assert _blocked_entries() is None
 
-    def test_fallback_reports_some_blocks_rather_than_none(self, workspace, monkeypatch):
-        """On a laggard bundle the pre-fix behaviour is retained deliberately:
-        losing the dependency-entry fix is recoverable, but reporting NO blocks
-        would be strictly worse than the defect being fixed."""
+    def test_refuses_rather_than_answering_incompletely(self, workspace, monkeypatch):
+        """REFUSE, don't degrade — matching cli's blocked_gate.REMEDY.
+
+        An earlier version of this fix fell back to the pre-fix regex,
+        reasoning that some blocks beat none. That missed the third option:
+        refuse and name the remedy. Degrading returns a silently-incomplete
+        blocked list — the failure this change exists to remove — AND diverges
+        the transports on the surface being made to agree, with cli refusing
+        while MCP quietly answers wrong.
+        """
         monkeypatch.setattr(bus_server, "_blocked_entries", lambda: None)
         _write(workspace, APPROVAL + DEPENDENCY)
-        assert _tasks(workspace) == ["approval wait"]
+        result = otaman_check.fn(cwd=str(workspace["repo"]))
+        assert "error" in result
+        assert "blocked_tasks" not in result, "must not hand back a partial list alongside an error"
 
-    def test_legacy_helper_shape_matches_the_new_one(self):
-        """Both paths feed the same downstream dict-merge, so the keys must
-        line up or the fallback would KeyError where the fixed path works."""
-        entries = _legacy_blocked_entries(APPROVAL)
-        assert entries
-        assert set(entries[0]) == {
-            "task",
-            "proposal",
-            "change",
-            "ref",
-            "kind",
-            "blocked_since",
-        }
+    def test_refusal_names_the_remedy(self, workspace, monkeypatch):
+        """A refusal the caller cannot act on is just a failure."""
+        monkeypatch.setattr(bus_server, "_blocked_entries", lambda: None)
+        _write(workspace, APPROVAL)
+        err = otaman_check.fn(cwd=str(workspace["repo"]))["error"]
+        assert "otaman-core" in err
+        assert "otaman upgrade" in err
+
+    def test_no_second_parser_survives_in_the_module(self):
+        """With refusal there is no laggard path, so the pre-fix regex is dead
+        code — and leaving it would restore the sixth parse site this change
+        removed."""
+        import inspect
+
+        src = inspect.getsource(bus_server)
+        assert "_legacy_blocked_entries" not in src
+        assert src.count(r"\*\*Proposal\*\*") <= 1, (
+            "more than one Proposal-field regex means the format is defined twice again"
+        )
