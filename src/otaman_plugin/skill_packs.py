@@ -8,12 +8,11 @@ controls activation:
 .. code-block:: yaml
 
     program:
-      processes:
-        skills:
-          profile: tech-startup-cofounder         # selects the pack
-          active_skills:                          # optional explicit override
-            - tech-startup:pitch-deck-composer
-            - tech-startup:market-sizing-analyst
+      skills:                                     # NOT program.processes.skills
+        profile: tech-startup-cofounder           # selects the pack
+        active_skills:                            # optional explicit override
+          - tech-startup:pitch-deck-composer
+          - tech-startup:market-sizing-analyst
 
     identity:
       roles:
@@ -21,6 +20,12 @@ controls activation:
 
 The resolver:
 
+0. Locates activation config at ``program.skills``, falling back to the
+   retired ``program.processes.skills`` with a warning during the D1
+   migration window (skill-activation-config-split 1.1). That key is
+   RESERVED for the per-project skills *registry*; activation config —
+   one object, no rows, nothing to audit — does not belong under
+   ``program.processes``.
 1. Looks up the pack in :data:`KNOWN_PACKS` (task 2.1).
 2. Reads the pack manifest at ``<pack>/pack.yaml`` (task 2.2).
 3. Filters by ``active_skills`` if set, else returns every skill in the pack
@@ -34,7 +39,7 @@ This is a Mode 1 resolver. Mode 2+ enforcement lives in ``otaman-bridge``.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +132,99 @@ class ResolveResult:
 
     skills: list[SkillRef]
     skipped: list[tuple[SkillRef, str]]
+    #: Non-fatal migration notices, e.g. activation read from the retired
+    #: location. Callers SHOULD surface these — design D1 is explicit that
+    #: there is "no silent dual-read": silence is how the
+    #: wizard-writes-here/resolver-reads-there defect survived undetected.
+    warnings: list[str] = field(default_factory=list)
+    #: Set when activation config was found but REFUSED (the D1 window has
+    #: closed). Distinct from "no config": absent config resolves to an
+    #: empty skill set, whereas a refusal means the program is misconfigured
+    #: and the caller must say so rather than silently activating nothing.
+    error: str | None = None
+
+
+# --------------------------------------------------------------------------
+# Activation-config location (skill-activation-config-split 1.1)
+# --------------------------------------------------------------------------
+#
+# Canon (shared-contracts delta): `program.processes.<name>` denotes a
+# REGISTRY-BACKED process — rows with ids, status, transitions, an audit
+# trail, addressed by a `path:`. Activation config is one object with no
+# rows and nothing to audit, so it does not belong there.
+# `program.processes.skills` is RESERVED for the per-project skills
+# REGISTRY; activation moved to `program.skills`.
+
+#: Canonical location for pack-activation config.
+ACTIVATION_PATH = "program.skills"
+#: The location cli #170's wizard wrote before the split.
+RETIRED_ACTIVATION_PATH = "program.processes.skills"
+
+#: D1 migration window. While True, activation config found at the RETIRED
+#: location is honored WITH a warning naming the new key. Flip to False to
+#: close the window — the retired shape then refuses.
+#:
+#: Both branches are implemented and tested now, deliberately, so closing
+#: the window is a one-line change rather than a new feature written under
+#: time pressure later. Fleet exposure is measured near-zero (design D1:
+#: dogfood carries the key in neither location), so the window can be short.
+RETIRED_ACTIVATION_SUPPORTED = True
+
+#: Keys that mark a mapping as ACTIVATION config rather than a registry.
+#: `extra` is accepted alongside `active_skills` per the schema shape the
+#: proposal names (`profile`, `extra`/`active_skills`).
+_ACTIVATION_MARKER_KEYS = ("profile", "active_skills", "extra")
+
+
+def _is_activation_shape(cfg: Any) -> bool:
+    """Does this mapping look like activation config, not a registry?
+
+    The distinction matters because `program.processes.skills` is RESERVED
+    for the real per-project skills registry: a registry is addressed by a
+    ``path:`` and carries rows. Warning "you are using the retired
+    activation location" at a program that has a legitimate registry there
+    would be nagging about correct config — the precise failure mode
+    NON_REGISTRY_PROCESSES was invented to paper over, pointed the other
+    way.
+    """
+    if not isinstance(cfg, Mapping) or not cfg:
+        return False
+    if cfg.get("path"):
+        return False  # a registry, addressed by path — not activation
+    return any(cfg.get(key) is not None for key in _ACTIVATION_MARKER_KEYS)
+
+
+def _read_activation_config(
+    platform: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], list[str], str | None]:
+    """Locate pack-activation config. Returns ``(cfg, warnings, error)``.
+
+    Canonical `program.skills` wins outright. The retired location is
+    consulted only when the canonical one is absent, and only when it
+    actually holds activation config (see :func:`_is_activation_shape`).
+    """
+    program = platform.get("program") or {}
+    if not isinstance(program, Mapping):
+        return {}, [], None
+
+    canonical = program.get("skills")
+    if isinstance(canonical, Mapping) and canonical:
+        return canonical, [], None
+
+    processes = program.get("processes") or {}
+    retired = processes.get("skills") if isinstance(processes, Mapping) else None
+    if _is_activation_shape(retired):
+        message = (
+            f"pack-activation config found at the retired "
+            f"`{RETIRED_ACTIVATION_PATH}` location; move it to "
+            f"`{ACTIVATION_PATH}`. `{RETIRED_ACTIVATION_PATH}` is reserved "
+            f"for the per-project skills registry."
+        )
+        if not RETIRED_ACTIVATION_SUPPORTED:
+            return {}, [], f"Refusing to read activation config: {message}"
+        return retired, [message], None
+
+    return {}, [], None
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +320,9 @@ def resolve_active_skills(
     Returns a :class:`ResolveResult` with the post-filter skill set and
     the per-skill skip reasons.
     """
-    skills_cfg = ((platform.get("program") or {}).get("processes") or {}).get("skills") or {}
-    if not isinstance(skills_cfg, Mapping):
-        return ResolveResult(skills=[], skipped=[])
+    skills_cfg, warnings, error = _read_activation_config(platform)
+    if error:
+        return ResolveResult(skills=[], skipped=[], warnings=warnings, error=error)
 
     profile = skills_cfg.get("profile")
     pack_id: str | None = None
@@ -235,17 +333,23 @@ def resolve_active_skills(
     # pack access without a profile should add an entry to
     # ``_PROFILE_TO_PACK`` or invoke the lower-level pack helpers directly.
     if not pack_id:
-        return ResolveResult(skills=[], skipped=[])
+        return ResolveResult(skills=[], skipped=[], warnings=warnings)
 
     pack_root = resolve_pack_root(pack_id, project_root)
     if pack_root is None:
-        return ResolveResult(skills=[], skipped=[])
+        return ResolveResult(skills=[], skipped=[], warnings=warnings)
 
     manifest = load_pack_manifest(pack_root)
     if not manifest:
-        return ResolveResult(skills=[], skipped=[])
+        return ResolveResult(skills=[], skipped=[], warnings=warnings)
 
-    active_set = _normalize_active_skills(skills_cfg.get("active_skills"))
+    # `extra` is accepted alongside `active_skills` per the schema shape the
+    # proposal names; whichever is present wins, `active_skills` first.
+    active_set = _normalize_active_skills(
+        skills_cfg.get("active_skills")
+        if skills_cfg.get("active_skills") is not None
+        else skills_cfg.get("extra")
+    )
     cofounder = _cofounder_username(platform)
 
     activated: list[SkillRef] = []
@@ -272,4 +376,4 @@ def resolve_active_skills(
 
         activated.append(skill)
 
-    return ResolveResult(skills=activated, skipped=skipped)
+    return ResolveResult(skills=activated, skipped=skipped, warnings=warnings)
