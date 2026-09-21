@@ -11,38 +11,28 @@ import yaml
 
 from otaman_plugin.servers.bus_server import (  # noqa: E402
     _compute_effective_cc,
+    _frontmatter,
     _inject_x_cc,
-    _parse_cc_field,
-    _parse_frontmatter,
     evaluate_routing_rules,
     otaman_send,
 )
 
-# ---------------------------------------------------------------------------
-# Task 1.1 — cc field parsing
-# ---------------------------------------------------------------------------
 
+def _cc_of(text: str) -> list[str]:
+    """CC recipients of a written message, via the SHARED parser.
 
-class TestParseCcField:
-    def test_inline_list(self):
-        text = "---\nfrom: x\ncc: [a, b, c]\nto: y\n---\n\nbody"
-        assert _parse_cc_field(text) == ["a", "b", "c"]
+    `_parse_cc_field` was plugin's bespoke recovery of list semantics YAML
+    already has; it is deleted (shared-logic-single-home 1.2). Its five pure
+    unit tests are retired rather than ported: otaman-core's
+    tests/test_frontmatter.py covers strictly more of the same shapes —
+    inline, block, quoted, scalar-to-single-item, blank, blank-entry
+    dropping, plus x-cc as a bool AND as a legacy string. Verified those
+    exist before deleting, rather than on the strength of the claim.
+    """
+    from otaman_core.frontmatter import cc_recipients, parse
 
-    def test_block_list(self):
-        text = "---\nfrom: x\ncc:\n  - a\n  - b\nto: y\n---\n\nbody"
-        assert _parse_cc_field(text) == ["a", "b"]
-
-    def test_absent_returns_empty(self):
-        text = "---\nfrom: x\nto: y\n---\n\nbody"
-        assert _parse_cc_field(text) == []
-
-    def test_inline_empty_returns_empty(self):
-        text = "---\nfrom: x\ncc: []\nto: y\n---\n\nbody"
-        assert _parse_cc_field(text) == []
-
-    def test_quoted_values_unquoted(self):
-        text = '---\nfrom: x\ncc: ["a", "b"]\nto: y\n---\n\nbody'
-        assert _parse_cc_field(text) == ["a", "b"]
+    fm, _ = parse(text)
+    return cc_recipients(fm)
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +144,8 @@ class TestInjectXCc:
         # The body is untouched
         assert out.endswith("body\n")
         # Frontmatter is still well-formed
-        m = _parse_frontmatter(out)
-        assert m["x-cc"] == "true"
+        m = _frontmatter(out)
+        assert m["x-cc"] is True
         assert m["from"] == "x"
         assert m["to"] == "y"
 
@@ -211,7 +201,7 @@ def workspace(tmp_path, monkeypatch):
 
 
 def _read_msg(path: Path) -> dict[str, str]:
-    return _parse_frontmatter(path.read_text(encoding="utf-8"))
+    return _frontmatter(path.read_text(encoding="utf-8"))
 
 
 class TestIntegrationFanOut:
@@ -237,7 +227,7 @@ class TestIntegrationFanOut:
         assert primary_fm["to"] == "human"
         assert primary_fm.get("x-cc", "") != "true"
         # Primary still carries the cc: list so the human can see who else got copies
-        assert _parse_cc_field(primary.read_text(encoding="utf-8")) in (
+        assert _cc_of(primary.read_text(encoding="utf-8")) in (
             ["spec-agent", "cpo-agent"],
             ["cpo-agent", "spec-agent"],
         )
@@ -245,7 +235,7 @@ class TestIntegrationFanOut:
         for cc_file in (cc_spec, cc_cpo):
             fm = _read_msg(cc_file)
             assert fm["to"] == "human"
-            assert fm["x-cc"] == "true"
+            assert fm["x-cc"] is True
 
     def test_no_routing_rule_match_no_cc_copies(self, workspace):
         result = otaman_send.fn(
@@ -262,7 +252,7 @@ class TestIntegrationFanOut:
         assert len(files) == 1
         assert "-cc-" not in files[0].name
         # Primary carries no cc: field at all
-        assert _parse_cc_field(files[0].read_text(encoding="utf-8")) == []
+        assert _cc_of(files[0].read_text(encoding="utf-8")) == []
 
     def test_priority_rule_only_fires_when_priority_matches(self, workspace):
         # Normal-priority to:human → only the unconditional rule (spec-agent) fires

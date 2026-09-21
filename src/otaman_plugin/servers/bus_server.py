@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+from otaman_core import frontmatter as _core_frontmatter
+from otaman_core.bus_stem import build_filename as _build_filename
+from otaman_core.bus_stem import slugify as _slugify
 
 mcp = FastMCP(
     name="otaman-bus",
@@ -91,17 +94,56 @@ def _acks_dir(root: Path) -> Path:
     return _bus_dir(root) / "acks"
 
 
-def _parse_frontmatter(text: str) -> dict[str, str]:
-    """Parse YAML frontmatter from a message file (lightweight, no PyYAML)."""
-    fm: dict[str, str] = {}
-    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-    if not m:
-        return fm
-    for line in m.group(1).splitlines():
-        kv = line.split(":", 1)
-        if len(kv) == 2:
-            fm[kv[0].strip()] = kv[1].strip()
+def _frontmatter(text: str) -> dict[str, Any]:
+    """Typed frontmatter via otaman-core's shared parser.
+
+    shared-logic-single-home 1.2. This module used to carry a hand-rolled
+    line-splitter that returned every value as a STRING, which is why it also
+    needed a bespoke `_parse_cc_field` to recover list semantics YAML already
+    has. Seven such parsers existed across cli and plugin; there is now one.
+
+    Values come back typed: `cc` is a list, `x-cc`/`expects-response` are
+    bools, `timestamp` is a datetime. Use :func:`_fm_text` where a string is
+    wanted — several callers here `.strip()` what they read, and a bool or
+    datetime would raise.
+    """
+    fm, _body = _core_frontmatter.parse(text)
     return fm
+
+
+def _fm_text(fm: dict[str, Any], key: str, default: str = "") -> str:
+    """A frontmatter value as text, whatever YAML typed it as.
+
+    Timestamps render with a `Z` suffix rather than `+00:00`. That NORMALIZES
+    93 of 2800 scalar fields on the live bus (all of them timestamps written
+    before this convention settled) — both spellings are valid ISO-8601 UTC
+    and `_parse_iso8601` accepts either, and every writer in this codebase
+    emits `Z`, so the effect is that old messages now display consistently
+    with new ones. Called out because it is a visible change to what
+    `otaman_check` returns, not a silent one.
+    """
+    value = fm.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    return str(value)
+
+
+def _fm_flag(fm: dict[str, Any], key: str) -> bool:
+    """A boolean frontmatter field, typed or legacy-string.
+
+    YAML now types `true` as a bool, but messages written before this parser
+    — and callers that build a frontmatter dict by hand — carry the string.
+    Accepting both mirrors what core's `is_cc_copy` does for `x-cc`; a strict
+    `is True` would silently stop honouring every message already on the bus.
+    """
+    value = fm.get(key)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "yes", "on", "1"}
 
 
 def _extract_subject(text: str) -> str:
@@ -115,46 +157,6 @@ def _extract_subject(text: str) -> str:
 # ---------------------------------------------------------------------------
 # bus-cc-routing — CC fan-out (tasks 1.1-1.4)
 # ---------------------------------------------------------------------------
-
-
-def _parse_cc_field(text: str) -> list[str]:
-    """Parse the optional ``cc:`` field from a message's YAML frontmatter.
-
-    The field is optional; absent or empty values yield ``[]``. Both
-    inline (``cc: [a, b]``) and block (``cc:\\n  - a\\n  - b``) list shapes
-    are supported. Whitespace and quoting are tolerated.
-    """
-    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-    if not m:
-        return []
-    fm_text = m.group(1)
-    lines = fm_text.splitlines()
-    result: list[str] = []
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped.startswith("cc:"):
-            continue
-        # Inline form: ``cc: [a, b, c]``
-        rest = stripped[3:].strip()
-        if rest.startswith("[") and rest.endswith("]"):
-            inner = rest[1:-1]
-            for item in inner.split(","):
-                name = item.strip().strip('"').strip("'")
-                if name:
-                    result.append(name)
-            return result
-        # Block form: subsequent indented ``- agent-name`` lines.
-        # Walk forward until we hit a non-indented line or another key.
-        for next_line in lines[idx + 1 :]:
-            if not next_line.startswith((" ", "\t", "-")):
-                break
-            item = next_line.strip()
-            if item.startswith("-"):
-                name = item[1:].strip().strip('"').strip("'")
-                if name:
-                    result.append(name)
-        return result
-    return []
 
 
 def _load_routing_rules(root: Path) -> list[dict[str, Any]]:
@@ -341,10 +343,10 @@ def _collect_outbound_reply_ids(agent: str, bus_dir: Path) -> set[str]:
             text = msg_path.read_text(encoding="utf-8")
         except OSError:
             continue
-        fm = _parse_frontmatter(text)
-        if fm.get("from", "").strip() != agent:
+        fm = _frontmatter(text)
+        if _fm_text(fm, "from").strip() != agent:
             continue
-        reply_to = fm.get("reply-to", "").strip()
+        reply_to = _fm_text(fm, "reply-to").strip()
         if reply_to:
             reply_ids.add(reply_to)
     return reply_ids
@@ -382,16 +384,16 @@ def _compute_response_badges(
     """
     badges: list[str] = []
 
-    expects_response = fm.get("expects-response", "").strip().lower() == "true"
+    expects_response = _fm_flag(fm, "expects-response")
     if expects_response:
-        msg_id = fm.get("id", "").strip()
+        msg_id = _fm_text(fm, "id").strip()
         # No reply (matched by id) → awaiting. If id is absent (older message
         # without an id field), assume awaiting — conservative default that
         # surfaces the contract gap to the operator.
         if not msg_id or msg_id not in outbound_reply_ids:
             badges.append("awaiting-response")
 
-    deadline = _parse_iso8601(fm.get("response-deadline", "").strip())
+    deadline = _parse_iso8601(_fm_text(fm, "response-deadline").strip())
     if deadline is not None:
         delta_seconds = (deadline - now).total_seconds()
         if delta_seconds < 0:
@@ -505,7 +507,7 @@ def otaman_check(
     if bus.is_dir():
         for msg_path in sorted(bus.glob("*.md")):
             text = msg_path.read_text(encoding="utf-8")
-            fm = _parse_frontmatter(text)
+            fm = _frontmatter(text)
             stem = msg_path.stem
 
             # CC copy routing (bus-cc-routing task 2.3).
@@ -515,8 +517,9 @@ def otaman_check(
             # slugs both contain hyphens). We surface the copy ONLY to its
             # target recipient, then route it into the separate `cc_messages`
             # list (never `messages`).
-            is_cc_copy = fm.get("x-cc", "").strip().lower() == "true"
-            cc_list_for_routing = _parse_cc_field(text) if is_cc_copy else []
+            # `is_cc_copy` still accepts a legacy string `true` (core).
+            is_cc_copy = _core_frontmatter.is_cc_copy(fm)
+            cc_list_for_routing = _core_frontmatter.cc_recipients(fm) if is_cc_copy else []
             cc_recipient = (
                 _extract_cc_recipient_from_stem(stem, cc_list_for_routing) if is_cc_copy else None
             )
@@ -526,7 +529,7 @@ def otaman_check(
                     continue
             else:
                 # Primary-message addressing (unchanged for back-compat)
-                to = fm.get("to", "").strip()
+                to = _fm_text(fm, "to").strip()
                 if to != agent and to != "all":
                     continue
 
@@ -543,11 +546,11 @@ def otaman_check(
 
             entry: dict[str, Any] = {
                 "stem": stem,
-                "from": fm.get("from", "unknown"),
-                "to": fm.get("to", "").strip(),
-                "type": fm.get("type", "info"),
-                "priority": fm.get("priority", "normal"),
-                "timestamp": fm.get("timestamp", ""),
+                "from": _fm_text(fm, "from", "unknown"),
+                "to": _fm_text(fm, "to").strip(),
+                "type": _fm_text(fm, "type", "info"),
+                "priority": _fm_text(fm, "priority", "normal"),
+                "timestamp": _fm_text(fm, "timestamp"),
                 "status": ack_val,
                 "subject": _extract_subject(text),
                 "badges": _compute_response_badges(fm, outbound_reply_ids, now),
@@ -556,7 +559,7 @@ def otaman_check(
                 # CC entries always carry the cc list so the recipient sees
                 # who else got a copy. The primary `to` field is preserved
                 # so consumers can show "from X to Y, you were CC'd".
-                entry["cc"] = _parse_cc_field(text)
+                entry["cc"] = _core_frontmatter.cc_recipients(fm)
                 cc_messages.append(entry)
             else:
                 messages.append(entry)
@@ -791,36 +794,33 @@ def _extract_proposal_stems(body: str) -> list[str]:
 # end of string. ``re.MULTILINE`` makes ``^`` match line starts; ``re.DOTALL``
 # makes ``.`` match newlines. Non-greedy ``.+?`` plus the lookahead keeps
 # each entry small without swallowing the next entry.
-_BLOCKED_ENTRY_RE = re.compile(
-    r"^(## Blocked: .+?)(?=\n## Blocked: |\Z)",
-    re.DOTALL | re.MULTILINE,
-)
-_PROPOSAL_FIELD_RE = re.compile(r"^\s*-\s*\*\*Proposal\*\*:\s*(\S+)", re.MULTILINE)
-_CHANGE_FIELD_RE = re.compile(r"^\s*-\s*\*\*Change\*\*:\s*(\S+)", re.MULTILINE)
-_BLOCKED_TITLE_RE = re.compile(r"^## Blocked:\s*(.+)$", re.MULTILINE)
-
-
 def _tombstone_entries_matching(
     root: Path,
     reason: str,
-    should_tombstone: Callable[[str], bool],
+    should_tombstone: Callable[[Any], bool],
 ) -> list[dict[str, str]]:
-    """Shared low-level sweep for every terminator in this module: wrap each
-    matching ``## Blocked:`` entry, across EVERY agent's blocked file, in a
-    ``cleared <date> — <reason>`` HTML comment.
+    """Sweep every agent's blocked file, tombstoning entries the caller picks.
 
-    ``should_tombstone`` receives one entry's raw block (from ``## Blocked:``
-    to the next such header or EOF) and decides whether it matches; callers
-    own the match strategy (proposal-stem, change-field, archived-change
-    membership) while this function owns only the file I/O and the
-    tombstone format — one format, so an entry cleared by any terminator, or
-    by otaman-cli's own writer, reads identically everywhere.
+    shared-logic-single-home 1.1/1.3: this used FOUR local regexes of its own
+    (entry, Proposal field, Change field, title) — the last of the six parse
+    sites this module carried. All four are gone; parsing and the tombstone
+    write both come from otaman-core, so an entry cleared here is
+    byte-identical to one cleared by otaman-cli.
 
-    Idempotent: already-commented entries (wrapped in ``<!-- ... -->``) are
-    not matched because the ``^## Blocked:`` regex requires a line-leading
-    header. Calling this twice with the same input is a no-op the second
-    time.
+    ``should_tombstone`` now receives a parsed ``BlockedEntry`` rather than a
+    raw text block, so callers match on ``.proposal`` / ``.change`` instead of
+    re-deriving them. Titles report ``display_title``, so a malformed entry
+    shows ``[malformed]`` here exactly as it does on every read surface.
+
+    On a laggard bundle (no core parser) this returns ``[]`` and the SEND
+    still proceeds: losing a tombstone is recoverable, refusing to deliver a
+    message is not. The read surfaces refuse loudly instead, which is where a
+    stale bundle actually becomes visible.
     """
+    parser = _blocked_entries()
+    if parser is None:
+        return []
+
     blocked_dir = root / ".agents" / "blocked"
     if not blocked_dir.is_dir():
         return []
@@ -829,41 +829,25 @@ def _tombstone_entries_matching(
     tombstoned: list[dict[str, str]] = []
 
     for blocked_file in sorted(blocked_dir.glob("*.md")):
-        agent_name = blocked_file.stem
         try:
             text = blocked_file.read_text(encoding="utf-8")
         except OSError:
             continue
 
-        modified = False
-        new_parts: list[str] = []
-        last_end = 0
+        matches = [e for e in parser.parse_entries(text) if should_tombstone(e)]
+        if not matches:
+            continue
 
-        for m in _BLOCKED_ENTRY_RE.finditer(text):
-            entry_block = m.group(1)
+        updated = parser.tombstone(text, matches, reason=reason, today=today)
+        try:
+            blocked_file.write_text(updated, encoding="utf-8")
+        except OSError:
+            continue
 
-            # Preserve unchanged text between matches.
-            new_parts.append(text[last_end : m.start()])
-
-            if should_tombstone(entry_block):
-                title_m = _BLOCKED_TITLE_RE.search(entry_block)
-                title = title_m.group(1).strip() if title_m else "(untitled)"
-                tombstoned.append({"agent": agent_name, "title": title, "reason": reason})
-                trailer = f"\ncleared {today} — {reason} -->"
-                new_parts.append("<!-- " + entry_block.rstrip() + trailer)
-                modified = True
-            else:
-                new_parts.append(entry_block)
-
-            last_end = m.end()
-
-        new_parts.append(text[last_end:])
-
-        if modified:
-            try:
-                blocked_file.write_text("".join(new_parts), encoding="utf-8")
-            except OSError:
-                continue
+        tombstoned.extend(
+            {"agent": blocked_file.stem, "title": e.display_title, "reason": reason}
+            for e in matches
+        )
 
     return tombstoned
 
@@ -902,17 +886,15 @@ def auto_tombstone_blocked(
         if not match_stems:
             return []
 
-        def _should_tombstone(entry_block: str) -> bool:
-            m = _PROPOSAL_FIELD_RE.search(entry_block)
-            return bool(m and m.group(1) in match_stems)
+        def _should_tombstone(entry: Any) -> bool:
+            return bool(entry.proposal) and entry.proposal in match_stems
     else:  # task-assignment / task-complete — both are dependency-wait terminators
         match_change = (change_name or "").strip() or None
         if not match_change:
             return []
 
-        def _should_tombstone(entry_block: str) -> bool:
-            m = _CHANGE_FIELD_RE.search(entry_block)
-            return bool(m and m.group(1) == match_change)
+        def _should_tombstone(entry: Any) -> bool:
+            return entry.change == match_change
 
     return _tombstone_entries_matching(root, reason, _should_tombstone)
 
@@ -938,9 +920,8 @@ def sweep_archived_blocked(
     if not names:
         return []
 
-    def _should_tombstone(entry_block: str) -> bool:
-        m = _CHANGE_FIELD_RE.search(entry_block)
-        return bool(m and m.group(1) in names)
+    def _should_tombstone(entry: Any) -> bool:
+        return bool(entry.change) and entry.change in names
 
     return _tombstone_entries_matching(root, "change archived", _should_tombstone)
 
@@ -1174,8 +1155,11 @@ def otaman_send(
 
     ts = _timestamp_id()
     ts_iso = datetime.now(timezone.utc).isoformat()
-    slug = re.sub(r"[^a-z0-9]+", "-", subject.lower())[:40].strip("-")
-    filename = f"{ts}-{agent}-to-{to_agent}-{slug}.md"
+    # shared-logic-single-home 1.3: one writer for the bus filename
+    # convention. Verified byte-identical to the hand-built form it replaces
+    # before swapping — this names files the whole fleet then parses.
+    slug = _slugify(subject, max_len=40)
+    filename = _build_filename(timestamp=ts, sender=agent, recipient=to_agent, slug=slug)
 
     # bus-cc-routing fan-out: compose the effective CC from the sender's
     # explicit list (if any) and the routing rules in platform.yaml. The
@@ -1247,7 +1231,14 @@ status: pending
     if effective_cc:
         cc_content = _inject_x_cc(content)
         for rcpt in effective_cc:
-            cc_filename = f"{ts}-{agent}-to-{to_agent}-cc-{rcpt}-{slug}.md"
+            # A CC copy embeds the recipient so copies never collide with the
+            # primary or each other. That extra `-cc-<rcpt>` segment is this
+            # module's own convention, not part of core's builder grammar, so
+            # it is composed onto the shared slug rather than hand-rolling the
+            # whole name again.
+            cc_filename = _build_filename(
+                timestamp=ts, sender=agent, recipient=to_agent, slug=f"cc-{rcpt}-{slug}"
+            )
             cc_path = bus / cc_filename
             cc_path.write_text(cc_content, encoding="utf-8")
             cc_copies.append(cc_path.stem)
@@ -1327,13 +1318,13 @@ def otaman_ack(
     if ack_status == "resolved":
         resolved_msg = bus / f"{message_stem}.md"
         if resolved_msg.exists():
-            fm = _parse_frontmatter(resolved_msg.read_text(encoding="utf-8"))
+            fm = _frontmatter(resolved_msg.read_text(encoding="utf-8"))
             if fm.get("type") == "task-assignment":
                 # Verify this agent has sent at least one task-complete message
                 found_complete = False
                 for candidate in bus.glob("*.md"):
                     try:
-                        c_fm = _parse_frontmatter(candidate.read_text(encoding="utf-8"))
+                        c_fm = _frontmatter(candidate.read_text(encoding="utf-8"))
                         if c_fm.get("from") == agent and c_fm.get("type") == "task-complete":
                             found_complete = True
                             break
@@ -1394,8 +1385,8 @@ def otaman_status(cwd: str) -> dict[str, Any]:
         for msg_path in bus.glob("*.md"):
             total += 1
             text = msg_path.read_text(encoding="utf-8")
-            fm = _parse_frontmatter(text)
-            t = fm.get("type", "info")
+            fm = _frontmatter(text)
+            t = _fm_text(fm, "type", "info")
             types[t] = types.get(t, 0) + 1
 
     result["bus"] = {"total_messages": total, "by_type": types}
@@ -1544,11 +1535,10 @@ def otaman_read_message(
             return {"error": f"Message not found: {message_stem}"}
 
     text = msg_file.read_text(encoding="utf-8")
-    fm = _parse_frontmatter(text)
-
-    # Body is everything after the frontmatter
-    body_match = re.match(r"^---\s*\n.*?\n---\s*\n(.*)", text, re.DOTALL)
-    body = body_match.group(1).strip() if body_match else text
+    # One read, one parser: core's parse returns the body alongside the
+    # frontmatter, so the body no longer needs its own fence regex here.
+    fm, body = _core_frontmatter.parse(text)
+    body = body.strip()
 
     return {
         "stem": msg_file.stem,
@@ -1700,9 +1690,11 @@ def otaman_propose(
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     now_ts = now.strftime("%Y%m%dT%H%M%S")
 
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40]
+    slug = _slugify(title, max_len=40)
     msg_id = f"{now_ts}-scr-{slug}"
-    filename = f"{now_ts}-{agent}-to-human-spec-change-request.md"
+    filename = _build_filename(
+        timestamp=now_ts, sender=agent, recipient="human", slug="spec-change-request"
+    )
 
     bus = _bus_dir(root)
     bus.mkdir(parents=True, exist_ok=True)
