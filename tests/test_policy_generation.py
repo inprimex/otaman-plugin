@@ -407,6 +407,22 @@ class TestInstallChangelogFragmentScaffold:
         assert "`feature`" in content and "`fix`" in content
         assert '"changelog: exempt"' in content
 
+    def test_readme_tells_the_agent_how_to_clear_after_a_cut(self, tmp_path):
+        """release-notes-sibling-coverage 2.5 third clause. A scaffolded repo
+        that knows how to WRITE fragments but not how to CLEAR them leaves its
+        agent to improvise at cut time, and the obvious improvisation — empty
+        the directory, or `rm changelog.d/*.md` — deletes this README too and
+        takes the convention with it. So the clearing rule ships in the same
+        file as the writing rule, and names the manifest as the authority."""
+        root, repo = self._repo(tmp_path)
+        gen.install_changelog_fragment_scaffold(root, {"repos": [repo]})
+        content = (root / "r" / "changelog.d" / "README.md").read_text(encoding="utf-8")
+
+        assert "fragments-consumed" in content, "the signal that triggers clearing"
+        assert "otaman release clear-fragments" in content, "the command, not a bare `rm`"
+        assert "glob" in content, "the never-by-glob prohibition is the point"
+        assert "manifest" in content, "the manifest is the dedup authority, not the empty dir"
+
     def test_never_overwrites_an_existing_readme(self, tmp_path):
         root, repo = self._repo(tmp_path)
         changelog_dir = root / "r" / "changelog.d"

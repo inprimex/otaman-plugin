@@ -36,6 +36,15 @@ uvx ruff@0.16.3 format --check .
 The lint baseline lives in `pyproject.toml` under `[tool.ruff]`. CI runs
 `ruff check` + `ruff format --check` as required steps; keep both green.
 
+## Changelog fragments
+
+Every PR touching shipped code carries one `changelog.d/<pr>.<category>.md`
+fragment; CI blocks the merge otherwise. Docs/CI/test-only PRs put
+`changelog: exempt` in the PR body instead. After a release cut, the
+`fragments-consumed` bus signal names the consumed files — clear them with
+`otaman release clear-fragments <manifest>`, never by glob. See
+`changelog.d/README.md`.
+
 ## Testing notes
 
 - The suite must never touch a live bus. `tests/conftest.py` strips

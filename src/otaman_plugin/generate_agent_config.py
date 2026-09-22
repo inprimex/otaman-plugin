@@ -1935,7 +1935,16 @@ def install_changelog_fragment_scaffold(project_root: Path, config: dict[str, An
                 f"the published notes; nothing from commit history, PR bodies, or\n"
                 f"source strings leaks in.\n\n"
                 f'Docs/CI-only PRs are exempt: put `"{marker}"` in the PR body\n'
-                f"instead of adding a fragment.\n"
+                f"instead of adding a fragment.\n\n"
+                f"## After a release cut\n\n"
+                f"The cut broadcasts a `fragments-consumed` signal naming this\n"
+                f"repo's consumed files. Clear exactly those filenames with\n"
+                f"`otaman release clear-fragments <manifest>` and commit —\n"
+                f"**never by glob**, and never by emptying the directory. This\n"
+                f"`README.md` is documentation, not a fragment; it always\n"
+                f"survives. The consumed-fragments manifest recorded with the\n"
+                f"release — not the empty directory — is the dedup authority, so\n"
+                f"a lagging clear can never duplicate a note.\n"
             )
             readme_path.write_text(content, encoding="utf-8")
             results.append(f"Created: {repo['name']}/{frag_dir}/README.md")
