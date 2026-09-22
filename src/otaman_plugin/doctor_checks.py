@@ -200,6 +200,62 @@ def check_plugin_dir_consistency(otaman_root: Path) -> list[DoctorWarning]:
     return warnings
 
 
+def check_installed_hooks_are_live(otaman_root: Path) -> list[DoctorWarning]:
+    """NSS-1: an installed git hook that cannot RUN renders as a failure.
+
+    Existence is not liveness. haulops had post-commit, spec-change and
+    check-branch all installed — and all inert, because the wheel shipped the
+    entry points without `_resolve.sh`, which every one of them sources. Every
+    surface said the install was fine while nothing dispatched for weeks.
+
+    Per the no-silent-success delta, a check that could not be PERFORMED (no
+    bash, unreadable script) renders as its own visible state — never [OK] and
+    never silence — so `not-checked` is reported as `info` rather than being
+    dropped.
+    """
+    from otaman_plugin.hook_liveness import LIVENESS_CHECKED_HOOKS, probe_hook_liveness
+
+    out: list[DoctorWarning] = []
+    scripts_dir = _plugin_scripts_dir()
+    if scripts_dir is None:
+        return [
+            DoctorWarning(
+                severity="info",
+                code="NSS1_HOOK_LIVENESS_NOT_CHECKED",
+                message="plugin scripts/ directory not found — hook liveness was not checked",
+                hint="This is 'did not check', not 'checked clean'.",
+            )
+        ]
+
+    for hook_name in LIVENESS_CHECKED_HOOKS:
+        verdict = probe_hook_liveness(scripts_dir / hook_name)
+        if verdict.ok:
+            continue
+        out.append(
+            DoctorWarning(
+                severity="error" if verdict.performed else "info",
+                code=("NSS1_HOOK_INERT" if verdict.performed else "NSS1_HOOK_LIVENESS_NOT_CHECKED"),
+                message=verdict.reason,
+                hint=(
+                    "Reinstall the plugin so scripts/_resolve.sh ships alongside the hooks "
+                    "(pyproject force-include), then re-run `otaman init`."
+                    if verdict.performed
+                    else "This is 'did not check', not 'checked clean'."
+                ),
+            )
+        )
+    return out
+
+
+def _plugin_scripts_dir() -> Path | None:
+    """Where the installed hooks live — package tree first, then dev tree."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "scripts", here.parent.parent / "scripts"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def check_launch_commands_have_continue_flag(otaman_root: Path) -> list[DoctorWarning]:
     """M-13b: warn when per-repo ``launch_commands`` invoke ``claude`` without
     ``-c`` / ``--continue`` / ``--resume``.
@@ -257,4 +313,5 @@ def run_all_checks(otaman_root: Path) -> list[DoctorWarning]:
     out: list[DoctorWarning] = []
     out.extend(check_plugin_dir_consistency(otaman_root))
     out.extend(check_launch_commands_have_continue_flag(otaman_root))
+    out.extend(check_installed_hooks_are_live(otaman_root))
     return out

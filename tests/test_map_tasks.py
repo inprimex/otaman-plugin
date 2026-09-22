@@ -145,35 +145,42 @@ class TestAgentTaskMapping:
 # ---------------------------------------------------------------------------
 
 
-class TestUnknownAnnotationSkipped:
-    def test_unknown_repo_does_not_error(self, workspace):
+class TestUnknownAnnotationIsADrop:
+    """Renamed from TestUnknownAnnotationSkipped. "Skipped" WAS the defect:
+    no-silent-success 1.2 makes an annotated-but-unresolvable task a drop —
+    named and non-zero — because someone asked for it and nobody got it.
+    That is the haulops silence in miniature."""
+
+    def test_unknown_repo_is_reported_as_a_drop(self, workspace):
         tasks_md = _write_tasks_md(
             workspace,
             "ghost-change",
             "- [ ] 1.1 @otaman-cli Real task\n- [ ] 1.2 @otaman-nonexistent Ghost task\n",
         )
         r = _run(tasks_md)
-        assert r.returncode == 0
-        assert len(_report(r)["by_owner"]["cli-agent"]) == 1
-        # No agent named for the unknown repo
-        # The report NAMES what it could not assign, rather than dropping it
-        # silently. Surfacing an unknown annotation is the point.
+        # Exit 5, not 0: the known annotation dispatched, the unknown one was
+        # LOST, and a partial dispatch must not report bare success.
+        assert r.returncode == 5
         rep = _report(r)
         assert list(rep["by_owner"]) == ["cli-agent"], "the known annotation still dispatches"
-        assert any("nonexistent" in task for task in rep["unassigned_tasks"])
+        assert rep["dropped"] == 1
+        assert any("nonexistent" in task for task in rep["dropped_tasks"])
+        assert "NOT dispatched" in r.stderr
 
-    def test_no_recognized_annotations_exits_0_silently(self, workspace):
+    def test_no_recognized_annotations_states_the_outcome(self, workspace):
         tasks_md = _write_tasks_md(
             workspace,
             "specless",
             "- [ ] 1.1 Plain task with no annotation\n- [ ] 1.2 @otaman-nonexistent Unknown only\n",
         )
         r = _run(tasks_md)
-        assert r.returncode == 0
-        # Not an error: a report with nothing assigned, and no messages.
+        # One line is unannotated (legitimately nobody's) and one is annotated
+        # for an unknown repo (a drop) — so this is a drop, not quiet zero work.
+        assert r.returncode == 5
         rep = _report(r)
         assert rep["assigned"] == 0
         assert rep["bus_messages_created"] == []
+        assert rep["dropped"] == 1, "the annotated line is lost work, not an absence"
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +245,8 @@ class TestLoudExits:
         tasks_md = bare / "tasks.md"
         tasks_md.write_text("- [ ] 1.1 @otaman-cli Task\n", encoding="utf-8")
         r = _run(tasks_md)
-        assert r.returncode == 2, "an unresolvable root must not look like success"
+        # Exit 3: "not found" is now distinct from "found nothing to do" (2).
+        assert r.returncode == 3, "an unresolvable root must not look like success"
         assert r.stderr.strip(), "and must say why"
 
     def test_missing_tasks_md_exits_nonzero(self, workspace):
