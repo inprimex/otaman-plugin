@@ -270,6 +270,71 @@ Please implement these in your owned repos and send a completion message when do
     return created
 
 
+def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Consult the dispatch gate for the change owning *tasks_path*.
+
+    Returns ``(may_dispatch, messages)``.
+
+    spec-lifecycle-enforcement D5: dispatch requires stage >= ``spec-approved``;
+    absent it, the configured enforcement MODE decides. This path never
+    consulted the gate at all, so an authored change fanned out
+    task-assignments the moment its folder was touched — spec-agent caught
+    exactly that (20260922T194019) when PR #470 dispatched two authored
+    changes.
+
+    Worth being precise about cause: the gate was always missing here, but the
+    path was DEAD until the root-resolution fix (#57) made hook-driven
+    dispatch work. Fixing the dispatcher is what turned a latent ungated path
+    into a live one.
+
+    Honouring the mode rather than hard-refusing is deliberate. Under
+    ``warn`` the dispatch proceeds and says so; hard-refusing would override a
+    policy someone chose. Making refusal unconditional is a POLICY change
+    (``enforcement: block``), not a conformance fix.
+
+    Degrades to allow-with-no-message when core lacks the gate or the change
+    carries no ``.openspec.yaml`` — a dispatcher must not be disarmed by a
+    laggard bundle, and the read surfaces refuse loudly instead.
+    """
+    try:
+        import yaml as _yaml
+        from otaman_core.spec_lifecycle import check_dispatch_gate, resolve_spec_policy
+    except Exception:
+        return True, []
+
+    meta = tasks_path.parent / ".openspec.yaml"
+    if not meta.is_file():
+        return True, []
+
+    try:
+        change = _yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
+        program = config.get("spec_policy") if isinstance(config, dict) else None
+        decision = check_dispatch_gate(change, resolve_spec_policy(program_block=program))
+    except Exception:
+        return True, []
+
+    violations = list(getattr(decision, "violations", ()) or ())
+    if not violations:
+        return True, []
+
+    stage = change.get("stage", "<unset>")
+    # Loud either way: a gate that fires silently is the defect it exists to
+    # prevent (no-silent-success clause 1 — say what was refused and why).
+    verb = "DISPATCH REFUSED" if not decision.allowed else "DISPATCH WARNING"
+    lines = [
+        f"[map-tasks] {verb}: change {tasks_path.parent.name!r} is stage={stage}",
+        *(f"[map-tasks]   - {v}" for v in violations),
+    ]
+    if decision.allowed:
+        lines.append(
+            "[map-tasks]   dispatching anyway: spec_policy enforcement is "
+            f"{getattr(decision, 'mode', 'warn')!r}. Set enforcement: block to refuse."
+        )
+    else:
+        lines.append("[map-tasks]   no task-assignments were written.")
+    return decision.allowed, lines
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("Usage: map-tasks.py <path-to-tasks.md or openspec-feature-dir>", file=sys.stderr)
@@ -300,6 +365,13 @@ def main() -> int:
     # Load data
     ownership = load_ownership(project_root)
     config = load_platform_config(project_root)
+
+    # Dispatch gate (spec-lifecycle-enforcement D5) — BEFORE any bus write.
+    may_dispatch, gate_lines = check_dispatch_allowed(tasks_path, config)
+    for line in gate_lines:
+        print(line, file=sys.stderr)
+    if not may_dispatch:
+        return 1
 
     # Parse and map tasks
     tasks = parse_tasks_md(tasks_path)
