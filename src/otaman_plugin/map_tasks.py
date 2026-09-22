@@ -44,6 +44,12 @@ from otaman_core._resolve import find_maestro_root as find_project_root  # share
 # here rather than shipped as a message that fails validation downstream.
 _GATE_WAIVED_SLUG = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
 
+#: A task line's repo annotation. Used ONLY to tell a DROP (annotated for a
+#: repo that resolved to nobody — the haulops silence) from a line that is
+#: legitimately nobody's. Owner resolution itself is `map_tasks_to_owners`;
+#: this must not become a second implementation of it.
+_ANNOTATION_RE = re.compile(r"@otaman-[a-z0-9-]+", re.IGNORECASE)
+
 
 def _owner_map(entries: Any) -> dict[str, str]:
     """``{repo_name: owner}`` from a ``repos`` list, skipping disabled repos
@@ -357,10 +363,18 @@ def main() -> int:
     # Find project root
     project_root = find_project_root(tasks_path)
     if not project_root:
+        # no-silent-success 1.2: "not found" and "found nothing to do" are
+        # DISTINCT outcomes, with distinct exit codes. This also named the
+        # wrong file — the resolver looks for the otaman root (platform.yaml
+        # via the repo's .otaman marker), not ownership.json, and that
+        # misdirection cost real debugging time on haulops.
         print(
-            "ERROR: Could not find .agents/ownership.json in any parent directory", file=sys.stderr
+            f"ERROR: no otaman root found from {tasks_path} — "
+            "the repo needs an .otaman marker pointing at the otaman folder "
+            "(the one holding platform.yaml). Nothing was dispatched.",
+            file=sys.stderr,
         )
-        return 2
+        return 3
 
     # Load data
     ownership = load_ownership(project_root)
@@ -376,10 +390,35 @@ def main() -> int:
     # Parse and map tasks
     tasks = parse_tasks_md(tasks_path)
     if not tasks:
-        print("No tasks found in file", file=sys.stderr)
-        return 1
+        # Legitimate zero work — STATED, not disguised, and not an error:
+        # a tasks.md with no checklist items is a valid thing to commit.
+        print(f"0 dispatched: no checklist tasks in {tasks_path.name}", file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "feature": feature_name,
+                    "outcome": "no-tasks-in-file",
+                    "total_tasks": 0,
+                    "dispatched": 0,
+                    "bus_messages_created": [],
+                },
+                indent=2,
+            )
+        )
+        return 0
 
     tasks = map_tasks_to_owners(tasks, ownership)
+
+    # A task ANNOTATED for a repo that did not resolve to an owner is a DROP,
+    # not an absence: someone asked for it and nobody got it. An unannotated
+    # line is legitimately nobody's and is not counted here. This is exactly
+    # the haulops silence — @otaman-haulops-firmware resolved to nothing and
+    # was skipped without a word.
+    dropped = [
+        t_["text"]
+        for t_ in tasks
+        if not t_.get("owner") and _ANNOTATION_RE.search(t_.get("text", ""))
+    ]
 
     # Create bus messages
     created = create_bus_messages(project_root, tasks, feature_name, config)
@@ -402,7 +441,46 @@ def main() -> int:
         if t.get("owner"):
             by_owner[t["owner"]].append(t["text"])
     report["by_owner"] = dict(by_owner)
+    report["dispatched"] = len(created)
+    report["dropped"] = len(dropped)
+    report["dropped_tasks"] = dropped
 
+    # Counts on every run, on stderr so they are visible even when stdout is
+    # consumed as JSON. A verb that did work says what it did.
+    print(
+        f"{len(created)} dispatched to {len(report['by_owner'])} agent(s); "
+        f"{report['assigned']} task(s) assigned, {report['dropped']} dropped",
+        file=sys.stderr,
+    )
+
+    if dropped:
+        # A drop is an error, not a silent omission (delta, scenario 1).
+        report["outcome"] = "drops"
+        print(
+            f"ERROR: {len(dropped)} task(s) carry an @otaman-<repo> annotation that "
+            "resolved to no owner — they were NOT dispatched:",
+            file=sys.stderr,
+        )
+        for text in dropped:
+            print(f"  - {text}", file=sys.stderr)
+        print(
+            "Check that each annotated repo appears in platform.yaml repos[] with an owner.",
+            file=sys.stderr,
+        )
+        print(json.dumps(report, indent=2))
+        return 5
+
+    if not created:
+        # Tasks existed, none were for anyone here. Stated, not disguised.
+        report["outcome"] = "nothing-to-dispatch"
+        print(
+            f"0 dispatched: none of the {len(tasks)} task(s) are annotated for a known repo",
+            file=sys.stderr,
+        )
+        print(json.dumps(report, indent=2))
+        return 0
+
+    report["outcome"] = "dispatched"
     print(json.dumps(report, indent=2))
     return 0
 

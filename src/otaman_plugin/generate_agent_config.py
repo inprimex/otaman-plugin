@@ -1197,6 +1197,24 @@ def install_repo_post_commit_hooks(project_root: Path, config: dict[str, Any]) -
         results.append("WARNING: post-commit-hook.sh not found (looked in package + dev tree)")
         return results
 
+    # no-silent-success 1.1: verify the hook RUNS, not that the file exists.
+    # haulops had three hooks installed, readable and executable, and totally
+    # inert — the wheel shipped the entry points without `_resolve.sh`, which
+    # every one of them sources. Install reported success; nothing dispatched.
+    # An install-time ERROR is the point: a hook that cannot work must not be
+    # reported as installed.
+    from otaman_plugin.hook_liveness import probe_hook_liveness
+
+    liveness = probe_hook_liveness(hook_source)
+    if not liveness.performed:
+        results.append(f"WARNING: hook liveness NOT CHECKED — {liveness.reason}")
+    elif not liveness.ok:
+        results.append(f"ERROR: {liveness.reason}")
+        results.append(
+            "ERROR: refusing to report post-commit hooks as installed — they would be inert"
+        )
+        return results
+
     for repo in config["repos"]:
         repo_path_str = repo["path"]
         # Skip the specs repo — it has its own spec-change-hook
