@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 import stat
+import sys
 from pathlib import Path
 
 import pytest
 
 _CORE_SRC = str(Path(__file__).resolve().parent.parent.parent / "otaman-core" / "src")
+
+# The stub `otaman` executables below run the interpreter RUNNING THE TESTS,
+# not `#!/usr/bin/env python3`.
+#
+# The hooks are invoked with PATH restricted to the stub dir plus
+# /usr/bin:/bin, so `env python3` resolved to the SYSTEM python rather than
+# the venv pytest is running under. On Linux CI that happened to be new
+# enough to import otaman_core; on macOS it is the Xcode CLT python, which is
+# not (`from datetime import UTC` is 3.11+). The stub then exited non-zero,
+# `resolve_enforcement_identity` returned 1, and every ownership/blocked hook
+# took its `|| exit 0` FAIL-OPEN path — so 13 tests asserting a deny saw an
+# allow. The hooks were behaving correctly for an unresolvable identity; the
+# fixture simply never gave them one.
+#
+# Pinning to sys.executable makes the stub independent of whatever python
+# happens to sit in /usr/bin, which is the only thing these fixtures ever
+# wanted from it.
+_STUB_SHEBANG = f"#!{sys.executable}"
 
 # bus-test-isolation 4.2: adopt the shared otaman_core.testing primitive
 # (autouse `isolate_bus` fixture, discovered by name) in place of the
@@ -41,7 +60,7 @@ def otaman_stub_bin(tmp_path):
     bin_dir.mkdir()
     stub = bin_dir / "otaman"
     stub.write_text(
-        f"""#!/usr/bin/env python3
+        f"""{_STUB_SHEBANG}
 import sys
 sys.path.insert(0, {_CORE_SRC!r})
 if sys.argv[1:] == ["whoami", "--resolve-only"]:
@@ -74,7 +93,7 @@ def otaman_stale_stub_bin(tmp_path):
     bin_dir.mkdir()
     stub = bin_dir / "otaman"
     stub.write_text(
-        """#!/usr/bin/env python3
+        f"""{_STUB_SHEBANG}
 print("  ──────────────────────────────────────")
 print("    Otaman: plugin-agent")
 print("  ──────────────────────────────────────")

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -239,3 +240,45 @@ class TestF013EnforcementIdentity:
                 project, project["base"] / "myrepo" / "src" / "foo.py", path=otaman_stale_stub_bin
             )
         )
+
+
+class TestTheStubRunsTheTestInterpreter:
+    """A guard on the fixture, not the hook — see the note on `_STUB_SHEBANG`
+    in tests/conftest.py.
+
+    The hooks run with PATH restricted to the stub dir plus /usr/bin:/bin, so
+    a `#!/usr/bin/env python3` stub resolved to the SYSTEM python instead of
+    the one running the tests. Linux CI's happened to import otaman_core;
+    macOS's (Xcode CLT, pre-3.11) did not, so the stub exited non-zero,
+    identity came back unresolved, and every hook here took its fail-open
+    path. Thirteen tests asserting a DENY quietly saw an ALLOW — and reported
+    it as a JSON-formatting problem, which is what made it look cosmetic.
+
+    That is the dangerous shape: a security control's tests going green-ish on
+    the platform nobody blocks on, because the fixture could not give the
+    control an identity to enforce with.
+    """
+
+    def test_stub_shebang_is_absolute_not_a_path_lookup(self, otaman_stub_bin):
+        shebang = (otaman_stub_bin / "otaman").read_text(encoding="utf-8").splitlines()[0]
+        assert shebang.startswith("#!/"), shebang
+        assert "/usr/bin/env" not in shebang, (
+            "the stub resolves its interpreter through PATH again — on a "
+            "machine whose system python cannot import otaman_core, every "
+            "deny test in this file silently becomes an allow test"
+        )
+        assert shebang == f"#!{sys.executable}", shebang
+
+    def test_the_stub_actually_resolves_an_identity(self, project, otaman_stub_bin):
+        """The assertion the 13 failures were really making, stated directly:
+        if this fails, no deny test below can mean anything."""
+        proc = subprocess.run(
+            [str(otaman_stub_bin / "otaman"), "whoami", "--resolve-only"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=str(project["root"]),
+            env={"PATH": "/usr/bin:/bin", "HOME": str(project["root"])},
+        )
+        assert proc.returncode == 0, f"stub could not resolve identity: {proc.stderr}"
+        assert proc.stdout.strip() == AGENT, proc.stdout
