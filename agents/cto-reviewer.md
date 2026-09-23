@@ -62,7 +62,8 @@ For any proposed change:
 
 ### 4. ADR review
 
-When reviewing Architecture Decision Records in `$PROJECT_ROOT/.agents/decisions/`:
+When reviewing decision records — `type: decision` entries in
+`$PROJECT_ROOT/.agents/knowledge/` (`otaman knowledge list`):
 - Is the context clear and complete?
 - Are alternatives considered?
 - Are consequences well-understood?

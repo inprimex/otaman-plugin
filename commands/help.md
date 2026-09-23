@@ -133,7 +133,7 @@ Messages go to `.agents/bus/active/` with filename `{YYYYMMDDTHHmmSS}-{from}-to-
 
 #### Specs
 
-When OpenSpec is installed in the specs repo, otaman delegates: `openspec new change "..."`, `openspec instructions`, `openspec archive`. When absent, otaman falls back to markdown proposals in `.agents/proposals/`. Agent-initiated spec changes flow: `propose` → `approve` → OpenSpec CLI execution → bus broadcast → agents adapt → `otaman complete` updates `tasks.md` checkboxes.
+When OpenSpec is installed in the specs repo, otaman delegates: `openspec new change "..."`, `openspec instructions`, `openspec archive`. When absent, otaman falls back to proposals carried as bus messages (`.agents/proposals/` is retired — shared-agent-memory D2). Agent-initiated spec changes flow: `propose` → `approve` → OpenSpec CLI execution → bus broadcast → agents adapt → `otaman complete` updates `tasks.md` checkboxes.
 
 #### Observers
 

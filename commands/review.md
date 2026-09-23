@@ -37,7 +37,7 @@ Once found, resolve to an **absolute path**. All paths below are relative to the
    - `all` (default) → launch all available observers in parallel
 
 2. **Determine scope**: Based on the `scope` argument:
-   - **Feature name** → find the feature in OpenSpec active directory or `$PROJECT_ROOT/.agents/proposals/`
+   - **Feature name** → find the feature in the OpenSpec active directory, or on the bus for a fallback-mode proposal
    - **PR number** → use `gh pr view` to get the PR diff and affected files
    - **Repo name** → review recent changes in that specific repo
    - **`recent`** (default) → check git log across all repos for changes since the last review

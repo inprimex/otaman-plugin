@@ -61,7 +61,8 @@ Before anything else:
 - Affected agents notified?
 
 #### 4. ADR review
-When reviewing Architecture Decision Records in `{otaman}/.agents/decisions/`:
+When reviewing decision records — `type: decision` entries in
+`{otaman}/.agents/knowledge/` (`otaman knowledge list`):
 - Context clear and complete?
 - Alternatives considered?
 - Consequences well-understood?

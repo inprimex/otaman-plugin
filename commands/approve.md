@@ -71,7 +71,9 @@ When the human approves a proposal:
      - `openspec status --change {title}` to check completion status
      - Or interactively via `/opsx:ff` in the specs repo Claude Code session
 4. **If `fallback`**:
-   - Create a proposal file in `$PROJECT_ROOT/.agents/proposals/` with the agent's content
+   - The proposal bus message IS the proposal — do not copy it into a file.
+     `.agents/proposals/` is retired (shared-agent-memory D2); proposals live
+     on the bus plus the SLE ledger.
    - Set status to `approved`
 5. **Create approval ack**: Write an ack file for the proposal message:
    ```bash

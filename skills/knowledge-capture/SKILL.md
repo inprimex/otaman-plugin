@@ -110,7 +110,7 @@ save_knowledge_item(
 | fact (reusable) | `domain-knowledge` — goes to domain expert templates (future: revlet.ai) |
 | metric (project-specific) | `project` |
 | metric (reusable) | `benchmarks` — adjustment factors or patterns |
-| decision | `project` — also may become an ADR in `.agents/decisions/` |
+| decision | `project` — a fleet-level ruling also belongs in `.agents/knowledge/` via `otaman knowledge add --type decision` |
 | estimation | `benchmarks` — patterns or adjustment factors |
 | learning | `benchmarks` — common_underestimates or patterns |
 | vendor-quirk | `domain-knowledge` — future: revlet.ai knowledge pack |
