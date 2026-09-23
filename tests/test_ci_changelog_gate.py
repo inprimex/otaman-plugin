@@ -102,3 +102,42 @@ class TestPrBodyIsNotInterpolatedIntoTheShell:
         step = next(s for s in wf["jobs"]["changelog"]["steps"] if s.get("name") == "Write PR body")
         assert "PR_BODY" in step.get("env", {})
         assert "${{ github.event.pull_request.body }}" not in step["run"]
+
+
+class TestMatrixBlockingPolicy:
+    """macOS is a BLOCKING leg as of 2026-09-23 (PRs #68-#70).
+
+    It was `continue-on-error` for months on the theory that its failures were
+    environmental. In that window the leg hid four real problems behind a
+    permanent green tick — three of them product or coverage defects, most
+    seriously 13 ownership/blocked tests that asserted a DENY and silently
+    received an ALLOW. A leg that cannot fail teaches nobody anything.
+
+    macOS is also the cross-platform surface that actually matters: CE tenants
+    are systemd-gated to Linux, but the plugin's hooks and launcher run on
+    whatever machine a developer runs `claude` on.
+
+    Windows is deliberately still excluded (~155 failures; the bash hook suites
+    need a POSIX shell story there). Flipping it before it is green would block
+    every merge — a gate that cannot pass is worse than no gate.
+    """
+
+    def _test_job(self) -> dict:
+        return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["test"]
+
+    def test_macos_is_not_excused(self):
+        expr = str(self._test_job().get("continue-on-error", ""))
+        assert "windows" in expr, (
+            f"expected the excuse to name windows only, got {expr!r} — if macOS "
+            f"is non-blocking again, see PRs #68-#70 for what that leg hides"
+        )
+        assert "ubuntu" not in expr, (
+            f"{expr!r} reads as 'everything except ubuntu', which is the old "
+            f"policy that let macOS fail silently"
+        )
+
+    def test_all_three_platforms_still_run(self):
+        """Non-blocking is not the same as absent — Windows must keep running
+        so its ~155 failures stay visible and shrinkable."""
+        oses = self._test_job()["strategy"]["matrix"]["os"]
+        assert {"ubuntu-latest", "macos-latest", "windows-latest"} <= set(oses), oses

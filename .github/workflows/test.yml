@@ -30,12 +30,29 @@ jobs:
 
   test:
     runs-on: ${{ matrix.os }}
-    # ubuntu is the required gate (ci-ok depends on it). macOS/Windows run
-    # for visibility but are NON-BLOCKING: their platform-specific
-    # shell-hook (macOS bash 3.2) and pwsh test failures must not gate
-    # merges. Fix those separately to green the full matrix; until then
-    # ubuntu is representative (the plugin's Python is OS-identical).
-    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
+    # ubuntu AND macOS are required gates. Windows runs for visibility only.
+    #
+    # macOS became blocking on 2026-09-23, once it was actually green. It was
+    # `continue-on-error` for months on the theory that its failures were
+    # environmental, and in that time the leg hid FOUR real defects behind a
+    # permanent green tick: a fixture whose marker was rejected so 8 dispatch
+    # assertions measured the rejection instead (#68); 13 ownership/blocked
+    # tests that asserted a DENY and silently received an ALLOW, because the
+    # stub ran the wrong interpreter and the hooks' fail-open path took over
+    # (#69); `launch-agents.sh` dying with exit 127 on stock macOS because
+    # `mapfile` is bash 4.0+ (#70); and one genuinely environmental pwsh HOME.
+    #
+    # Three of the four were product or coverage defects, not environment. A
+    # leg that cannot fail teaches nobody anything, and this one converted a
+    # security control with no working coverage into a green tick. macOS is
+    # also the only cross-platform surface that matters here: CE tenants are
+    # systemd-gated to Linux, but the plugin's hooks and launcher run on
+    # whatever machine a developer runs `claude` on.
+    #
+    # Windows stays non-blocking: ~155 failures, a genuinely separate problem
+    # (the bash hook suites need a POSIX shell story on Windows). Do not flip
+    # it until it is green — a gate that cannot pass is worse than no gate.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:
