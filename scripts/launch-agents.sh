@@ -636,14 +636,24 @@ case "$SHELL_MODE" in
         # fails, the launcher warns and falls back to the direct-tmux path
         # below. `--no-runner` skips this branch entirely (offline / dev mode).
         if [[ "$VIA_RUNNER" -eq 1 ]]; then
-            if mapfile -t _endpoint < <(read_runner_endpoint); then
+            # bash 3.2 (stock macOS) has no `mapfile`; read the lines by hand.
+            # This also fixes a swallowed exit status: `mapfile < <(cmd)` takes
+            # mapfile's status, not the command's, so `read_runner_endpoint`
+            # returning 1 for a missing/incomplete endpoint file still entered
+            # this branch with empty host/port/token. Testing for the three
+            # fields makes the documented fallback actually fall back.
+            _endpoint=()
+            while IFS= read -r _ep_line; do _endpoint+=("$_ep_line"); done \
+                < <(read_runner_endpoint)
+            if [[ ${#_endpoint[@]} -eq 3 ]]; then
                 _host="${_endpoint[0]}"
                 _port="${_endpoint[1]}"
                 _token="${_endpoint[2]}"
                 _human="${USER:-${LOGNAME:-}}"
                 echo "runner: spawning via http://${_host}:${_port} (human=${_human:-<unset>})" >&2
                 # Build the repo list using same Python parse as the local path
-                mapfile -t _repo_rows < <(
+                _repo_rows=()
+                while IFS= read -r _row; do _repo_rows+=("$_row"); done < <(
                     ${PYTHON} - <<EOF
 import yaml, pathlib
 root = pathlib.Path("$MAESTRO_ROOT")
@@ -711,7 +721,8 @@ EOF
         # Output format per repo: <name>|<resolved_path>|<owner>
         # `owner` falls back to `name` when absent (with no warning here — the
         # PS1 launcher emits the warning; bash trusts the YAML).
-        mapfile -t repo_paths < <(
+        repo_paths=()
+        while IFS= read -r _row; do repo_paths+=("$_row"); done < <(
             ${PYTHON} - <<EOF
 import sys, yaml, pathlib
 root = pathlib.Path("$MAESTRO_ROOT")
