@@ -59,6 +59,10 @@ To wire the hooks, add the `hooks.json` entries from `hooks/hooks.json` to your 
 - `CONTRIBUTING.md` — contributor workflow
 - `SECURITY.md` — security policy and reporting channel
 
+## Versioning — tags in this repo are NON-SHIPPING
+
+**Nothing installs from this repo's tags.** They are development history. The shipping version is the **otaman-deploy release**, which bundles this repo's `main` at cut time — see otaman-deploy's `RELEASING.md` for the authority chain.
+
 ## License
 
 Otaman Community Edition is free software, licensed under the **GNU Affero
