@@ -564,17 +564,27 @@ class TestDegradationModeUnchanged:
         text = PS1_LAUNCHER.read_text(encoding="utf-8")
         assert "[switch]$AllowDirectFallback" in text
 
-    def test_unconfigured_runner_degrades_without_flag_requirement(self, harness_path):
+    def test_unconfigured_runner_degrades_without_flag_requirement(self, harness_path, tmp_path):
         # Source = None (no runner_uri, no endpoint file) must not require
         # -AllowDirectFallback -- this is the "not every developer runs a
         # runner" path and must stay silent-but-informational.
+        #
+        # HOME must be an EMPTY but EXISTING directory, the same shape the
+        # sibling no-endpoint test uses. A nonexistent path works on Linux but
+        # aborts pwsh on macOS before the harness loads: pwsh creates its XDG
+        # config directory under $HOME at startup, and mkdir under `/` raises
+        # `Read-only file system`, killing the process with SIGABRT. What the
+        # test needs is a HOME with no endpoint file in it, not a HOME that
+        # does not exist.
+        empty_home = tmp_path / "unconfigured-home"
+        empty_home.mkdir()
         body = """
         $settings = @{}
         $d = Resolve-RunnerEndpointForConnection -Settings $settings
         $configuredSource = $d.Source -in @('FromBlock', 'FromFile')
         $result = @{ Source = $d.Source; ConfiguredSource = $configuredSource }
         """
-        r = run_ps(harness_path, body, env={"HOME": "/nonexistent-home-for-test"})
+        r = run_ps(harness_path, body, env={"HOME": str(empty_home)})
         assert r["Source"] == "None"
         assert r["ConfiguredSource"] is False
 
