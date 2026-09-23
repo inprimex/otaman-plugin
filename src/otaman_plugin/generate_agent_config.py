@@ -975,12 +975,19 @@ later:
 
 ```
 otaman knowledge add --type fact|lesson|decision|reference --anchor <evidence>
-otaman knowledge list        # past-due review-by renders flagged, not silently trusted
+otaman knowledge list                  # what we know
+otaman knowledge list --past-due       # what has aged out of its review-by
+otaman knowledge show <substring>      # one entry in full
 ```
 
 Every entry carries an **evidence anchor** — the message stem, PR, commit, or
 file:line that proves it. An entry without one is refused, because an
 unanchored claim is indistinguishable from a guess six weeks later.
+
+A past-due entry is **flagged, not silently trusted** — `--past-due` is the
+list worth acting on. When you check it, read the entry count too: "nothing
+overdue" and "nothing recorded at all" are different states, and the second
+one means the write duty above has stopped happening.
 
 **There is no scheduled "update the knowledge base" chore, deliberately.**
 Scheduled memory work produces filler; incident-priced memory produces the
