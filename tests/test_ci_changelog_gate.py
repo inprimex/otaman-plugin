@@ -105,39 +105,50 @@ class TestPrBodyIsNotInterpolatedIntoTheShell:
 
 
 class TestMatrixBlockingPolicy:
-    """macOS is a BLOCKING leg as of 2026-09-23 (PRs #68-#70).
+    """macOS and Windows are INFORMATIONAL legs, and must SAY so.
 
-    It was `continue-on-error` for months on the theory that its failures were
-    environmental. In that window the leg hid four real problems behind a
-    permanent green tick — three of them product or coverage defects, most
-    seriously 13 ownership/blocked tests that asserted a DENY and silently
-    received an ALLOW. A leg that cannot fail teaches nobody anything.
+    Roman held macOS support on 2026-09-23, so gating merges on it would
+    commit the fleet to a platform it has not committed to. The leg stays
+    anyway, and stays green: it went 27 failures -> 0 across PRs #68-#70 and
+    that work should not have to be redone if support is revisited.
 
-    macOS is also the cross-platform surface that actually matters: CE tenants
-    are systemd-gated to Linux, but the plugin's hooks and launcher run on
-    whatever machine a developer runs `claude` on.
+    But an unlabelled non-blocking leg is exactly what hid those four
+    problems for months — three of which were real, the worst being 13
+    ownership tests asserting a DENY and silently receiving an ALLOW. In the
+    PR checks list a non-blocking green tick is indistinguishable from a
+    blocking one. The failure was never that the leg could not fail the
+    build; it was that nobody read it and the failures carried an unexamined
+    label.
 
-    Windows is deliberately still excluded (~155 failures; the bash hook suites
-    need a POSIX shell story there). Flipping it before it is green would block
-    every merge — a gate that cannot pass is worse than no gate.
+    So the check NAME carries the disclaimer, and these tests keep it there.
+    The defect class that actually matters is caught by
+    test_shell_bash32_portability.py, which runs on Linux in the BLOCKING job.
     """
 
     def _test_job(self) -> dict:
         return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["test"]
 
-    def test_macos_is_not_excused(self):
-        expr = str(self._test_job().get("continue-on-error", ""))
-        assert "windows" in expr, (
-            f"expected the excuse to name windows only, got {expr!r} — if macOS "
-            f"is non-blocking again, see PRs #68-#70 for what that leg hides"
+    def test_non_ubuntu_legs_are_labelled_informational(self):
+        """The label is the fix. Without it the leg is a green tick that
+        guarantees nothing, which is how this went wrong the first time."""
+        name = " ".join(str(self._test_job()["name"]).split())
+        assert "INFORMATIONAL" in name, (
+            f"check name {name!r} does not mark the non-blocking legs — a "
+            f"reader sees a green tick identical to a gating one"
         )
-        assert "ubuntu" not in expr, (
-            f"{expr!r} reads as 'everything except ubuntu', which is the old "
-            f"policy that let macOS fail silently"
+        assert "does not gate" in name, f"the disclaimer should say what it means: {name!r}"
+        assert "ubuntu-latest" in name, (
+            f"the label must be CONDITIONAL on the leg, or ubuntu — the real "
+            f"gate — gets marked informational too: {name!r}"
         )
 
+    def test_ubuntu_remains_the_gate(self):
+        expr = str(self._test_job().get("continue-on-error", ""))
+        assert "ubuntu-latest" in expr, expr
+
     def test_all_three_platforms_still_run(self):
-        """Non-blocking is not the same as absent — Windows must keep running
-        so its ~155 failures stay visible and shrinkable."""
+        """Informational is not the same as absent. macOS stays so it cannot
+        silently rot back to 27 failures; Windows stays so its ~155 remain
+        visible and shrinkable."""
         oses = self._test_job()["strategy"]["matrix"]["os"]
         assert {"ubuntu-latest", "macos-latest", "windows-latest"} <= set(oses), oses
