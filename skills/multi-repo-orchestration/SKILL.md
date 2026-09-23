@@ -327,30 +327,21 @@ Once you see **both** `spec-change-approved` AND `spec-change` (the actual spec 
 
 ## Decision Records
 
-For significant architectural decisions, create an ADR in `{otaman}/.agents/decisions/`:
+A significant architectural decision is durable knowledge, so record it as a
+knowledge entry rather than in a parallel directory:
 
-**Filename**: `{NNN}-{short-title}.md`
-
-**Content**:
-```markdown
----
-id: ADR-{NNN}
-date: {YYYY-MM-DD}
-author: {agent-name}
-status: proposed
----
-
-## {Title}
-
-### Context
-{Why this decision is needed}
-
-### Decision
-{What was decided}
-
-### Consequences
-{Impact on the project}
 ```
+otaman knowledge add --type decision --anchor <approval stem | PR | commit>
+```
+
+Cover: context (why the decision was needed), what was decided, and the
+consequences. The **evidence anchor is required** — a ruling nobody can trace
+back to its approval is indistinguishable from an opinion six weeks later.
+
+`{otaman}/.agents/decisions/` is retired (shared-agent-memory D2). It was
+advertised in the generated instructions for months, had no writer anywhere,
+and held zero files — the reason rulings now go where the readers already
+look.
 
 ## Compliance Notes
 

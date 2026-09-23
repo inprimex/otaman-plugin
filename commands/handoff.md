@@ -66,18 +66,26 @@ Write `platform.yaml` to the project root.
 Based on `specs.format`:
 
 - **openspec**: Create specs repo directory if it doesn't exist. Suggest user run `openspec init` in it.
-- **fallback**: Create `.agents/proposals/` directory (will be created by `/otaman:init`).
+- **fallback**: Nothing to scaffold — a fallback proposal IS a bus message.
+  `.agents/proposals/` is retired (shared-agent-memory D2).
 
 If the estimation produced specific feature/epic breakdowns, suggest creating initial proposals or OpenSpec changes for each.
 
-### Step 3: Create ADRs from architecture decisions (7.4c)
+### Step 3: Record architecture decisions as knowledge (7.4c)
 
-Read `.otaman-presale/architecture/tech-decisions.md` (if exists) and convert each technology decision into an ADR:
+Read `.otaman-presale/architecture/tech-decisions.md` (if exists) and record each
+technology decision as a knowledge entry:
 
-For each decision:
-1. Create `.agents/decisions/{NNN}-{short-title}.md`
-2. Use the ADR template from `references/adr-template.md`
-3. Include: context (why the decision was needed), decision (what was chosen), alternatives considered, consequences
+```
+otaman knowledge add --type decision --anchor <tech-decisions.md or approval stem>
+```
+
+Include: context (why the decision was needed), what was chosen, alternatives
+considered, consequences.
+
+`.agents/decisions/` is retired (shared-agent-memory D2) — a ruling IS durable
+knowledge, so it belongs in `.agents/knowledge/` with `type: decision` and its
+evidence anchor, not in a parallel directory with no writer.
 
 ### Step 4: Migrate presale artifacts (7.4d)
 

@@ -16,7 +16,7 @@ This guide explains how otaman's features map to compliance requirements for HIP
 |---|---|---|
 | Change tracking | All changes go through git commits | Git history per repo |
 | Communication logging | All inter-agent messages stored as files | `.agents/bus/` directory |
-| Decision documentation | Architecture Decision Records | `.agents/decisions/` directory |
+| Decision documentation | Decision records as durable knowledge | `type: decision` entries in `.agents/knowledge/`, each with an evidence anchor |
 | Review records | Observer reviews preserved | `.agents/reviews/done/` directory |
 
 ## Review & Approval
@@ -25,7 +25,7 @@ This guide explains how otaman's features map to compliance requirements for HIP
 |---|---|---|
 | Code review | CTO reviewer and spec validator agents | Review files in `.agents/reviews/` |
 | Security review | Security observer agent | Security review files |
-| Change approval workflow | Proposals require review before implementation | `.agents/proposals/` or OpenSpec proposals |
+| Change approval workflow | Proposals require review before implementation | Proposal bus messages + their approval acks, or OpenSpec changes |
 | Separation of review and implementation | Observer agents are read-only, never modify code | Agent definitions enforce READ-ONLY |
 
 ## Generating Compliance Reports

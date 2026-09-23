@@ -151,20 +151,13 @@ When you need to understand a feature's requirements:
 When OpenSpec is not installed, otaman provides a simple proposal workflow.
 
 ### Creating a proposal
-Write a markdown file in `.agents/proposals/`:
+Run `/otaman:propose` — the bus message IS the proposal. Do not write a file:
+`.agents/proposals/` is retired (shared-agent-memory D2), because proposals
+already live on the bus and the SLE ledger, and a second copy on disk only
+drifts from the one the human actually approves.
 
-**Filename**: `{NNN}-{short-description}.md`
-
-**Content**:
+The message body carries:
 ```markdown
----
-id: PROP-{NNN}
-author: {agent-name}
-date: {YYYY-MM-DD}
-status: proposed
-affects: [repo-name-1, repo-name-2]
----
-
 ## {Feature title}
 
 ### Problem

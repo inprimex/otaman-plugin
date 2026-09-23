@@ -7,12 +7,15 @@ Usage:
 Creates:
     .agents/
     ├── bus/
-    ├── proposals/
     ├── reviews/pending/
     ├── reviews/done/
-    ├── decisions/
+    ├── blocked/
+    ├── queue/
     ├── ownership.json
     └── agents.yaml
+
+`proposals/` and `decisions/` are deliberately absent — retired by
+shared-agent-memory D2 as advertised-but-unwritten surfaces.
 
 Also writes per-repo orchestration rules to a gitignored CLAUDE.local.md
 (never the committed CLAUDE.md; Claude Code auto-loads it after CLAUDE.md).
@@ -106,10 +109,17 @@ def create_directories(project_root: Path, config: dict[str, Any]) -> list[str]:
         project_root / bus_path / "active",
         project_root / bus_path / "active" / "acks",
         project_root / bus_path / "archive",
-        project_root / ".agents" / "proposals",
+        # `.agents/proposals/` and `.agents/decisions/` are NOT created:
+        # shared-agent-memory D2 retires them. Both were advertised surfaces
+        # with no writer anywhere and held 0 files after months of operation.
+        # A ruling is durable knowledge — a `type: decision` knowledge entry
+        # anchored to its approval stem — and proposals already live on the bus
+        # plus the SLE ledger, so neither needed a writer so much as deleting.
+        # Creating them again would re-commit the exact defect this change
+        # fixes: per no-silent-success, a surface that exists implies a process
+        # that does not.
         project_root / ".agents" / "reviews" / "pending",
         project_root / ".agents" / "reviews" / "done",
-        project_root / ".agents" / "decisions",
         project_root / ".agents" / "blocked",
         project_root / ".agents" / "queue",
     ]
@@ -951,6 +961,58 @@ Otaman folder: `{m}/` (contains `.agents/`, `platform.yaml`, bus messages)
 4. Run `git log --oneline -10` — understand recent changes
 5. If `{m}/.agents/knowledge/` exists, check for tech docs relevant to your work
 6. Then: resume active task, or pick highest-priority queued task, or act on bus messages
+
+### Knowledge — you are a writer, not just a reader
+
+Reading `.agents/knowledge/` (step 5) is half the duty. **Write the moment a
+durable fact is paid for** — the instant you have finished paying for it, not
+later:
+
+- an incident diagnosed (what the cause actually was, not what it looked like)
+- a non-obvious constraint measured (a limit, a timing, a platform quirk)
+- a cross-repo pattern ruled (record it as `type: decision`, anchored to the
+  approval stem)
+
+```
+otaman knowledge add --type fact|lesson|decision|reference --anchor <evidence>
+otaman knowledge list        # past-due review-by renders flagged, not silently trusted
+```
+
+Every entry carries an **evidence anchor** — the message stem, PR, commit, or
+file:line that proves it. An entry without one is refused, because an
+unanchored claim is indistinguishable from a guess six weeks later.
+
+**There is no scheduled "update the knowledge base" chore, deliberately.**
+Scheduled memory work produces filler; incident-priced memory produces the
+entries the next agent actually needs. The counterfactual is measured: on
+2026-09-21 four silent-failure findings were each re-derived from scratch by
+agents with nowhere to record or find them, and several were rediscoveries of
+weeks-old conditions.
+
+If you just spent an hour learning something the next agent would also spend an
+hour learning, that hour is the price. Write the entry.
+
+### Check otaman first — before you build a new mechanism
+
+Before introducing any new mechanism — credential handling, messaging, state
+files, scheduling — check what already exists:
+
+1. `otaman help` — is there already a verb for this?
+2. the platform schema — is there already a declared surface for it?
+3. `{m}/.agents/` — is there already a directory that owns this job?
+
+**If otaman nearly provides it, propose extending that surface instead of
+building beside it.** A tenant-local mechanism that duplicates a platform one
+is worse than the gap it fills: it works, so nobody notices, and it diverges.
+
+The rule was paid for. Asked to make a tenant GitHub-independent, an agent
+hand-rolled a git credential helper while the connections layer already
+existed — caught in review, not by the agent. Credentials in particular resolve
+**at the call site** via the connections layer; never persist a resolved value,
+and never write a bespoke per-tenant credential file.
+
+Unsure whether a surface exists? That is a `question` message to the owning
+agent, and it is cheaper than either answer you would otherwise guess.
 
 ### Ownership
 - This repo (`{repo["path"]}`) is YOURS — you may read and write freely here
