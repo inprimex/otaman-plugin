@@ -115,6 +115,23 @@ class TestGeneratedInstructions:
             assert moment in rendered, f"the instruction does not name {moment!r}"
         assert "no scheduled" in rendered.lower()
 
+    def test_review_duty_points_at_the_actionable_list(self, rendered):
+        """cli-agent's note (20260923T190443): plain `list` shows everything,
+        `--past-due` shows what actually needs acting on. A review duty that
+        points at the former is aspirational; one that points at the latter is
+        actionable."""
+        assert "--past-due" in rendered, "the review duty must name the flag that filters"
+
+    def test_review_duty_warns_that_empty_and_none_overdue_differ(self, rendered):
+        """An agent reading 'nothing overdue' must not read it the same way as
+        'nothing recorded'. The second means the write duty above has stopped
+        happening — which is the failure this whole change exists to prevent,
+        and it is invisible if the two states are read alike. (cli renders both
+        identically today; reported 20260923T191515.)"""
+        assert "nothing recorded" in rendered.lower(), (
+            "the instruction does not distinguish an empty filter from an empty surface"
+        )
+
     def test_entries_require_an_evidence_anchor(self, rendered):
         assert "evidence anchor" in rendered
         assert "refused" in rendered, "an unanchored entry is refused, not quietly accepted"
