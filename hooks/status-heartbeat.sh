@@ -60,18 +60,39 @@ CWD="$(printf '%s' "$INPUT" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*
 
 ROOT="$(find_maestro_root "$CWD" 2>/dev/null)" || exit 0
 
-# Identity: the same zero-subprocess chain the other latency-sensitive hooks
-# use (per-repo CLAUDE.md sniff, then the OTAMAN_AGENT spawn override).
-# NOT resolve_agent_identity() — that spawns python3 to import otaman_core,
-# which is correct for a git hook that runs once per commit but not for one
-# on every tool call. team-mode B1 retired .agents/current-agent; it is
-# deliberately not consulted here either.
-AGENT=""
-if [[ -f "$CWD/CLAUDE.md" ]]; then
-    AGENT="$(sed -n 's/.*You are `\([^`]*\)`.*/\1/p' "$CWD/CLAUDE.md" | head -1)"
-fi
+# Identity: the `.otaman` marker's `agent:` field first, then the OTAMAN_AGENT
+# spawn override. This mirrors the source order the resolver chain already
+# rules authoritative rather than inventing a third identity path — the marker
+# is the per-directory source `resolve_enforcement_identity` honors, and the
+# only one that is not agent-writable.
+#
+# It replaces a CLAUDE.md sniff for ``You are `<agent>` `` that was DEAD ON
+# EVERY OPERATOR-MODE REPO: `otaman init` writes that line to the gitignored
+# CLAUDE.local.md, never to the committed CLAUDE.md, so the branch matched
+# nothing fleet-wide and identity survived only on the env fallback below —
+# leaving the hook one unset variable from silently doing nothing.
+#
+# Still NOT resolve_agent_identity(): that spawns python3 to import
+# otaman_core, which is right for a git hook running once per commit and not
+# for one on every tool call. read_marker_agent is pure bash, and the marker
+# has already been read by find_maestro_root above. team-mode B1 retired
+# .agents/current-agent; it is deliberately not consulted here either.
+AGENT="$(read_marker_agent "$CWD" 2>/dev/null)" || AGENT=""
 [[ -z "$AGENT" && -n "${OTAMAN_AGENT:-}" ]] && AGENT="$OTAMAN_AGENT"
-[[ -z "$AGENT" ]] && exit 0
+if [[ -z "$AGENT" ]]; then
+    # no-silent-success clause 1: this is NOT the same outcome as "no otaman
+    # root here", and must not present as it. Reaching this line means a root
+    # WAS resolved — so identity should have resolved too, and the fact that it
+    # didn't is a real defect in this workspace's setup, not a quiet no-op.
+    #
+    # stderr, not stdout, and still exit 0: a heartbeat must never block a tool
+    # call or inject text into the transcript. This surfaces under
+    # `claude --debug` and in hook logs, which is where someone debugging a
+    # status record that will not refresh actually looks.
+    printf 'status-heartbeat: otaman root %s resolved, but no agent identity (.otaman `agent:` field missing and OTAMAN_AGENT unset) — status will not refresh\n' \
+        "$ROOT" >&2
+    exit 0
+fi
 
 STATUS_FILE="$ROOT/.agents/status/$AGENT.yaml"
 # No record means set-status has never run for this agent. Creating one here

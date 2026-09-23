@@ -193,7 +193,7 @@ _parse_marker_field() {
             val="${val%"${val##*[![:space:]]}"}"
 
             case "$key" in
-                maestro_root|expected_account)  # legacy: maestro_root field name kept for backward-compat
+                maestro_root|expected_account|agent)  # legacy: maestro_root field name kept for backward-compat
                     if [[ "$key" == "$field" ]]; then
                         echo "$val"
                         return 0
@@ -242,6 +242,25 @@ read_expected_account() {
     local marker
     marker="$(find_marker "${1:-$PWD}")" || return 1
     _parse_marker_field "$marker" expected_account
+}
+
+# Read the owning agent from the nearest .otaman/.maestro marker's `agent:`  # legacy: .maestro supported
+# field — the per-directory source `resolve_enforcement_identity` already
+# treats as authoritative, and the ONLY identity source that is not
+# agent-writable (OTAMAN_AGENT env and the retired .agents/current-agent both
+# are; see the F013 notes on resolve_enforcement_identity below).
+#
+# Pure bash by design: no subprocess, no python, no YAML parse. That is what
+# makes it usable from a hook on the per-tool-call path, where
+# resolve_agent_identity's python3 spawn is not affordable.
+#
+# Usage: read_marker_agent [start_dir]
+# Echoes the agent name and returns 0; returns 1 (no output) when there is no
+# marker or it carries no `agent:` field.
+read_marker_agent() {
+    local marker
+    marker="$(find_marker "${1:-$PWD}")" || return 1
+    _parse_marker_field "$marker" agent
 }
 
 # Expand a config_dir spec for a target shell.
