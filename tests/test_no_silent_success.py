@@ -136,7 +136,14 @@ class TestInstallRefusesToClaimAnInertHook:
 
 
 def _run_map_tasks(body: str, *, root: bool = True, stage: str = "spec-approved"):
-    t = Path(tempfile.mkdtemp())
+    # .resolve() is load-bearing on macOS, not tidiness. `mkdtemp()` hands back
+    # /var/folders/... while /var is a symlink to /private/var, so core's marker
+    # security check — which resolves the marker before comparing it to $HOME —
+    # sees /private/var/... , decides the marker points outside $HOME, and
+    # rejects it. Every assertion in this file then measures that rejection
+    # instead of the dispatch outcome under test. pytest's own `tmp_path` is
+    # already resolved, which is why the tmp_path-based suites never saw this.
+    t = Path(tempfile.mkdtemp()).resolve()
     meta = t / "p-otaman"
     (meta / ".agents" / "bus" / "active").mkdir(parents=True)
     (meta / "platform.yaml").write_text(
@@ -172,6 +179,30 @@ def _run_map_tasks(body: str, *, root: bool = True, stage: str = "spec-approved"
     except Exception:
         report = {}
     return proc, report, meta
+
+
+class TestTheSandboxItselfIsSound:
+    """A guard on the fixture, not the feature.
+
+    Every assertion in this file reads an exit code from map-tasks. If the
+    sandbox's marker is rejected before map-tasks gets to decide anything, the
+    whole file measures the rejection and still *looks* like it is testing
+    dispatch outcomes — it just reports the wrong one everywhere. That is how 9
+    tests here failed on macOS while passing on Linux: `mkdtemp()` returns
+    /var/folders/... , /var is a symlink to /private/var, and core resolves the
+    marker before comparing it to $HOME.
+
+    Asserting the rejection is absent catches that on ANY platform, so the next
+    person to drop the `.resolve()` fails locally rather than in a macOS-only
+    CI job nobody blocks on.
+    """
+
+    def test_the_marker_is_not_rejected_before_the_test_begins(self):
+        proc, _, _ = _run_map_tasks("- [ ] 1.1 @otaman-plugin do it\n")
+        assert "resolves outside $HOME" not in proc.stderr, (
+            "the sandbox marker was rejected for security, so every exit code "
+            "in this file describes that rejection rather than a dispatch outcome"
+        )
 
 
 class TestOutcomesAreDistinct:
