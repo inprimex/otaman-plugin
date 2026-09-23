@@ -244,7 +244,7 @@ read_expected_account() {
     _parse_marker_field "$marker" expected_account
 }
 
-# Read the owning agent from the nearest .otaman/.maestro marker's `agent:`
+# Read the owning agent from the nearest .otaman/.maestro marker's `agent:`  # legacy: .maestro supported
 # field — the per-directory source `resolve_enforcement_identity` already
 # treats as authoritative, and the ONLY identity source that is not
 # agent-writable (OTAMAN_AGENT env and the retired .agents/current-agent both
