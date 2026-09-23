@@ -29,12 +29,45 @@ jobs:
         run: ruff format --check .
 
   test:
+    # The name is load-bearing. A non-blocking leg shows up in the PR checks
+    # list as a green tick identical to a blocking one, and that is precisely
+    # how four real problems hid on macOS for months (see below). Saying
+    # INFORMATIONAL in the check name is the only place a reader actually
+    # looks. TestMatrixBlockingPolicy asserts this label stays.
+    name: >-
+      test (${{ matrix.os }}, ${{ matrix.python-version }})${{
+        matrix.os != 'ubuntu-latest' && ' — INFORMATIONAL, does not gate merges' || '' }}
     runs-on: ${{ matrix.os }}
-    # ubuntu is the required gate (ci-ok depends on it). macOS/Windows run
-    # for visibility but are NON-BLOCKING: their platform-specific
-    # shell-hook (macOS bash 3.2) and pwsh test failures must not gate
-    # merges. Fix those separately to green the full matrix; until then
-    # ubuntu is representative (the plugin's Python is OS-identical).
+    # ubuntu is the only required gate. macOS and Windows are INFORMATIONAL.
+    #
+    # macOS is not blocking because macOS is not a supported platform — Roman
+    # held that decision on 2026-09-23 (relayed 20260923T190124). Gating every
+    # merge on a platform we have not committed to would be the worse half of
+    # the trade. It is kept, and kept green, so the ground does not rot if
+    # support is revisited: it went 27 failures -> 0 in #68/#69/#70 and that
+    # work should not have to be redone.
+    #
+    # THE LABEL IS THE FIX, not the blocking flag. This leg was excused for
+    # months on the theory that its failures were environmental, and in that
+    # window it hid FOUR problems behind a green tick:
+    #   #68  a fixture whose marker was rejected for security, so 8 dispatch
+    #        assertions measured the rejection, not the outcome they named
+    #   #69  13 ownership/blocked tests asserting a DENY and silently getting
+    #        an ALLOW — the stub ran the wrong interpreter, identity never
+    #        resolved, and the hooks' deliberate fail-open path took over
+    #   #70  launch-agents.sh dying with exit 127 on stock macOS: `mapfile`
+    #        is bash 4.0+ and macOS ships 3.2
+    #   #70  one genuinely environmental pwsh $HOME case
+    # Three of four were product or coverage defects. The failure was never
+    # that the leg could not fail the build — it was that nobody read it and
+    # the failures carried an unexamined label. So the check NAME now says
+    # INFORMATIONAL, and the defect class that actually matters is caught by
+    # tests/test_shell_bash32_portability.py, which runs on LINUX in the
+    # blocking job. A portability defect catchable only where nothing blocks
+    # is a defect that ships.
+    #
+    # Windows: ~155 failures, a separate problem (the bash hook suites need a
+    # POSIX shell story there). It keeps running so the count stays visible.
     continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
     strategy:
       fail-fast: false

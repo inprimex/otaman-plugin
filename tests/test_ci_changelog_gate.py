@@ -102,3 +102,53 @@ class TestPrBodyIsNotInterpolatedIntoTheShell:
         step = next(s for s in wf["jobs"]["changelog"]["steps"] if s.get("name") == "Write PR body")
         assert "PR_BODY" in step.get("env", {})
         assert "${{ github.event.pull_request.body }}" not in step["run"]
+
+
+class TestMatrixBlockingPolicy:
+    """macOS and Windows are INFORMATIONAL legs, and must SAY so.
+
+    Roman held macOS support on 2026-09-23, so gating merges on it would
+    commit the fleet to a platform it has not committed to. The leg stays
+    anyway, and stays green: it went 27 failures -> 0 across PRs #68-#70 and
+    that work should not have to be redone if support is revisited.
+
+    But an unlabelled non-blocking leg is exactly what hid those four
+    problems for months — three of which were real, the worst being 13
+    ownership tests asserting a DENY and silently receiving an ALLOW. In the
+    PR checks list a non-blocking green tick is indistinguishable from a
+    blocking one. The failure was never that the leg could not fail the
+    build; it was that nobody read it and the failures carried an unexamined
+    label.
+
+    So the check NAME carries the disclaimer, and these tests keep it there.
+    The defect class that actually matters is caught by
+    test_shell_bash32_portability.py, which runs on Linux in the BLOCKING job.
+    """
+
+    def _test_job(self) -> dict:
+        return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["test"]
+
+    def test_non_ubuntu_legs_are_labelled_informational(self):
+        """The label is the fix. Without it the leg is a green tick that
+        guarantees nothing, which is how this went wrong the first time."""
+        name = " ".join(str(self._test_job()["name"]).split())
+        assert "INFORMATIONAL" in name, (
+            f"check name {name!r} does not mark the non-blocking legs — a "
+            f"reader sees a green tick identical to a gating one"
+        )
+        assert "does not gate" in name, f"the disclaimer should say what it means: {name!r}"
+        assert "ubuntu-latest" in name, (
+            f"the label must be CONDITIONAL on the leg, or ubuntu — the real "
+            f"gate — gets marked informational too: {name!r}"
+        )
+
+    def test_ubuntu_remains_the_gate(self):
+        expr = str(self._test_job().get("continue-on-error", ""))
+        assert "ubuntu-latest" in expr, expr
+
+    def test_all_three_platforms_still_run(self):
+        """Informational is not the same as absent. macOS stays so it cannot
+        silently rot back to 27 failures; Windows stays so its ~155 remain
+        visible and shrinkable."""
+        oses = self._test_job()["strategy"]["matrix"]["os"]
+        assert {"ubuntu-latest", "macos-latest", "windows-latest"} <= set(oses), oses
