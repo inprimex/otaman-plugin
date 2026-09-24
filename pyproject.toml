@@ -5,7 +5,7 @@ description = "Otaman Claude Code plugin: slash commands, skills, agents, hooks,
 requires-python = ">=3.10"
 authors = [{ name = "Otaman platform" }]
 license = "AGPL-3.0-only"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "otaman-core",
     # fastmcp powers the bus_server and estimation_server MCP servers.
