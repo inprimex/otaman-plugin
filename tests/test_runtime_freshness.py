@@ -336,3 +336,99 @@ class TestProgramScoping:
         runtime to be fresh RELATIVE TO, so doctor says nothing rather than
         reporting the host's unrelated processes."""
         assert rf.assess(tmp_path) == []
+
+
+class TestCheck4BundleSkew:
+    """The comparand here was wrong TWICE before it was pinned, and both wrong
+    answers failed the same way: a verdict that fires on a healthy workspace.
+
+    1. `otaman --version` vs a sibling's pyproject version — deploy stamps the
+       RELEASE version onto components while each repo keeps its own, so
+       `0.5.14` vs `0.5.0` differ on a perfectly current machine.
+    2. `installed_at` vs commits-on-sibling-since — sibling mains run ahead of
+       the last cut BY DESIGN; that is the cadence working, not drift.
+
+    `test_siblings_ahead_of_the_cut_is_fresh_not_skewed` is the guard for the
+    second, and is the reason this check is usable at all: a section that
+    flags normal operation is one operators stop reading.
+    """
+
+    def _host(self, tmp_path, *, installed: str, cuts: list[str]) -> Path:
+        home = tmp_path / "home"
+        (home / ".otaman").mkdir(parents=True)
+        (home / ".otaman" / "release.yaml").write_text(
+            f"release: {installed}\nversion: '{installed.lstrip('v')}'\n", encoding="utf-8"
+        )
+        deploy = tmp_path / "otaman-deploy"
+        (deploy / "release-manifests").mkdir(parents=True)
+        for c in cuts:
+            (deploy / "release-manifests" / f"{c}.json").write_text("{}", encoding="utf-8")
+        root = tmp_path / "meta"
+        root.mkdir()
+        (root / "platform.yaml").write_text(
+            f"project: t\nrepos:\n  - name: otaman-deploy\n    path: {deploy}\n", encoding="utf-8"
+        )
+        return root, home
+
+    def test_cut_but_not_rolled_is_skewed(self, monkeypatch, tmp_path):
+        root, home = self._host(
+            tmp_path, installed="v0.5.14", cuts=["v0.5.13", "v0.5.14", "v0.5.15"]
+        )
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        (f,) = rf.check_bundle_vs_latest_release(root)
+        assert f.verdict == "skewed", f
+        assert "v0.5.14" in f.reason and "v0.5.15" in f.reason, "must name BOTH release versions"
+        assert f.remedy and "Roll" in f.remedy
+        assert f.evidence == {"installed": "v0.5.14", "latest_cut": "v0.5.15"}
+
+    def test_siblings_ahead_of_the_cut_is_fresh_not_skewed(self, monkeypatch, tmp_path):
+        """The pin's decisive clause. A host ON the latest cut is healthy even
+        though every sibling main has advanced past it — that is the release
+        cadence, and calling it skew is the cry-wolf failure."""
+        root, home = self._host(tmp_path, installed="v0.5.15", cuts=["v0.5.14", "v0.5.15"])
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        (f,) = rf.check_bundle_vs_latest_release(root)
+        assert f.verdict == "fresh", (
+            "a host on the latest cut rendered SKEWED — this is the comparand "
+            "failure that was rejected twice"
+        )
+        assert "normal state" in f.reason
+
+    def test_ahead_of_the_latest_manifest_is_not_skewed(self, monkeypatch, tmp_path):
+        """A host rolled from a cut whose manifest this checkout predates must
+        not be told to roll backwards."""
+        root, home = self._host(tmp_path, installed="v0.6.0", cuts=["v0.5.15"])
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        (f,) = rf.check_bundle_vs_latest_release(root)
+        assert f.verdict == "fresh", f
+
+    def test_no_release_yaml_is_not_checked(self, monkeypatch, tmp_path):
+        root, home = self._host(tmp_path, installed="v0.5.14", cuts=["v0.5.14"])
+        (home / ".otaman" / "release.yaml").unlink()
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        (f,) = rf.check_bundle_vs_latest_release(root)
+        assert f.verdict == "not-checked"
+
+    def test_tenant_without_a_deploy_checkout_is_not_checked(self, monkeypatch, tmp_path):
+        """The ordinary tenant case: nothing to learn the latest cut from. It
+        must say so rather than render fresh."""
+        home = tmp_path / "home"
+        (home / ".otaman").mkdir(parents=True)
+        (home / ".otaman" / "release.yaml").write_text("release: v0.5.14\n", encoding="utf-8")
+        root = tmp_path / "meta"
+        root.mkdir()
+        (root / "platform.yaml").write_text("project: t\n", encoding="utf-8")
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        (f,) = rf.check_bundle_vs_latest_release(root)
+        assert f.verdict == "not-checked"
+        assert "otaman-deploy" in f.reason
+
+    def test_skewed_maps_to_a_doctor_warning(self, monkeypatch, root):
+        from otaman_plugin import doctor_checks
+
+        monkeypatch.setattr(
+            rf, "assess", lambda r: [rf.Finding("b", "bundle-skew", "skewed", "r", remedy="roll")]
+        )
+        (w,) = doctor_checks.check_runtime_freshness(root)
+        assert w.severity == "warn"
+        assert w.code == "SRF_BUNDLE_SKEW_SKEWED"

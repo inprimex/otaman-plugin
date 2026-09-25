@@ -481,8 +481,135 @@ def check_daemon_vs_config(_otaman_root: Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# check 4 — installed bundle vs the LATEST CUT RELEASE
+#
+# The comparand here was wrong twice before it was pinned, and both wrong
+# answers were the same failure: a verdict that fires on a healthy workspace.
+#
+#   rejected  `otaman --version` vs a sibling's pyproject version. Deploy
+#             stamps the RELEASE version onto components while each repo keeps
+#             its own, so 0.5.14 vs 0.5.0 differ on a perfectly current
+#             machine (cli-agent measured it, 20260923T222305).
+#   rejected  installed_at vs commits-on-sibling-since. Sibling mains run
+#             ahead of the last cut BY DESIGN — that is the cadence working,
+#             not drift, so this fires on every dev workspace between
+#             releases (spec-agent's pin, 20260925).
+#
+# What is actually actionable is a release that has been CUT but not ROLLED to
+# this host. Siblings ahead of the latest cut render fresh, with a note.
+
+
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _parse_version(raw: str) -> tuple[int, int, int] | None:
+    m = _VERSION_RE.match(str(raw).strip())
+    if not m:
+        return None
+    return tuple(int(g) for g in m.groups())  # type: ignore[return-value]
+
+
+def _installed_release() -> str | None:
+    """The release this host actually has, from deploy's own manifest."""
+    path = Path.home() / ".otaman" / "release.yaml"
+    try:
+        from otaman_plugin.doctor_checks import _load_yaml
+
+        data = _load_yaml(path)
+    except Exception:
+        return None
+    for key in ("release", "version"):
+        val = data.get(key) if isinstance(data, dict) else None
+        if val:
+            return str(val)
+    return None
+
+
+def _deploy_checkout(otaman_root: Path) -> Path | None:
+    for repo in _program_repo_dirs(otaman_root):
+        if (repo / "release-manifests").is_dir() or repo.name.endswith("otaman-deploy"):
+            return repo
+    return None
+
+
+def _latest_cut_release(deploy: Path) -> str | None:
+    """Newest release that has been CUT, from the manifests deploy commits.
+
+    Manifests are preferred over git tags: a tag can exist in a local clone
+    that was never pushed, while a committed manifest is the cut's own record.
+    """
+    best: tuple[tuple[int, int, int], str] | None = None
+    for f in (deploy / "release-manifests").glob("*.json"):
+        parsed = _parse_version(f.stem)
+        if parsed and (best is None or parsed > best[0]):
+            best = (parsed, f.stem)
+    return best[1] if best else None
+
+
+def check_bundle_vs_latest_release(otaman_root: Path) -> list[Finding]:
+    subject = "installed bundle"
+    installed = _installed_release()
+    if not installed:
+        return [
+            _not_checked(
+                subject, "bundle-skew", "no ~/.otaman/release.yaml — cannot tell what is installed"
+            )
+        ]
+    deploy = _deploy_checkout(otaman_root)
+    if deploy is None:
+        return [
+            _not_checked(
+                subject,
+                "bundle-skew",
+                f"installed {installed}, but no otaman-deploy checkout here to "
+                f"learn the latest cut from",
+            )
+        ]
+    latest = _latest_cut_release(deploy)
+    if not latest:
+        return [_not_checked(subject, "bundle-skew", f"no release manifests found in {deploy}")]
+
+    got, want = _parse_version(installed), _parse_version(latest)
+    if got is None or want is None:
+        return [
+            _not_checked(
+                subject, "bundle-skew", f"unparseable release version: {installed!r} / {latest!r}"
+            )
+        ]
+    if got >= want:
+        # Siblings run ahead of the latest cut between releases. That is the
+        # cadence's designed steady state, NOT drift — reporting it as skew is
+        # the cry-wolf failure the pin exists to prevent.
+        return [
+            Finding(
+                subject=subject,
+                check="bundle-skew",
+                verdict="fresh",
+                reason=(
+                    f"on the latest cut release {installed}; sibling mains running ahead of it "
+                    f"is the release cadence's normal state, not drift"
+                ),
+                evidence={"installed": installed, "latest_cut": latest},
+            )
+        ]
+    return [
+        Finding(
+            subject=subject,
+            check="bundle-skew",
+            verdict="skewed",
+            reason=(
+                f"installed release {installed}, but {latest} has been cut — this host has "
+                f"not been rolled, so fixes shipped in {latest} are not running here"
+            ),
+            remedy=f"Roll this host to {latest} (see otaman-deploy RELEASING.md).",
+            evidence={"installed": installed, "latest_cut": latest},
+        )
+    ]
+
+
 def assess(otaman_root: Path) -> list[Finding]:
-    """Checks 1-3 in a stable order. The single computation behind both the
+    """Checks 1-4 in a stable order. The single computation behind both the
     doctor section and the console session view (1.3)."""
     if not (otaman_root / "platform.yaml").is_file():
         # Not a program root — there is nothing for a runtime to be fresh
@@ -494,4 +621,5 @@ def assess(otaman_root: Path) -> list[Finding]:
     out.extend(check_sessions_vs_inputs(otaman_root))
     out.extend(check_session_argv(otaman_root))
     out.extend(check_daemon_vs_config(otaman_root))
+    out.extend(check_bundle_vs_latest_release(otaman_root))
     return out
