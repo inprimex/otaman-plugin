@@ -323,7 +323,15 @@ def check_runtime_freshness(otaman_root: Path) -> list[DoctorWarning]:
     """
     from otaman_plugin.runtime_freshness import assess
 
-    severity_for = {"stale": "warn", "skewed": "warn", "not-checked": "info"}
+    severity_for = {
+        "stale": "warn",
+        "skewed": "warn",
+        # A halted session is blocking delivery right now and needs a human at
+        # a specific pane — that is more actionable than drift, and it is the
+        # one verdict here nothing else on the fleet reports.
+        "halted": "error",
+        "not-checked": "info",
+    }
     out: list[DoctorWarning] = []
     for f in assess(otaman_root):
         if f.verdict == "fresh":
