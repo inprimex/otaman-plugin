@@ -41,8 +41,25 @@ def git_repo(tmp_path):
     return root
 
 
-def run_bash(cwd: Path, command: str) -> tuple[int, dict | None]:
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+def run_bash(
+    cwd: Path, command: str, *, agent_id: str | None = None, agent_type: str = "general-purpose"
+) -> tuple[int, dict | None]:
+    """Invoke the hook. `agent_id` set => the payload Claude Code sends for a
+    SUBAGENT call; omitted => a main-thread call.
+
+    `agent_id`/`agent_type` are present only inside a subagent, and
+    `session_id` is identical for both, so presence of agent_id is the only
+    reliable discriminator (code.claude.com/docs/en/agent-sdk/hooks).
+    """
+    body: dict = {
+        "tool_name": "Bash",
+        "session_id": "sess-same-for-both",
+        "tool_input": {"command": command},
+    }
+    if agent_id is not None:
+        body["agent_id"] = agent_id
+        body["agent_type"] = agent_type
+    payload = json.dumps(body)
     proc = subprocess.run(
         ["bash", str(HOOK)],
         input=payload,
@@ -95,9 +112,70 @@ class TestNonBashOrIrrelevant:
 
 
 class TestPublishMergeClassAlwaysConfirms:
-    def test_gh_pr_merge_asks(self, git_repo):
-        reason = assert_asked(*run_bash(git_repo, "gh pr merge 24 --squash"))
+    def test_gh_pr_merge_from_a_fork_asks(self, git_repo):
+        """otaman-plugin#24: a forked/delegated session merging a PR it opened
+        on its own initiative. This is the case the guard was written for, and
+        it keeps the unconditional floor.
+
+        Note this test previously sent NO agent_id while its docstring claimed
+        to cover the fork case — so it was asserting the unscoped trigger, not
+        the fork. It now sends the payload Claude Code actually sends.
+        """
+        reason = assert_asked(*run_bash(git_repo, "gh pr merge 24 --squash", agent_id="ag_01fork"))
         assert "gh pr merge" in reason
+        assert "fork" in reason.lower(), "the reason must name the case it is catching"
+
+    def test_gh_pr_merge_from_main_thread_is_allowed(self, git_repo):
+        """The bug this scoping fixes (Roman-assigned, 2026-09-25).
+
+        `ask` is answerable only by a human present in THAT turn. For an agent
+        delivering already-approved work autonomously it is not a prompt but a
+        permanent halt — it cannot time out, self-resolve, or be reached by a
+        bus message. Three such halts cost ~11h of fleet delivery in one day.
+
+        A main-thread merge already carries the confirmation the guard wants:
+        the human typed the instruction in the turn that produced it.
+        """
+        assert_allowed(*run_bash(git_repo, "gh pr merge 24 --squash"))
+
+    def test_session_id_alone_never_implies_a_fork(self, git_repo):
+        """session_id is IDENTICAL for main-thread and subagent calls. Using it
+        as the discriminator would ask on every merge again — the bug — or
+        allow every fork, the regression. Neither may pass."""
+        assert_allowed(*run_bash(git_repo, "gh pr merge 24 --squash"))
+        assert_asked(*run_bash(git_repo, "gh pr merge 24 --squash", agent_id="ag_x"))
+
+    def test_agent_type_alone_is_enough(self, git_repo):
+        """Defensive: either subagent field present means subagent."""
+        payload = json.dumps(
+            {
+                "tool_name": "Bash",
+                "agent_type": "general-purpose",
+                "tool_input": {"command": "gh pr merge 9 --squash"},
+            }
+        )
+        proc = subprocess.run(
+            ["bash", str(HOOK)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=str(git_repo),
+            env={"PATH": "/usr/bin:/bin", "HOME": str(git_repo)},
+        )
+        assert proc.stdout.strip(), "agent_type alone did not trigger the fork floor"
+
+    def test_the_rest_of_the_floor_is_unscoped(self, git_repo):
+        """Only `gh pr merge` was implicated in the halts. Every other guarded
+        operation stays unconditional for main-thread callers too — deploy's
+        explicit out-of-scope list."""
+        for cmd in (
+            "gh repo delete owner/repo --yes",
+            "git push origin main",
+            "git push origin feature --force",
+            "git push origin --delete feature",
+        ):
+            assert_asked(*run_bash(git_repo, cmd)), cmd
 
     def test_gh_repo_delete_asks(self, git_repo):
         assert_asked(*run_bash(git_repo, "gh repo delete owner/repo --yes"))

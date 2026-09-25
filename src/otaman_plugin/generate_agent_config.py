@@ -1172,13 +1172,22 @@ Send form: `otaman send <to> --type task-assignment --sequence-id <id> --step <n
 ### Destructive-operation guard
 A `PreToolUse` hook intercepts a curated list of destructive git/gh Bash
 commands and requires **fresh, explicit confirmation in this turn** before
-they run — regardless of your permission mode, and the same for a
-top-level session or a forked/delegated subagent (a prior approval earlier
-in the session, or inherited from a parent session, does not carry). Two
-classes: **publish/merge** (`gh pr merge`, force-push, push to
-`main`/`master`, `gh repo delete`, deleting a shared branch) always asks;
+they run — regardless of your permission mode (a prior approval earlier in
+the session, or inherited from a parent session, does not carry). Two
+classes: **publish/merge** (force-push, push to `main`/`master`, `gh repo
+delete`, deleting a shared branch) always asks;
 **working-tree-destructive** (`git reset --hard`, `git checkout -f`, `git
 clean -f`) asks only when the working tree has uncommitted modifications.
+
+`gh pr merge` is the one scoped case: it asks when the call comes from a
+**forked/delegated subagent** — a fork merging a PR it opened on its own
+initiative is the incident the guard was built for — and passes silently
+from a top-level session, where the human's instruction in the same turn
+already IS the confirmation. Scoped 2026-09-25: the unscoped version cost
+~11h of delivery in one day, because `ask` can only be answered by a human
+present in that turn, so for an agent working autonomously it is not a
+prompt but a halt that cannot time out or be reached by a bus message.
+
 If one of these fires, it is **not an error** — it is the guard doing its
 job; answer the prompt to proceed. See `.claude/destructive-op-patterns.local`
 to widen the list for this repo (`otaman init --update` never overwrites it).
