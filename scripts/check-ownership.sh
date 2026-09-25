@@ -66,6 +66,63 @@ _deny() {
     exit 0
 }
 
+# --- knowledge-v2 3.1: partition write guard -------------------------------
+#
+# `.agents/` is otherwise open to every agent (coordination files are shared).
+# Knowledge entries are the exception: any agent READS any partition, but only
+# the partition owner WRITES to it and authors its index line. Contributions to
+# someone else's partition travel the bus.
+#
+# Scope, stated plainly rather than implied: this guards EDITS to entries that
+# already exist, which is the out-of-band-edit vector. A brand-new entry has no
+# `function:` on disk to check, so creating one by hand is not caught here —
+# that is doctor's ownership-violation flag (knowledge-v2 2.2, cli). The
+# sanctioned writer is `otaman knowledge add`, which sets the partition itself.
+#
+# Deliberately only reached for paths under .agents/knowledge/: resolving an
+# owner costs a python spawn, and this hook runs on every Write and Edit.
+check_knowledge_partition() {
+    local target="$1"
+    local kdir="$PROJECT_ROOT/.agents/knowledge"
+    [[ "$target" == "$kdir/"* ]] || return 0
+    [[ -f "$target" ]] || return 0
+
+    local function_name
+    function_name="$(sed -n 's/^function:[[:space:]]*\(.*\)$/\1/p' "$target" | head -1)"
+    function_name="${function_name//\'/}"
+    function_name="${function_name//\"/}"
+    function_name="${function_name%"${function_name##*[![:space:]]}"}"
+    [[ -n "$function_name" ]] || return 0
+
+    local py owner
+    py="$(resolve_otaman_python "$(dirname "$SCRIPT_DIR")" 2>/dev/null)" || return 0
+    owner="$("$py" - "$PROJECT_ROOT/platform.yaml" "$function_name" <<'PYEOF' 2>/dev/null
+import sys
+try:
+    import yaml
+except Exception:
+    raise SystemExit(0)
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+except Exception:
+    raise SystemExit(0)
+parts = (((cfg.get("program") or {}).get("processes") or {}).get("knowledge") or {}).get(
+    "partitions"
+) or {}
+print(parts.get(sys.argv[2], "") if isinstance(parts, dict) else "")
+PYEOF
+)"
+    owner="$(printf '%s' "$owner" | tr -d '\r\n')"
+
+    # No declared owner (the `support` case, or a program that has not adopted
+    # partitions): nobody owns it, so nobody is trespassing.
+    [[ -n "$owner" ]] || return 0
+    [[ "$owner" == "$CURRENT_AGENT" ]] && return 0
+
+    _deny "Knowledge partition '$function_name' is owned by $owner, not $CURRENT_AGENT. Any agent may READ any partition, but only its owner writes to it and authors its index line. Send your entry to $owner on the bus instead of editing $(basename "$target")."
+}
+
 # --- Extract tool_name ---
 TOOL_NAME="$(json_get "$INPUT" "tool_name")"
 [[ -n "$TOOL_NAME" ]] || exit 0
@@ -247,6 +304,7 @@ fi
 TARGET_PATH="${TARGET_PATH%/}"
 
 check_spec_protection "$TARGET_PATH"
+check_knowledge_partition "$TARGET_PATH"
 check_path_ownership "$TARGET_PATH"
 
 # Target is outside any repo (e.g., .agents/ directory) — allow

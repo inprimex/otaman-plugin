@@ -877,6 +877,18 @@ def _build_maestro_block(
         lines.append("\nIf docs are not available, STOP and inform the human.")
         knowledge_section = "\n".join(lines)
 
+    # knowledge-v2 3.1: per-agent partition scoping + the scoped index. Appended
+    # to the same slot so the gaps block and the index stay together — they are
+    # both "what this agent should read before working".
+    try:
+        knowledge_section += _render_knowledge_partitions_section(
+            project_root, config, repo["owner"]
+        )
+    except Exception:
+        # Generation must never fail on an optional section; a missing index is
+        # recoverable, a CLAUDE.local.md that did not get written is not.
+        pass
+
     # agent-credential-access 2.1: resolved connection/credential inventory.
     # Rendered from otaman-core's connection resolver (frozen contract
     # 20260824T164952) — locators only, never values. project_root is the
@@ -1946,6 +1958,119 @@ def install_codeowners_files(project_root: Path, config: dict[str, Any]) -> list
         except Exception:
             continue
     return results
+
+
+#: knowledge-v2 3.1 — how many index lines a generated instruction set carries.
+#: The point of the index is that context cost stays FLAT as the corpus grows,
+#: so there has to be a ceiling; the point of stating overflow is that a
+#: silently-truncated index is indistinguishable from a small one.
+KNOWLEDGE_INDEX_LINE_BUDGET = 40
+
+
+def _knowledge_partitions(config: dict[str, Any]) -> dict[str, str]:
+    """``{function: owner}`` from ``program.processes.knowledge.partitions``."""
+    processes = (config.get("program") or {}).get("processes") or {}
+    knowledge = processes.get("knowledge") or {}
+    parts = knowledge.get("partitions") or {}
+    return {str(k): str(v) for k, v in parts.items() if v} if isinstance(parts, dict) else {}
+
+
+def _render_knowledge_partitions_section(
+    project_root: Path, config: dict[str, Any], agent: str
+) -> str:
+    """The per-agent knowledge index: partitions this agent owns, plus the
+    active index lines for them, within a stated budget.
+
+    Scoping is the whole feature. An agent bound to `development` carries that
+    partition's lines and nothing else, so a hundred new strategy entries cost
+    it nothing — that is what keeps context flat as the corpus grows (SOL-902).
+
+    Rendered empty when the program declares no partitions: a program that has
+    not adopted knowledge-v2 should not grow a section about it.
+    """
+    partitions = _knowledge_partitions(config)
+    if not partitions:
+        return ""
+
+    try:
+        from otaman_core.knowledge import (
+            FUNCTIONS,
+            KNOWLEDGE_DIRNAME,
+            active_entries,
+            in_partition,
+            index_line,
+            is_amended,
+            load_entries,
+        )
+    except Exception:
+        # Older core without knowledge-v2: say the index was not rendered
+        # rather than emit an empty one that reads as "nothing recorded".
+        return (
+            "\n### Knowledge partitions\n\n"
+            "This program declares knowledge partitions, but the installed "
+            "otaman-core has no knowledge-v2 index reader, so the index below "
+            "was **not rendered**. That is 'not shown', not 'nothing recorded'.\n"
+        )
+
+    owned = sorted(fn for fn, owner in partitions.items() if owner == agent)
+    unowned = sorted(fn for fn in FUNCTIONS if fn not in partitions)
+
+    lines = ["", "### Knowledge partitions", ""]
+    if owned:
+        lines.append(
+            f"You **own** {', '.join(f'`{f}`' for f in owned)}. Any agent reads any "
+            f"partition; only its owner writes to it and authors its index line. "
+            f"To contribute to a partition you do not own, send the entry to its "
+            f"owner on the bus — do not write it yourself."
+        )
+    else:
+        lines.append(
+            "You own **no** knowledge partition. You may read every partition; "
+            "to contribute, send the entry to the owning agent on the bus."
+        )
+    lines.append("")
+    lines.append("| partition | owner |")
+    lines.append("|---|---|")
+    for fn in sorted(partitions):
+        mark = " **(you)**" if partitions[fn] == agent else ""
+        lines.append(f"| `{fn}` | {partitions[fn]}{mark} |")
+    for fn in unowned:
+        # Carried explicitly, never omitted: a partition missing from the table
+        # reads as one that does not exist, and the next agent re-derives that
+        # it is unowned instead of being told.
+        lines.append(f"| `{fn}` | _unowned — nobody writes here yet_ |")
+    lines.append("")
+
+    if not owned:
+        return "\n".join(lines) + "\n"
+
+    entries = load_entries(project_root / ".agents" / KNOWLEDGE_DIRNAME)
+    scoped: list[Any] = []
+    for fn in owned:
+        scoped.extend(in_partition(active_entries(entries), fn))
+    scoped.sort(key=lambda e: e.stem)
+
+    lines.append(f"**Your index** ({len(scoped)} active in your partition(s)):")
+    lines.append("")
+    if not scoped:
+        lines.append("_No active entries yet. This is an empty index, not a missing one._")
+    else:
+        shown = scoped[:KNOWLEDGE_INDEX_LINE_BUDGET]
+        lines.append("```")
+        for e in shown:
+            lines.append(index_line(e, amended=is_amended(e, entries)))
+        lines.append("```")
+        if len(scoped) > len(shown):
+            lines.append("")
+            lines.append(
+                f"**{len(scoped) - len(shown)} more not shown** (budget "
+                f"{KNOWLEDGE_INDEX_LINE_BUDGET} lines). Run "
+                f"`otaman knowledge list` for the full index — this is truncated, "
+                f"not complete."
+            )
+    lines.append("")
+    lines.append("Read a full entry with `otaman knowledge show <substring>`.")
+    return "\n".join(lines) + "\n"
 
 
 def install_changelog_fragment_scaffold(project_root: Path, config: dict[str, Any]) -> list[str]:
