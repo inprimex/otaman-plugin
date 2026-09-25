@@ -432,3 +432,150 @@ class TestCheck4BundleSkew:
         (w,) = doctor_checks.check_runtime_freshness(root)
         assert w.severity == "warn"
         assert w.code == "SRF_BUNDLE_SKEW_SKEWED"
+
+
+class TestCheck5Halted:
+    """HALTED: alive, claiming work, and silent.
+
+    Amendment, approved SCR 20260925T145238. A session frozen on an unanswered
+    interactive prompt is ALIVE and still claims `working`, so a liveness check
+    says fine and a staleness check says STALE — which reads as "it died".
+    Neither is true, and the difference is what a human does next: a dead
+    session needs nothing, a halted one needs someone to answer a prompt
+    nobody knows is open.
+
+    Verified against a real halt on its first run: spec-agent, pid 3669895,
+    alive with 1d03h uptime, `working`, no status write for 109 minutes, while
+    `otaman status` rendered it STALE.
+
+    The discriminator against STALE is process liveness, which is why this
+    lives here rather than in cli's record-only view — STALE is computable from
+    the status file alone, HALTED is not.
+    """
+
+    def _fleet(self, tmp_path: Path, *, state: str, updated_at: str, agent: str = "a-agent"):
+        root = tmp_path / "meta"
+        (root / ".agents" / "status").mkdir(parents=True)
+        repo = tmp_path / "r"
+        repo.mkdir()
+        (root / "platform.yaml").write_text(
+            f"project: t\nrepos:\n  - name: r\n    path: {repo}\n    owner: {agent}\n",
+            encoding="utf-8",
+        )
+        (root / ".agents" / "status" / f"{agent}.yaml").write_text(
+            f"agent: {agent}\nstate: {state}\nsince: '2026-09-25T08:00:00Z'\n"
+            f"updated_at: '{updated_at}'\n",
+            encoding="utf-8",
+        )
+        return root, repo
+
+    def _arm(self, monkeypatch, repo: Path, *, pid: int = 99, stale_inputs: bool = False):
+        monkeypatch.setattr(rf, "_sessions_for", lambda r: [pid])
+        monkeypatch.setattr(rf, "_proc_cwd", lambda p: repo)
+        monkeypatch.setattr(
+            rf,
+            "check_sessions_vs_inputs",
+            lambda r: (
+                [rf.Finding(f"session pid {pid}", "session-inputs", "stale", "wiring")]
+                if stale_inputs
+                else []
+            ),
+        )
+
+    def _long_ago(self, minutes: int) -> str:
+        from datetime import datetime, timedelta, timezone
+
+        return (datetime.now(tz=timezone.utc) - timedelta(minutes=minutes)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+    def test_alive_working_and_silent_is_halted(self, monkeypatch, tmp_path):
+        root, repo = self._fleet(tmp_path, state="working", updated_at=self._long_ago(90))
+        self._arm(monkeypatch, repo)
+        (f,) = rf.check_halted_sessions(root)
+        assert f.verdict == "halted"
+        assert "unanswered interactive prompt" in f.reason
+        assert "Not dead, not stale" in f.reason, "HALTED must distinguish itself from both"
+        assert f.evidence["state"] == "working"
+        assert f.evidence["silent_seconds"] > 1800
+
+    def test_recent_status_write_is_not_halted(self, monkeypatch, tmp_path):
+        root, repo = self._fleet(tmp_path, state="working", updated_at=self._long_ago(2))
+        self._arm(monkeypatch, repo)
+        assert rf.check_halted_sessions(root) == []
+
+    def test_idle_session_is_never_halted(self, monkeypatch, tmp_path):
+        """An idle agent is not claiming work, so silence means nothing."""
+        root, repo = self._fleet(tmp_path, state="idle", updated_at=self._long_ago(600))
+        self._arm(monkeypatch, repo)
+        assert rf.check_halted_sessions(root) == []
+
+    def test_waiting_counts_as_claiming_work(self, monkeypatch, tmp_path):
+        root, repo = self._fleet(tmp_path, state="waiting", updated_at=self._long_ago(90))
+        self._arm(monkeypatch, repo)
+        (f,) = rf.check_halted_sessions(root)
+        assert f.verdict == "halted"
+
+    def test_dead_process_is_not_halted(self, monkeypatch, tmp_path):
+        """A record with no live process is STALE/dead — someone else's verdict.
+        HALTED is specifically the ALIVE-and-silent case."""
+        root, _ = self._fleet(tmp_path, state="working", updated_at=self._long_ago(600))
+        monkeypatch.setattr(rf, "_sessions_for", lambda r: [])
+        assert rf.check_halted_sessions(root) == []
+
+    def test_a_session_with_stale_wiring_is_not_called_halted(self, monkeypatch, tmp_path):
+        """The false positive this check must not produce.
+
+        A session whose snapshotted inputs are stale has no heartbeat hook
+        loaded, so its silence is fully explained and already reported by check
+        1. Calling it HALTED would name the wrong cause — 'an unanswered
+        prompt' — for a session working perfectly well, and send someone to
+        stare at a pane where nothing is waiting.
+        """
+        root, repo = self._fleet(tmp_path, state="working", updated_at=self._long_ago(600))
+        self._arm(monkeypatch, repo, stale_inputs=True)
+        assert rf.check_halted_sessions(root) == [], (
+            "a session already reported STALE for its wiring was double-reported as HALTED"
+        )
+
+    def test_window_is_configurable_and_shared_with_staleness(self, monkeypatch, tmp_path):
+        """Same key cli's staleness rule reads, so a program has one notion of
+        'too quiet' rather than two knobs that can disagree."""
+        root, repo = self._fleet(tmp_path, state="working", updated_at=self._long_ago(40))
+        self._arm(monkeypatch, repo)
+        assert rf.check_halted_sessions(root), "40m silence should exceed the 30m default"
+
+        (root / "platform.yaml").write_text(
+            (root / "platform.yaml").read_text() + "agent_presence_ttl_seconds: 7200\n",
+            encoding="utf-8",
+        )
+        assert rf._halt_window_seconds(root) == 7200
+        assert rf.check_halted_sessions(root) == [], "a widened window was not honoured"
+
+    def test_bad_ttl_falls_back_rather_than_disabling(self, tmp_path):
+        root, _ = self._fleet(tmp_path, state="working", updated_at=self._long_ago(1))
+        (root / "platform.yaml").write_text(
+            (root / "platform.yaml").read_text() + "agent_presence_ttl_seconds: nonsense\n",
+            encoding="utf-8",
+        )
+        assert rf._halt_window_seconds(root) == rf.HALT_WINDOW_DEFAULT_S
+
+    def test_unparseable_timestamp_is_not_checked(self, monkeypatch, tmp_path):
+        root, repo = self._fleet(tmp_path, state="working", updated_at="not-a-date")
+        self._arm(monkeypatch, repo)
+        (f,) = rf.check_halted_sessions(root)
+        assert f.verdict == "not-checked"
+
+    def test_doctor_renders_halted_as_an_error(self, monkeypatch, root):
+        """A halted session is blocking delivery now and needs a human at a
+        named pane — more actionable than drift."""
+        from otaman_plugin import doctor_checks
+
+        monkeypatch.setattr(
+            rf,
+            "assess",
+            lambda r: [rf.Finding("a (pid 1)", "halted", "halted", "r", remedy="look")],
+        )
+        (w,) = doctor_checks.check_runtime_freshness(root)
+        assert w.severity == "error"
+        assert w.code == "SRF_HALTED_HALTED"

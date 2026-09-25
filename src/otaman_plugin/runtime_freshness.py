@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-Verdict = Literal["fresh", "stale", "skewed", "not-checked"]
+Verdict = Literal["fresh", "stale", "skewed", "halted", "not-checked"]
 
 #: Only these inputs are snapshotted when a session starts. Hook SCRIPT bodies
 #: are deliberately absent — see D3; they are read at invocation and are live.
@@ -608,8 +608,164 @@ def check_bundle_vs_latest_release(otaman_root: Path) -> list[Finding]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# check 5 — HALTED: alive, claiming work, and silent
+#
+# Amendment, approved SCR 20260925T145238. A session frozen on an unanswered
+# interactive prompt is ALIVE and still claims `working` — so a liveness check
+# says fine and a staleness check says STALE, which reads as "it died". Neither
+# is true, and the difference matters: a dead session needs nothing, a halted
+# one needs a human to answer a prompt nobody knows is open.
+#
+# This cost ~11h of fleet delivery on 2026-09-25 across five halts. Every one
+# was found by a person reading a tmux pane.
+#
+# The discriminator vs STALE is process liveness, which is why this lives here
+# rather than in cli's record-only staleness view: STALE is computable from the
+# status file alone, HALTED is not.
+
+#: Default silence window. Deliberately the SAME key cli's staleness rule reads
+#: (`agent_presence_ttl_seconds`), so a program has ONE notion of "too quiet"
+#: rather than two knobs that can disagree. Mirrored rather than imported:
+#: otaman-cli declares otaman-plugin as a dependency, so importing it back is
+#: circular and absent from wheel installs.
+HALT_WINDOW_DEFAULT_S = 1800
+
+_HALT_STATES = ("working", "waiting")
+
+
+def _halt_window_seconds(otaman_root: Path) -> int:
+    from otaman_plugin.doctor_checks import _load_yaml
+
+    doc = _load_yaml(otaman_root / "platform.yaml")
+    if not isinstance(doc, dict):
+        return HALT_WINDOW_DEFAULT_S
+    val = doc.get("agent_presence_ttl_seconds")
+    if val is None:
+        plat = doc.get("platform")
+        val = plat.get("agent_presence_ttl_seconds") if isinstance(plat, dict) else None
+    try:
+        ttl = int(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return HALT_WINDOW_DEFAULT_S
+    return ttl if ttl > 0 else HALT_WINDOW_DEFAULT_S
+
+
+def _repo_owner_for_cwd(otaman_root: Path, cwd: Path) -> str | None:
+    """The agent owning the repo a session is sitting in."""
+    from otaman_plugin.doctor_checks import _load_yaml
+
+    cfg = _load_yaml(otaman_root / "platform.yaml")
+    try:
+        target = cwd.resolve()
+    except OSError:
+        return None
+    for repo in (cfg.get("repos") or []) if isinstance(cfg, dict) else []:
+        if not isinstance(repo, dict) or not repo.get("path"):
+            continue
+        try:
+            base = (otaman_root / str(repo["path"])).resolve()
+        except OSError:
+            continue
+        if target == base or base in target.parents:
+            owner = repo.get("owner") or repo.get("name")
+            return str(owner) if owner else None
+    return None
+
+
+def _status_record(otaman_root: Path, agent: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    path = otaman_root / ".agents" / "status" / f"{agent}.yaml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        if ":" in line:
+            k, _, v = line.partition(":")
+            out[k.strip()] = v.strip().strip("'\"")
+    return out
+
+
+def check_halted_sessions(otaman_root: Path) -> list[Finding]:
+    pids = _sessions_for(otaman_root)
+    if pids is None:
+        return [
+            _not_checked("agent sessions", "halted", "cannot enumerate processes (no pgrep/ps)")
+        ]
+    if not pids:
+        return []
+
+    window = _halt_window_seconds(otaman_root)
+    now = datetime.now(tz=timezone.utc)
+
+    # A session whose snapshotted inputs are stale has no heartbeat hook
+    # loaded, so its silence is already explained — and already reported by
+    # check 1. Calling that HALTED would name the wrong cause ("an unanswered
+    # prompt") for a session that is working fine, which is the false-positive
+    # class this whole change exists to remove. Reported once, correctly.
+    stale_pids = {f.subject for f in check_sessions_vs_inputs(otaman_root) if f.verdict == "stale"}
+
+    out: list[Finding] = []
+    for pid in sorted(pids):
+        subject = f"session pid {pid}"
+        if subject in stale_pids:
+            continue
+        cwd = _proc_cwd(pid)
+        agent = _repo_owner_for_cwd(otaman_root, cwd) if cwd else None
+        if agent is None:
+            continue
+        rec = _status_record(otaman_root, agent)
+        state = rec.get("state", "")
+        if state not in _HALT_STATES:
+            continue
+        stamp = rec.get("updated_at") or rec.get("since")
+        if not stamp:
+            out.append(
+                _not_checked(
+                    f"{agent} ({subject})", "halted", "status record carries no updated_at"
+                )
+            )
+            continue
+        try:
+            last = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        except ValueError:
+            out.append(
+                _not_checked(f"{agent} ({subject})", "halted", f"unparseable updated_at: {stamp!r}")
+            )
+            continue
+        silent = (now - last).total_seconds()
+        if silent <= window:
+            continue
+        out.append(
+            Finding(
+                subject=f"{agent} ({subject})",
+                check="halted",
+                verdict="halted",
+                reason=(
+                    f"alive and claiming {state}, but has written no status update for "
+                    f"{int(silent // 60)}m (window {window // 60}m) — the likely cause is an "
+                    f"unanswered interactive prompt nobody knows is open. Not dead, not stale."
+                ),
+                remedy=(
+                    f"Look at {agent}'s pane and answer the prompt; it cannot time out, "
+                    f"self-resolve, or be reached by a bus message."
+                ),
+                evidence={
+                    "agent": agent,
+                    "pid": pid,
+                    "state": state,
+                    "last_status_write": str(stamp),
+                    "silent_seconds": int(silent),
+                    "window_seconds": window,
+                },
+            )
+        )
+    return out
+
+
 def assess(otaman_root: Path) -> list[Finding]:
-    """Checks 1-4 in a stable order. The single computation behind both the
+    """Checks 1-5 in a stable order. The single computation behind both the
     doctor section and the console session view (1.3)."""
     if not (otaman_root / "platform.yaml").is_file():
         # Not a program root — there is nothing for a runtime to be fresh
@@ -622,4 +778,5 @@ def assess(otaman_root: Path) -> list[Finding]:
     out.extend(check_session_argv(otaman_root))
     out.extend(check_daemon_vs_config(otaman_root))
     out.extend(check_bundle_vs_latest_release(otaman_root))
+    out.extend(check_halted_sessions(otaman_root))
     return out
