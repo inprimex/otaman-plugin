@@ -219,9 +219,13 @@ class TestOwnershipHookGuardsPartitionWrites:
         )
         return f
 
-    def _run(self, repo: Path, target: Path, home: Path):
+    def _run(self, repo: Path, target: Path, home: Path, stub_bin: Path):
+        # `otaman_stub_bin` (conftest) puts a fake `otaman whoami --resolve-only`
+        # on PATH. Without it `resolve_enforcement_identity` finds no CLI, the
+        # hook bails before any check, and every deny test here passes
+        # vacuously — which is what CI caught on this file's first run.
         payload = json.dumps({"tool_name": "Edit", "file_path": str(target)})
-        env = {**os.environ, "HOME": str(home), "PATH": os.environ.get("PATH", "")}
+        env = {**os.environ, "HOME": str(home), "PATH": f"{stub_bin}:/usr/bin:/bin"}
         for k in ("OTAMAN_ROOT", "MAESTRO_ROOT", "OTAMAN_AGENT"):
             env.pop(k, None)
         r = subprocess.run(
@@ -236,7 +240,7 @@ class TestOwnershipHookGuardsPartitionWrites:
         parsed = json.loads(r.stdout) if r.stdout.strip() else None
         return r.returncode, parsed
 
-    def test_enforcement_identity_resolves_here(self, tmp_path):
+    def test_enforcement_identity_resolves_here(self, tmp_path, otaman_stub_bin):
         """The precondition, asserted on its own.
 
         The partition test below cannot distinguish 'the guard is gone' from
@@ -251,43 +255,43 @@ class TestOwnershipHookGuardsPartitionWrites:
         foreign.mkdir(parents=True, exist_ok=True)
         # `r` is owned by other-agent in ownership.json; this marker says we are
         # plugin-agent, so the long-standing repo-ownership check must deny.
-        rc, parsed = self._run(repo, foreign / "x.py", tmp_path)
+        rc, parsed = self._run(repo, foreign / "x.py", tmp_path, otaman_stub_bin)
         assert rc == 0
         assert parsed is not None, (
             "the hook denied nothing even for a foreign-repo write — enforcement "
             "identity is not resolving, so every deny test here would pass vacuously"
         )
 
-    def test_writing_another_agents_partition_is_denied(self, tmp_path):
+    def test_writing_another_agents_partition_is_denied(self, tmp_path, otaman_stub_bin):
         root, repo = self._project(tmp_path, partitions={"design": "web-agent"})
         target = self._write_entry_file(root, "e.md", "design")
-        rc, parsed = self._run(repo, target, tmp_path)
+        rc, parsed = self._run(repo, target, tmp_path, otaman_stub_bin)
         assert rc == 0, "deny must exit 0 so the stdout JSON is honoured"
         assert parsed is not None, "the partition guard did not deny a foreign-partition write"
         reason = parsed["hookSpecificOutput"]["permissionDecisionReason"]
         assert "design" in reason and "web-agent" in reason
         assert "bus" in reason, "the deny must name the sanctioned route, not just refuse"
 
-    def test_writing_your_own_partition_is_allowed(self, tmp_path):
+    def test_writing_your_own_partition_is_allowed(self, tmp_path, otaman_stub_bin):
         root, repo = self._project(tmp_path, partitions={"development": "plugin-agent"})
         target = self._write_entry_file(root, "e.md", "development")
-        rc, parsed = self._run(repo, target, tmp_path)
+        rc, parsed = self._run(repo, target, tmp_path, otaman_stub_bin)
         assert rc == 0
         assert parsed is None, f"owner was denied their own partition: {parsed}"
 
-    def test_unowned_partition_is_allowed(self, tmp_path):
+    def test_unowned_partition_is_allowed(self, tmp_path, otaman_stub_bin):
         """`support` has no owner, so nobody can be trespassing on it."""
         root, repo = self._project(tmp_path, partitions={"development": "plugin-agent"})
         target = self._write_entry_file(root, "e.md", "support")
-        rc, parsed = self._run(repo, target, tmp_path)
+        rc, parsed = self._run(repo, target, tmp_path, otaman_stub_bin)
         assert rc == 0 and parsed is None
 
-    def test_non_knowledge_agents_file_is_untouched(self, tmp_path):
+    def test_non_knowledge_agents_file_is_untouched(self, tmp_path, otaman_stub_bin):
         """The guard must not make the rest of `.agents/` suddenly ownable."""
         root, repo = self._project(tmp_path, partitions={"design": "web-agent"})
         other = root / ".agents" / "queue"
         other.mkdir()
         target = other / "plugin-agent.md"
         target.write_text("queue\n", encoding="utf-8")
-        rc, parsed = self._run(repo, target, tmp_path)
+        rc, parsed = self._run(repo, target, tmp_path, otaman_stub_bin)
         assert rc == 0 and parsed is None
