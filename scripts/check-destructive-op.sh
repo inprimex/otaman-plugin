@@ -74,11 +74,50 @@ _ask() {
     exit 0
 }
 
+# --- caller discrimination (destructive-op-guard, 2026-09-25) --------------
+#
+# `agent_id` / `agent_type` appear in the PreToolUse payload ONLY when the
+# call originates inside a subagent; a main-thread call carries neither.
+# `session_id` is IDENTICAL for both and must never be used for this.
+# https://code.claude.com/docs/en/agent-sdk/hooks
+#
+# This is the discriminator the `gh pr merge` trigger was always describing
+# in its own message ("a forked/delegated session merging a PR it opened on
+# its own initiative") but never actually inspected.
+#
+# Depends on a documented Claude Code contract. If that contract changes,
+# this degrades toward asking MORE, not less: an unrecognised payload has no
+# agent_id, which... would read as main-thread. So the safe direction is not
+# automatic — `test_payload_contract_is_pinned` exists to fail loudly if the
+# field names this relies on stop appearing in the fixtures we assert against.
+_is_subagent_call() {
+    printf '%s' "$INPUT" | grep -q '"agent_id"[[:space:]]*:[[:space:]]*"[^"]' && return 0
+    printf '%s' "$INPUT" | grep -q '"agent_type"[[:space:]]*:[[:space:]]*"[^"]' && return 0
+    return 1
+}
+
 # --- publish/merge class: always confirm, no working-tree check -----------
 
 case "$COMMAND" in
     *"gh pr merge"*)
-        _ask "destructive-op-guard: 'gh pr merge' requires fresh confirmation this turn, regardless of permission mode — a forked/delegated session merging a PR it opened on its own initiative is exactly the incident this guard exists to catch (otaman-plugin#24, 2026-09-01). Confirm you intend THIS merge, right now."
+        # Scoped 2026-09-25 to the case this message always named. The
+        # unscoped trigger cost ~11h of fleet delivery in one day across
+        # three halts, all on already-approved work: `ask` is answerable
+        # only by a human present in THAT turn, so for an agent delivering
+        # accepted work autonomously it is not a prompt but a permanent
+        # halt — it cannot time out, cannot self-resolve, and cannot be
+        # reached by a bus message.
+        #
+        # A main-thread merge already has the confirmation this guard wants:
+        # the human typed the instruction in the turn that produced it. That
+        # is why the same command through the same guard succeeded for a
+        # human-driven session and froze an autonomous one — a difference
+        # the guard was not inspecting.
+        #
+        # The fork case keeps the floor, unchanged and unconditional.
+        if _is_subagent_call; then
+            _ask "destructive-op-guard: 'gh pr merge' from a delegated/forked agent requires fresh confirmation this turn, regardless of permission mode — a fork merging a PR it opened on its own initiative is exactly the incident this guard exists to catch (otaman-plugin#24, 2026-09-01). Confirm you intend THIS merge, right now."
+        fi
         ;;
     *"gh repo delete"*)
         _ask "destructive-op-guard: 'gh repo delete' is irreversible and requires fresh confirmation this turn."
