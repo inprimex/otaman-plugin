@@ -304,6 +304,42 @@ def check_launch_commands_have_continue_flag(otaman_root: Path) -> list[DoctorWa
 # entry point
 
 
+def check_runtime_freshness(otaman_root: Path) -> list[DoctorWarning]:
+    """session-runtime-freshness 1.1 — is the thing RUNNING the thing on disk?
+
+    Every other check in this file inspects files, which is exactly why the
+    2026-09-17 incident was invisible: thirteen sessions were running a plugin
+    tree rewritten five days after they booted, and every artifact on disk was
+    correct throughout. Doctor was green while no session had the heartbeat
+    hook.
+
+    The computation lives in `runtime_freshness` rather than here because
+    cli's console session view renders the same verdicts from it (task 1.3,
+    single-home — no second checker). This function only maps verdicts onto
+    the doctor severity vocabulary.
+
+    `not-checked` is surfaced as `info`, never dropped: a subject the checker
+    could not inspect must not render as one it inspected and cleared.
+    """
+    from otaman_plugin.runtime_freshness import assess
+
+    severity_for = {"stale": "warn", "skewed": "warn", "not-checked": "info"}
+    out: list[DoctorWarning] = []
+    for f in assess(otaman_root):
+        if f.verdict == "fresh":
+            continue
+        slug = f"{f.check}_{f.verdict}".upper().replace("-", "_")
+        out.append(
+            DoctorWarning(
+                severity=severity_for.get(f.verdict, "warn"),
+                code=f"SRF_{slug}",
+                message=f"{f.subject}: {f.reason}",
+                hint=f.remedy,
+            )
+        )
+    return out
+
+
 def run_all_checks(otaman_root: Path) -> list[DoctorWarning]:
     """Run every plugin-side doctor check and return the combined warnings.
 
@@ -314,4 +350,5 @@ def run_all_checks(otaman_root: Path) -> list[DoctorWarning]:
     out.extend(check_plugin_dir_consistency(otaman_root))
     out.extend(check_launch_commands_have_continue_flag(otaman_root))
     out.extend(check_installed_hooks_are_live(otaman_root))
+    out.extend(check_runtime_freshness(otaman_root))
     return out
