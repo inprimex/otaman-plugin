@@ -111,6 +111,15 @@ class TestNonBashOrIrrelevant:
         assert_allowed(*run_bash(git_repo, "git status"))
 
 
+@pytest.fixture
+def dirty_repo(git_repo):
+    """A repo with uncommitted changes, so the working-tree class is armed —
+    otherwise its 'mentions' cases would pass for the wrong reason (clean tree
+    passes silently by design, D4)."""
+    (git_repo / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+    return git_repo
+
+
 class TestPublishMergeClassAlwaysConfirms:
     def test_gh_pr_merge_from_a_fork_asks(self, git_repo):
         """otaman-plugin#24: a forked/delegated session merging a PR it opened
@@ -279,3 +288,105 @@ class TestLocalWidening:
 
     def test_absent_local_file_is_a_no_op(self, git_repo):
         assert_allowed(*run_bash(git_repo, "ls -la"))
+
+
+class TestMatchesCommandPositionNotSubstring:
+    """The guard matched the command TEXT, not the operation.
+
+    `case "$COMMAND" in *"gh pr merge"*)` matches anywhere in the string, so a
+    command that MENTIONS a dangerous operation was gated as if it performed
+    one. Reading about the guard tripped the guard. Measured by deploy-agent
+    against the installed hook (20260925T144213); it accounted for most of one
+    day's halts — including the one that blocked the commit fixing the guard.
+
+    Not specific to `gh pr merge`: `gh repo delete`, the push patterns and the
+    working-tree class all had it, for every caller.
+
+    These cases are drawn from real commands this fleet runs: writing a commit
+    message about a merge, grepping the hook, and quoting a command in a bus
+    message or changelog fragment.
+    """
+
+    # NOTE: `gh pr merge` mentions are NOT in this list. Since #79 a
+    # main-thread merge is allowed anyway, so a main-thread mention passes
+    # whether or not the substring bug is present — the test would be vacuous.
+    # They live in TestMergeMentionsNeedSubagentContext below, where the floor
+    # is actually armed. Found by re-running the sabotage with a sha check.
+    MENTIONS = [
+        "echo 'git push origin main'",
+        "grep -rn 'gh repo delete' .",
+        "echo 'never git reset --hard on a dirty tree'",
+        "echo 'git branch -D main is destructive'",
+        "printf '%s' 'git push --force'",
+    ]
+
+    PERFORMS = [
+        "gh repo delete owner/repo --yes",
+        "git push origin main",
+        "git push origin feature --force",
+        "git reset --hard",
+        "git branch -D main",
+    ]
+
+    @pytest.mark.parametrize("cmd", MENTIONS)
+    def test_mentioning_a_dangerous_command_does_not_ask(self, dirty_repo, cmd):
+        assert_allowed(*run_bash(dirty_repo, cmd))
+
+    @pytest.mark.parametrize("cmd", PERFORMS)
+    def test_actually_running_it_still_asks(self, dirty_repo, cmd):
+        assert_asked(*run_bash(dirty_repo, cmd))
+
+    def test_chained_after_a_separator_still_asks(self, git_repo):
+        """`a && gh pr merge` runs a merge. Command position means the START of
+        a command, not the start of the string."""
+        assert_asked(*run_bash(git_repo, "git push origin x && gh pr merge 5", agent_id="ag_1"))
+
+    def test_inside_command_substitution_still_asks(self, git_repo):
+        """`echo $(gh pr merge 5)` performs the merge even though the segment
+        begins with `echo`. Substitution opens a command position."""
+        assert_asked(*run_bash(git_repo, "echo $(gh pr merge 5)", agent_id="ag_1"))
+
+    def test_the_halt_that_blocked_the_fix(self, git_repo):
+        """The exact shape that froze this agent: a commit whose heredoc body
+        mentioned the guarded string, followed by a plain push of a feature
+        branch. No merge in it."""
+        assert_allowed(
+            *run_bash(
+                git_repo,
+                "git commit -q -F - <<'EOF'\nfix: scope the gh pr merge trigger\nEOF\n"
+                "git push -q -u origin agent/plugin-agent/scope-merge-guard",
+            )
+        )
+
+
+class TestMergeMentionsNeedSubagentContext:
+    """`gh pr merge` mentions must be tested as a SUBAGENT.
+
+    Since #79 a main-thread merge is allowed regardless, so a main-thread
+    mention passes whether or not the substring defect is present. Testing it
+    there proves nothing — the caller check short-circuits before the pattern
+    match ever matters.
+
+    This was a real vacuous guard in the first draft of this file: reverting
+    the merge trigger to a substring match left all 45 tests green. It was
+    caught by re-running each sabotage with a sha1 check that it had actually
+    applied, after cli-agent reported two of theirs silently no-op'ing
+    (20260925T115224).
+    """
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "echo 'run gh pr merge when ready'",
+            "grep -rn 'gh pr merge' scripts/",
+            "printf '%s\\n' 'gh pr merge 5 --squash'",
+        ],
+    )
+    def test_a_fork_mentioning_a_merge_is_not_asked(self, git_repo, cmd):
+        assert_allowed(*run_bash(git_repo, cmd, agent_id="ag_fork"))
+
+    def test_a_fork_actually_merging_is_still_asked(self, git_repo):
+        """The floor this file exists to protect (#24), with the mention cases
+        above proving the allow is about command POSITION and not a weakened
+        floor."""
+        assert_asked(*run_bash(git_repo, "gh pr merge 5 --squash", agent_id="ag_fork"))

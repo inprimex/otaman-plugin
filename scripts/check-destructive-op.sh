@@ -74,6 +74,47 @@ _ask() {
     exit 0
 }
 
+# --- command position, not substring (2026-09-25) --------------------------
+#
+# The triggers were `case "$COMMAND" in *"gh pr merge"*)` — a substring match
+# anywhere in the command text. So a command that MENTIONS a dangerous
+# operation was gated as if it PERFORMED one:
+#
+#     echo 'run gh pr merge when ready'      -> asked
+#     grep -rn 'gh pr merge' scripts/        -> asked
+#     git commit -F - <<'EOF' ... gh pr merge ... EOF ; git push   -> asked
+#
+# Reading about the guard tripped the guard. Measured by deploy-agent against
+# the INSTALLED hook (20260925T144213); it accounted for most of the day's
+# halts, including the one that blocked the commit fixing the guard. It is not
+# specific to `gh pr merge` — `gh repo delete` and the push patterns had it
+# too, for every caller.
+#
+# Fix: only match when the pattern begins a COMMAND. The command text is split
+# on the separators that start a new command — `;` `&&` `||` `|`, newline, and
+# `$(`/backtick for substitution — and each segment is tested from its start.
+# That keeps `echo '... gh pr merge ...'` (segment starts with `echo`) and
+# `grep -rn 'gh pr merge'` (starts with `grep`) out, while `a && gh pr merge 5`
+# and `echo $(gh pr merge 5)` stay in.
+#
+# Known residual, stated rather than hidden: a heredoc body line that itself
+# BEGINS with a dangerous command still matches, because the hook sees one
+# opaque string and cannot parse heredoc boundaries. That is far narrower than
+# "mentions it anywhere" and errs toward asking.
+_runs_command() {
+    local pattern="$1" segment
+    while IFS= read -r segment; do
+        segment="${segment#"${segment%%[![:space:]]*}"}"
+        case "$segment" in
+            "$pattern"*) return 0 ;;
+        esac
+    done <<EOF
+$(printf '%s' "$COMMAND" | sed -e 's/&&/\n/g' -e 's/||/\n/g' -e 's/;/\n/g' \
+    -e 's/|/\n/g' -e 's/\$(/\n/g' -e 's/`/\n/g')
+EOF
+    return 1
+}
+
 # --- caller discrimination (destructive-op-guard, 2026-09-25) --------------
 #
 # `agent_id` / `agent_type` appear in the PreToolUse payload ONLY when the
@@ -98,8 +139,7 @@ _is_subagent_call() {
 
 # --- publish/merge class: always confirm, no working-tree check -----------
 
-case "$COMMAND" in
-    *"gh pr merge"*)
+if _runs_command "gh pr merge"; then
         # Scoped 2026-09-25 to the case this message always named. The
         # unscoped trigger cost ~11h of fleet delivery in one day across
         # three halts, all on already-approved work: `ask` is answerable
@@ -118,13 +158,13 @@ case "$COMMAND" in
         if _is_subagent_call; then
             _ask "destructive-op-guard: 'gh pr merge' from a delegated/forked agent requires fresh confirmation this turn, regardless of permission mode — a fork merging a PR it opened on its own initiative is exactly the incident this guard exists to catch (otaman-plugin#24, 2026-09-01). Confirm you intend THIS merge, right now."
         fi
-        ;;
-    *"gh repo delete"*)
-        _ask "destructive-op-guard: 'gh repo delete' is irreversible and requires fresh confirmation this turn."
-        ;;
-esac
+fi
 
-if [[ "$COMMAND" == *"git push"* ]]; then
+if _runs_command "gh repo delete"; then
+    _ask "destructive-op-guard: 'gh repo delete' is irreversible and requires fresh confirmation this turn."
+fi
+
+if _runs_command "git push"; then
     if echo "$COMMAND" | grep -qE '(^|[[:space:]])(--force|--force-with-lease|-f)([[:space:]]|$)'; then
         _ask "destructive-op-guard: force-push requires fresh confirmation this turn — a history rewrite on a shared branch cannot be undone by the pusher alone."
     fi
@@ -146,7 +186,7 @@ if [[ "$COMMAND" == *"git push"* ]]; then
     fi
 fi
 
-if [[ "$COMMAND" == *"git branch -D"* || "$COMMAND" == *"git branch --delete --force"* ]]; then
+if _runs_command "git branch -D" || _runs_command "git branch --delete --force"; then
     if echo "$COMMAND" | grep -qE '(^|[[:space:]])(main|master)([[:space:]]|$)'; then
         _ask "destructive-op-guard: force-deleting 'main'/'master' requires fresh confirmation this turn."
     fi
@@ -154,13 +194,13 @@ fi
 
 # --- working-tree-destructive class: confirm only on a dirty tree (D4) ----
 
-case "$COMMAND" in
-    *"git reset --hard"*|*"git checkout -f"*|*"git checkout --force"*|*"git clean -f"*|*"git clean --force"*)
-        if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
-            _ask "destructive-op-guard: the working tree has uncommitted modifications — this command would destroy them irrecoverably. Requires fresh confirmation this turn (the 2026-07-02 otaman-runner incident: a standing stash-first instruction did not stop this same command class from destroying uncommitted edits)."
-        fi
-        ;;
-esac
+if _runs_command "git reset --hard" || _runs_command "git checkout -f" \
+    || _runs_command "git checkout --force" || _runs_command "git clean -f" \
+    || _runs_command "git clean --force"; then
+    if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+        _ask "destructive-op-guard: the working tree has uncommitted modifications — this command would destroy them irrecoverably. Requires fresh confirmation this turn (the 2026-07-02 otaman-runner incident: a standing stash-first instruction did not stop this same command class from destroying uncommitted edits)."
+    fi
+fi
 
 # --- local widening (D3/D5): extra repo-specific patterns -----------------
 
