@@ -192,6 +192,95 @@ def map_tasks_to_owners(
     return tasks
 
 
+# ---------------------------------------------------------------------------
+# The tick-latency window (conformance, spec-agent 20260925T171639)
+#
+# `otaman complete` files a task-complete on the bus; spec-agent applies the
+# tasks.md tick on their next session sweep. Between those two moments the file
+# still reads `- [ ]`, so any specs push re-dispatches finished work.
+#
+# Measured: cli filed srf 1.3 complete at 11:52 and was re-assigned it twice by
+# the 14:56/14:58 pushes. Three of my own completed tasks were re-dispatched the
+# same way. cli had the context to recognise it; an agent with less would redo
+# the work.
+#
+# Ruling: the bus filing is the authority DURING the window; tasks.md remains
+# the durable record it syncs to. So dispatch consults the bus first.
+
+_TASK_ID_RE = re.compile(r"^(\d+[A-Za-z]?(?:\.\d+)*)\b")
+_COMPLETED_RE = re.compile(r"^\*\*Completed\*\*:\s*(.+)$", re.MULTILINE)
+_RANGE_RE = re.compile(r"^(\d+)\.(\d+)\s*-\s*(\d+)\.(\d+)$")
+
+#: Sentinel for `otaman complete --all`, which names no individual ids.
+_ALL = "*"
+
+
+def task_id_of(task_text: str) -> str | None:
+    """The leading `1.2` / `2.1` / `1B.3` identifier of a tasks.md line."""
+    m = _TASK_ID_RE.match(task_text.strip())
+    return m.group(1) if m else None
+
+
+def _parse_completed_spec(spec: str) -> set[str]:
+    """Task ids named by a `**Completed**:` line.
+
+    Returns ``{_ALL}`` for an --all filing. Returns an EMPTY set for anything
+    it cannot parse confidently — the safe direction is to dispatch a task that
+    was already done (noisy, recoverable) rather than skip one that was not
+    (silent, and the work is simply lost).
+    """
+    spec = spec.strip()
+    if not spec:
+        return set()
+    if spec.lower().startswith("all"):
+        return {_ALL}
+    spec = re.sub(r"^tasks?\s+", "", spec, flags=re.IGNORECASE)
+    out: set[str] = set()
+    for piece in re.split(r"[,\s]+", spec):
+        piece = piece.strip()
+        if not piece:
+            continue
+        rng = _RANGE_RE.match(piece)
+        if rng:
+            major_a, minor_a, major_b, minor_b = (int(g) for g in rng.groups())
+            if major_a == major_b and minor_a <= minor_b:
+                out.update(f"{major_a}.{n}" for n in range(minor_a, minor_b + 1))
+            continue
+        if _TASK_ID_RE.match(piece):
+            out.add(piece)
+    return out
+
+
+def filed_complete_ids(project_root: Path, change: str, config: dict[str, Any]) -> set[str]:
+    """Task ids with a filed `task-complete` for *change*, pending OR resolved.
+
+    Both live in `bus/active` — acks sit beside them in `active/acks`, so a
+    resolved filing is still a filing and still counts. Archive is scanned too
+    so a swept bus does not resurrect finished work.
+    """
+    bus_rel = config.get("communication", {}).get("bus_path", ".agents/bus")
+    ids: set[str] = set()
+    for sub in ("active", "archive"):
+        d = project_root / bus_rel / sub
+        if not d.is_dir():
+            continue
+        # Matched on FRONTMATTER, not filename. The filenames the CLI happens
+        # to generate contain "task-complete", but that is a convention, not a
+        # contract — `type:` is the field that defines the message.
+        for f in d.glob("*.md"):
+            try:
+                text = f.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if not re.search(r"^type:\s*task-complete\s*$", text, re.MULTILINE):
+                continue
+            if not re.search(rf"^change:\s*{re.escape(change)}\s*$", text, re.MULTILINE):
+                continue
+            for m in _COMPLETED_RE.finditer(text):
+                ids |= _parse_completed_spec(m.group(1))
+    return ids
+
+
 def create_bus_messages(
     project_root: Path,
     tasks: list[dict[str, Any]],
@@ -409,6 +498,20 @@ def main() -> int:
 
     tasks = map_tasks_to_owners(tasks, ownership)
 
+    # Consult the bus BEFORE assigning: a task whose completion is already
+    # filed is done for dispatch purposes, even though tasks.md has not been
+    # swept yet. Never silent — the skipped ones are counted and named below.
+    filed = filed_complete_ids(project_root, feature_name, config)
+    filed_complete: list[str] = []
+    for t_ in tasks:
+        if t_["done"]:
+            continue
+        tid = task_id_of(t_.get("text", ""))
+        if tid and (_ALL in filed or tid in filed):
+            t_["done"] = True
+            t_["filed_complete"] = True
+            filed_complete.append(t_["text"])
+
     # A task ANNOTATED for a repo that did not resolve to an owner is a DROP,
     # not an absence: someone asked for it and nobody got it. An unannotated
     # line is legitimately nobody's and is not counted here. This is exactly
@@ -444,14 +547,21 @@ def main() -> int:
     report["dispatched"] = len(created)
     report["dropped"] = len(dropped)
     report["dropped_tasks"] = dropped
+    report["filed_complete"] = len(filed_complete)
+    report["filed_complete_tasks"] = filed_complete
 
     # Counts on every run, on stderr so they are visible even when stdout is
     # consumed as JSON. A verb that did work says what it did.
     print(
         f"{len(created)} dispatched to {len(report['by_owner'])} agent(s); "
-        f"{report['assigned']} task(s) assigned, {report['dropped']} dropped",
+        f"{report['assigned']} task(s) assigned, {report['dropped']} dropped, "
+        f"{len(filed_complete)} filed-complete, skipped",
         file=sys.stderr,
     )
+    # Named, not just counted: "3 skipped" leaves the reader unable to tell a
+    # correct skip from a bug in the bus consult.
+    for text in filed_complete:
+        print(f"  filed-complete, not re-dispatched: {text[:90]}", file=sys.stderr)
 
     if dropped:
         # A drop is an error, not a silent omission (delta, scenario 1).
