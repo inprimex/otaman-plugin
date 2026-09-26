@@ -737,24 +737,50 @@ def check_halted_sessions(otaman_root: Path) -> list[Finding]:
         silent = (now - last).total_seconds()
         if silent <= window:
             continue
+        # Name what the agent was doing. cli-agent's point (20260926T094501):
+        # a halt report that cannot say what is stuck loses most of its value —
+        # "spec-agent is halted" sends someone to a pane, "halted on srf 2.1"
+        # tells them what they are interrupting.
+        #
+        # `task: null` is itself diagnostic rather than merely missing. Before
+        # cli #209, acking ANY task-assignment (including a CC copy addressed
+        # to someone else) wrote a bare `working` with no task, so a record in
+        # that shape may be describing a state its agent never declared.
+        raw_task = rec.get("task", "")
+        # YAML `task: null` arrives as the STRING "null" through this reader.
+        # Evidence must not hand a consumer "null" as if it were a task name —
+        # the reason and the structured field have to agree on what is unnamed.
+        task = raw_task if raw_task and raw_task != "null" else None
+        doing = f" on '{task}'" if task else " (no task named)"
         out.append(
             Finding(
                 subject=f"{agent} ({subject})",
                 check="halted",
                 verdict="halted",
                 reason=(
-                    f"alive and claiming {state}, but has written no status update for "
-                    f"{int(silent // 60)}m (window {window // 60}m) — the likely cause is an "
-                    f"unanswered interactive prompt nobody knows is open. Not dead, not stale."
+                    f"alive and claiming {state}{doing}, but has written no status update "
+                    f"for {int(silent // 60)}m (window {window // 60}m). Not dead, not stale. "
+                    f"Most likely an unanswered interactive prompt nobody knows is open"
+                    + (
+                        ""
+                        if task
+                        else " — and a record with no task may predate cli #209, which "
+                        "stopped an ack from writing a bare working state, so the claim "
+                        "itself may be one the agent never made"
+                    )
+                    + "."
                 ),
                 remedy=(
                     f"Look at {agent}'s pane and answer the prompt; it cannot time out, "
-                    f"self-resolve, or be reached by a bus message."
+                    f"self-resolve, or be reached by a bus message. If the pane is idle "
+                    f"and the agent is demonstrably active elsewhere, the heartbeat hook "
+                    f"is not refreshing this record — a different fault, same symptom."
                 ),
                 evidence={
                     "agent": agent,
                     "pid": pid,
                     "state": state,
+                    "task": task,
                     "last_status_write": str(stamp),
                     "silent_seconds": int(silent),
                     "window_seconds": window,
