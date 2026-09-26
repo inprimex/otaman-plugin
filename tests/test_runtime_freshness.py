@@ -453,7 +453,15 @@ class TestCheck5Halted:
     the status file alone, HALTED is not.
     """
 
-    def _fleet(self, tmp_path: Path, *, state: str, updated_at: str, agent: str = "a-agent"):
+    def _fleet(
+        self,
+        tmp_path: Path,
+        *,
+        state: str,
+        updated_at: str,
+        agent: str = "a-agent",
+        task: str = "null",
+    ):
         root = tmp_path / "meta"
         (root / ".agents" / "status").mkdir(parents=True)
         repo = tmp_path / "r"
@@ -463,8 +471,8 @@ class TestCheck5Halted:
             encoding="utf-8",
         )
         (root / ".agents" / "status" / f"{agent}.yaml").write_text(
-            f"agent: {agent}\nstate: {state}\nsince: '2026-09-25T08:00:00Z'\n"
-            f"updated_at: '{updated_at}'\n",
+            f"agent: {agent}\nstate: {state}\ntask: {task}\n"
+            f"since: '2026-09-25T08:00:00Z'\nupdated_at: '{updated_at}'\n",
             encoding="utf-8",
         )
         return root, repo
@@ -579,3 +587,45 @@ class TestCheck5Halted:
         (w,) = doctor_checks.check_runtime_freshness(root)
         assert w.severity == "error"
         assert w.code == "SRF_HALTED_HALTED"
+
+
+class TestHaltedNamesWhatIsStuck:
+    """cli-agent's point (20260926T094501): a halt report that cannot say WHAT
+    is stuck loses most of its value. "spec-agent is halted" sends someone to a
+    pane; "halted on srf 2.1" tells them what they are interrupting.
+
+    `task: null` is diagnostic rather than merely absent. Before cli #209,
+    acking ANY task-assignment — including a CC copy addressed to someone else
+    — wrote a bare `working` with no task. So a record in that shape may be
+    describing a state its agent never declared, and the report says so instead
+    of asserting a halt on a claim that might be an artifact.
+    """
+
+    def test_a_named_task_appears_in_the_report(self, monkeypatch, tmp_path):
+        h = TestCheck5Halted()
+        root, repo = h._fleet(
+            tmp_path, state="working", updated_at=h._long_ago(90), task="'2.1 the gate'"
+        )
+        h._arm(monkeypatch, repo)
+        (f,) = rf.check_halted_sessions(root)
+        assert "2.1 the gate" in f.reason
+        assert f.evidence["task"] == "2.1 the gate"
+
+    def test_a_null_task_is_flagged_as_possibly_an_artifact(self, monkeypatch, tmp_path):
+        h = TestCheck5Halted()
+        root, repo = h._fleet(tmp_path, state="working", updated_at=h._long_ago(90), task="null")
+        h._arm(monkeypatch, repo)
+        (f,) = rf.check_halted_sessions(root)
+        assert "no task named" in f.reason
+        assert "#209" in f.reason, "the artifact origin must be named, not left as a blank field"
+        assert f.evidence["task"] is None
+
+    def test_the_remedy_admits_the_other_cause(self, monkeypatch, tmp_path):
+        """A frozen record can also mean the heartbeat is not firing — a
+        different fault with the same symptom. Sending someone to stare at an
+        idle pane without saying so wastes the trip."""
+        h = TestCheck5Halted()
+        root, repo = h._fleet(tmp_path, state="working", updated_at=h._long_ago(90))
+        h._arm(monkeypatch, repo)
+        (f,) = rf.check_halted_sessions(root)
+        assert "heartbeat hook is not refreshing" in (f.remedy or "")
