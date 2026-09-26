@@ -634,9 +634,27 @@ def otaman_check(
             ref = entry.get("ref") or entry.get("proposal") or ""
             status_note = "waiting for approval"
             for msg in messages:
-                if msg["type"] == "spec-change-approved" and ref and ref in msg.get("stem", ""):
+                # BOTH conditions are ref-scoped. The spec-change arm was not,
+                # so ANY pending spec-change marked EVERY blocked entry
+                # resumable — 723 such messages sit on this fleet's bus, so in
+                # practice every entry read "READY TO RESUME" whether or not
+                # its own specs had landed.
+                #
+                # That is an instruction, not a stale note: it tells an agent
+                # to unblock work on evidence that does not pertain to it. Same
+                # family as the phantom-approval bug cli-agent found in their
+                # blocked.py (20260926T121819) — theirs cleared entries, this
+                # one told agents to clear their own.
+                #
+                # A generic "specs changed" notification (no change name in the
+                # stem) correctly matches nothing now: it is not evidence about
+                # any particular entry.
+                if not ref:
+                    continue
+                stem = msg.get("stem", "")
+                if msg["type"] == "spec-change-approved" and ref in stem:
                     status_note = "approved — waiting for spec commit"
-                if msg["type"] == "spec-change" and msg["status"] == "pending":
+                if msg["type"] == "spec-change" and msg["status"] == "pending" and ref in stem:
                     status_note = "READY TO RESUME — specs updated"
             blocked.append({**entry, "status_note": status_note})
 
