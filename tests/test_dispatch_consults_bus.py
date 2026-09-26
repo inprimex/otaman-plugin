@@ -222,3 +222,146 @@ class TestDispatchEndToEnd:
         proc, report = self._run(tasks, tmp_path)
         assert report.get("filed_complete") == 1
         assert report.get("dispatched") == 1, f"the unfiled task was not dispatched: {proc.stderr}"
+
+
+class TestRetractionOutranksTheFiling:
+    """A withdrawn completion must be able to come back.
+
+    Gap exposed by spec-agent un-ticking sam 1.5 (20260926T183603): the consult
+    skipped re-dispatch citing the old filing, so an over-claimed task could
+    never re-dispatch — the consult would cite a withdrawn filing forever.
+
+    Un-ticking is how a retraction is already expressed, so this needs no new
+    message type. The discriminator is narrow on purpose: only a commit that
+    turns THIS line from `[x]` to `[ ]` counts. An ordinary tasks.md edit is
+    not a retraction — which is exactly what keeps the original tick-latency
+    fix intact, since the 14:56 pushes edited tasks.md without un-ticking
+    cli's 1.3.
+    """
+
+    def _git_repo(self, tmp_path: Path):
+        import subprocess
+
+        root = _program(tmp_path.resolve())
+        specs = tmp_path.resolve() / "specs"
+        d = specs / "openspec" / "changes" / "c"
+        d.mkdir(parents=True)
+        (specs / ".otaman").write_text("../meta\nagent: spec-agent\n", encoding="utf-8")
+        for cmd in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "t@e.com"],
+            ["git", "config", "user.name", "t"],
+        ):
+            subprocess.run(cmd, cwd=specs, check=True, capture_output=True)
+        return root, specs, d / "tasks.md"
+
+    def _commit(self, specs: Path, tasks: Path, body: str, msg: str):
+        import subprocess
+
+        tasks.write_text(body, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=specs, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", msg], cwd=specs, check=True, capture_output=True
+        )
+
+    def test_an_untick_after_the_filing_re_dispatches(self, tmp_path):
+        from otaman_plugin.map_tasks import last_untick_at
+
+        root, specs, tasks = self._git_repo(tmp_path)
+        self._commit(specs, tasks, "# t\n\n- [ ] 1.5 @otaman-r the task\n", "init")
+        self._commit(specs, tasks, "# t\n\n- [x] 1.5 @otaman-r the task\n", "tick")
+        self._commit(specs, tasks, "# t\n\n- [ ] 1.5 @otaman-r the task\n", "UN-TICK: retracted")
+
+        assert last_untick_at(tasks, "1.5") is not None, "the un-tick commit was not detected"
+
+    def test_an_ordinary_edit_is_not_a_retraction(self, tmp_path):
+        """The guard on the original fix. cli's 1.3 was never ticked; the
+        14:56 push merely edited the file. If that counted as a retraction the
+        tick-latency bug comes straight back."""
+        from otaman_plugin.map_tasks import last_untick_at
+
+        root, specs, tasks = self._git_repo(tmp_path)
+        self._commit(specs, tasks, "# t\n\n- [ ] 1.3 @otaman-r console view\n", "init")
+        self._commit(
+            specs,
+            tasks,
+            "# t\n\n- [ ] 1.3 @otaman-r console view\n- [ ] 2.9 @otaman-r new\n",
+            "specs push: add 2.9",
+        )
+        assert last_untick_at(tasks, "1.3") is None, (
+            "an edit that did not un-tick 1.3 was read as a retraction — this "
+            "reinstates the re-dispatch bug the consult exists to fix"
+        )
+
+    def test_another_tasks_untick_does_not_retract_mine(self, tmp_path):
+        from otaman_plugin.map_tasks import last_untick_at
+
+        root, specs, tasks = self._git_repo(tmp_path)
+        self._commit(specs, tasks, "# t\n\n- [x] 1.1 @otaman-r a\n- [ ] 1.3 @otaman-r b\n", "init")
+        self._commit(
+            specs, tasks, "# t\n\n- [ ] 1.1 @otaman-r a\n- [ ] 1.3 @otaman-r b\n", "un-tick 1.1"
+        )
+        assert last_untick_at(tasks, "1.1") is not None
+        assert last_untick_at(tasks, "1.3") is None, "1.1's retraction leaked onto 1.3"
+
+    def test_no_git_degrades_to_the_current_behaviour(self, tmp_path):
+        """Without history we cannot see a retraction. Keep skipping — the
+        base case is 'no retraction', and re-dispatching everything whenever
+        history is unreadable would reinstate the original bug broadly."""
+        from otaman_plugin.map_tasks import last_untick_at
+
+        plain = tmp_path / "nogit"
+        plain.mkdir()
+        f = plain / "tasks.md"
+        f.write_text("- [ ] 1.1 @otaman-r x\n", encoding="utf-8")
+        assert last_untick_at(f, "1.1") is None
+
+    def test_dispatch_re_sends_a_retracted_task_end_to_end(self, tmp_path):
+        """Drives `main()`, not just `last_untick_at`.
+
+        The unit tests above pass even with the retraction check removed from
+        the dispatch path — they exercise the helper, not the caller. Caught by
+        re-running the sabotage with a sha1 check that it applied; without this
+        test the helper could be perfect and never consulted.
+        """
+
+        root, specs, tasks = self._git_repo(tmp_path)
+        self._commit(specs, tasks, "# t\n\n- [ ] 1.5 @otaman-cli the task\n", "init")
+        self._commit(specs, tasks, "# t\n\n- [x] 1.5 @otaman-cli the task\n", "tick")
+        (root / ".agents" / "bus" / "active" / "f.md").write_text(
+            "---\ntype: task-complete\nchange: c\ntimestamp: 2020-01-01T00:00:00Z\n---\n\n"
+            "**Completed**: tasks 1.5\n",
+            encoding="utf-8",
+        )
+        self._commit(specs, tasks, "# t\n\n- [ ] 1.5 @otaman-cli the task\n", "UN-TICK: retracted")
+
+        e2e = TestDispatchEndToEnd()
+        proc, report = e2e._run(tasks, tmp_path)
+        assert report.get("retracted") == 1, (
+            f"a task un-ticked after its filing was not re-dispatched: {proc.stderr}"
+        )
+        assert report.get("filed_complete") == 0
+        assert report.get("dispatched") == 1
+        assert "retracted since filing, re-dispatched" in proc.stderr, "the re-send must be NAMED"
+
+    def test_dispatch_still_skips_when_there_was_no_untick(self, tmp_path):
+        """The other half: cli's window, driven through main(). A filing with
+        no un-tick behind it still suppresses re-dispatch."""
+        root, specs, tasks = self._git_repo(tmp_path)
+        self._commit(specs, tasks, "# t\n\n- [ ] 1.3 @otaman-cli console view\n", "init")
+        (root / ".agents" / "bus" / "active" / "f.md").write_text(
+            "---\ntype: task-complete\nchange: c\ntimestamp: 2026-09-25T11:52:04Z\n---\n\n"
+            "**Completed**: tasks 1.3\n",
+            encoding="utf-8",
+        )
+        self._commit(
+            specs,
+            tasks,
+            "# t\n\n- [ ] 1.3 @otaman-cli console view\n- [ ] 2.9 @otaman-cli new\n",
+            "specs push: add 2.9",
+        )
+        e2e = TestDispatchEndToEnd()
+        proc, report = e2e._run(tasks, tmp_path)
+        assert report.get("filed_complete") == 1, proc.stderr
+        assert report.get("retracted") == 0
+        assert report.get("dispatched") == 1, "the genuinely new task must still go out"
