@@ -205,6 +205,58 @@ def _iso(epoch: float | None) -> str | None:
 # check 1 — session vs the inputs snapshotted at its start
 
 
+def _wiring_effective_mtime(plugin_tree: Path, otaman_root: Path) -> float | None:
+    """When the vendored wiring last actually CHANGED, not when it was copied.
+
+    A release roll re-vendors the plugin tree, rewriting `hooks.json`'s mtime
+    even when its CONTENT is identical. Dating the wiring by mtime therefore
+    flags every running session the moment a roll lands — measured on
+    2026-09-26: the v0.5.16 roll rewrote hooks.json at 21:23 with byte-identical
+    content, and all 16 fleet sessions rendered STALE. Sixteen of sixteen is
+    the cry-wolf failure D3 exists to prevent, arriving through a different
+    door: right rule, wrong clock.
+
+    So when the installed wiring matches the plugin repo's current wiring
+    byte-for-byte, its real age is the last COMMIT that changed that file.
+    Otherwise the installed copy differs from anything we can date, and mtime
+    is the only signal left.
+    """
+    installed = plugin_tree / "hooks" / "hooks.json"
+    if not installed.is_file():
+        return None
+    try:
+        installed_bytes = installed.read_bytes()
+    except OSError:
+        return None
+
+    for repo in _program_repo_dirs(otaman_root):
+        candidate = repo / "hooks" / "hooks.json"
+        if not candidate.is_file():
+            continue
+        try:
+            if candidate.read_bytes() != installed_bytes:
+                continue
+        except OSError:
+            continue
+        if not shutil.which("git"):
+            break
+        try:
+            r = subprocess.run(
+                ["git", "log", "-1", "--format=%ct", "--", "hooks/hooks.json"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            stamp = r.stdout.strip()
+            if stamp:
+                return float(stamp)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            break
+        break
+    return installed.stat().st_mtime
+
+
 def _snapshot_inputs(otaman_root: Path, plugin_dir: str | None) -> list[tuple[str, float]]:
     """(label, mtime) for each input a session captures when it starts.
 
@@ -216,9 +268,12 @@ def _snapshot_inputs(otaman_root: Path, plugin_dir: str | None) -> list[tuple[st
     if pf.is_file():
         out.append((str(pf), pf.stat().st_mtime))
     if plugin_dir:
-        hooks = Path(plugin_dir).expanduser() / "hooks" / "hooks.json"
+        tree = Path(plugin_dir).expanduser()
+        hooks = tree / "hooks" / "hooks.json"
         if hooks.is_file():
-            out.append((str(hooks), hooks.stat().st_mtime))
+            when = _wiring_effective_mtime(tree, otaman_root)
+            if when is not None:
+                out.append((str(hooks), when))
     return out
 
 

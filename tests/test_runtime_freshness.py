@@ -629,3 +629,95 @@ class TestHaltedNamesWhatIsStuck:
         h._arm(monkeypatch, repo)
         (f,) = rf.check_halted_sessions(root)
         assert "heartbeat hook is not refreshing" in (f.remedy or "")
+
+
+class TestWiringIsDatedByContentNotCopyTime:
+    """A release roll re-vendors the plugin tree, rewriting `hooks.json`'s
+    mtime even when the content is byte-identical.
+
+    Measured 2026-09-26, minutes after the v0.5.16 roll: the file was rewritten
+    at 21:23 with identical content, the last commit to actually change it was
+    2026-09-20, every session booted 2026-09-24 — and all 16 rendered STALE.
+
+    Sixteen of sixteen is the cry-wolf failure D3 exists to prevent, arriving
+    through a different door. D3 got the rule right (only snapshotted inputs
+    count) and this got the clock wrong: mtime measures when a file was
+    COPIED, and a roll copies everything.
+
+    So when the installed wiring matches the plugin repo's wiring byte-for-
+    byte, its real age is the last commit that changed it.
+    """
+
+    def _tree_and_repo(self, tmp_path: Path, *, same_content: bool):
+        import subprocess
+
+        tree = tmp_path / "installed"
+        (tree / "hooks").mkdir(parents=True)
+        (tree / "hooks" / "hooks.json").write_text('{"hooks":{"a":1}}', encoding="utf-8")
+
+        repo = tmp_path / "otaman-plugin"
+        (repo / "hooks").mkdir(parents=True)
+        (repo / "hooks" / "hooks.json").write_text(
+            '{"hooks":{"a":1}}' if same_content else '{"hooks":{"DIFFERENT":2}}',
+            encoding="utf-8",
+        )
+        for cmd in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "t@e.com"],
+            ["git", "config", "user.name", "t"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-q", "-m", "wiring"],
+        ):
+            subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+
+        root = tmp_path / "meta"
+        root.mkdir()
+        (root / "platform.yaml").write_text(
+            f"project: t\nrepos:\n  - name: otaman-plugin\n    path: {repo}\n", encoding="utf-8"
+        )
+        # The roll: rewrite the installed copy far in the future, content same.
+        import os
+
+        future = 2_000_000_000.0
+        os.utime(tree / "hooks" / "hooks.json", (future, future))
+        return tree, root, future
+
+    def test_a_re_vendored_identical_file_is_dated_by_its_commit(self, tmp_path):
+        tree, root, future = self._tree_and_repo(tmp_path, same_content=True)
+        when = rf._wiring_effective_mtime(tree, root)
+        assert when is not None
+        assert when < future, (
+            "the wiring was dated by copy time, so every session started before "
+            "the roll renders STALE — 16 of 16 on the live fleet"
+        )
+
+    def test_a_genuinely_different_installed_file_falls_back_to_mtime(self, tmp_path):
+        """If the installed copy does not match anything we can date, mtime is
+        the only signal left — and saying 'stale' is the safe direction there."""
+        tree, root, future = self._tree_and_repo(tmp_path, same_content=False)
+        assert rf._wiring_effective_mtime(tree, root) == future
+
+    def test_a_session_after_the_commit_is_fresh_through_the_check(self, tmp_path, monkeypatch):
+        """End to end: the roll bumped mtime, the session predates the roll but
+        postdates the last real wiring change, so it must render fresh."""
+        tree, root, future = self._tree_and_repo(tmp_path, same_content=True)
+        (root / ".agents" / "status").mkdir(parents=True)
+        commit_time = rf._wiring_effective_mtime(tree, root)
+        assert commit_time is not None
+
+        monkeypatch.setattr(rf, "_sessions_for", lambda r: [77])
+        monkeypatch.setattr(rf, "_proc_start_epoch", lambda p: commit_time + 3600)
+        monkeypatch.setattr(rf, "_proc_argv", lambda p: f"claude --plugin-dir {tree}")
+        (f,) = rf.check_sessions_vs_inputs(root)
+        assert f.verdict == "fresh", f
+
+    def test_a_session_before_the_commit_is_still_stale(self, tmp_path, monkeypatch):
+        """The real signal must survive the fix — a session that genuinely
+        predates the wiring change is still caught."""
+        tree, root, _ = self._tree_and_repo(tmp_path, same_content=True)
+        commit_time = rf._wiring_effective_mtime(tree, root)
+        monkeypatch.setattr(rf, "_sessions_for", lambda r: [77])
+        monkeypatch.setattr(rf, "_proc_start_epoch", lambda p: commit_time - 3600)
+        monkeypatch.setattr(rf, "_proc_argv", lambda p: f"claude --plugin-dir {tree}")
+        (f,) = rf.check_sessions_vs_inputs(root)
+        assert f.verdict == "stale", f
