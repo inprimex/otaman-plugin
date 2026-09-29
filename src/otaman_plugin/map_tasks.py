@@ -208,168 +208,76 @@ def map_tasks_to_owners(
 # Ruling: the bus filing is the authority DURING the window; tasks.md remains
 # the durable record it syncs to. So dispatch consults the bus first.
 
-_TASK_ID_RE = re.compile(r"^(\d+[A-Za-z]?(?:\.\d+)*)\b")
-_COMPLETED_RE = re.compile(r"^\*\*Completed\*\*:\s*(.+)$", re.MULTILINE)
-_RANGE_RE = re.compile(r"^(\d+)\.(\d+)\s*-\s*(\d+)\.(\d+)$")
+# task-complete-reconciler 1.1 (core #85, 579e105): this reader used to live
+# here. Core now owns it — task_id_of, filed_complete_at, filed_complete_ids,
+# last_untick_at and is_effectively_complete, ported verbatim — so plugin's
+# dispatch consult and cli's sweep/drift-count read ONE implementation. Two
+# copies of a rule this subtle (a filing older than its task's most recent
+# un-tick is stale evidence) drift apart exactly when it matters.
+#
+# Probed rather than imported hard: the installed bundle can lag the checkout,
+# and a dispatcher must not become unimportable because core has not shipped
+# yet. The degradation is loud and re-dispatches — see _consult_filed below.
+try:
+    from otaman_core.task_complete import (
+        COMPLETED_ALL,
+        filed_complete_at,
+        is_effectively_complete,
+        task_id_of,
+    )
 
-#: Sentinel for `otaman complete --all`, which names no individual ids.
-_ALL = "*"
+    _CORE_READER_ERROR: str | None = None
+except ImportError as exc:  # pragma: no cover — laggard-bundle path
+    COMPLETED_ALL = "*"
+    filed_complete_at = None  # type: ignore[assignment]
+    is_effectively_complete = None  # type: ignore[assignment]
+    task_id_of = None  # type: ignore[assignment]
+    _CORE_READER_ERROR = str(exc)
 
 
-def task_id_of(task_text: str) -> str | None:
-    """The leading `1.2` / `2.1` / `1B.3` identifier of a tasks.md line."""
-    m = _TASK_ID_RE.match(task_text.strip())
-    return m.group(1) if m else None
+def _consult_filed(
+    tasks: list[dict[str, Any]],
+    tasks_path: Path,
+    project_root: Path,
+    feature_name: str,
+    config: dict[str, Any],
+) -> tuple[list[str], list[str], list[str]]:
+    """Mark tasks whose completion is already filed on the bus as done.
 
+    Returns ``(filed_complete, retracted, problems)`` — three OUTCOMES, never
+    one summary. A task skipped because its filing stands and a task
+    re-dispatched because that filing was retracted are different events, and
+    an operator reading only a count cannot tell them apart.
 
-def _parse_completed_spec(spec: str) -> set[str]:
-    """Task ids named by a `**Completed**:` line.
-
-    Returns ``{_ALL}`` for an --all filing. Returns an EMPTY set for anything
-    it cannot parse confidently — the safe direction is to dispatch a task that
-    was already done (noisy, recoverable) rather than skip one that was not
-    (silent, and the work is simply lost).
+    When core's reader is unavailable the consult cannot run at all. It then
+    re-dispatches everything and SAYS SO: silently skipping the consult looks
+    identical to a clean run with nothing filed, which is the precise failure
+    this whole mechanism exists to end.
     """
-    spec = spec.strip()
-    if not spec:
-        return set()
-    if spec.lower().startswith("all"):
-        return {_ALL}
-    spec = re.sub(r"^tasks?\s+", "", spec, flags=re.IGNORECASE)
-    out: set[str] = set()
-    for piece in re.split(r"[,\s]+", spec):
-        piece = piece.strip()
-        if not piece:
+    if _CORE_READER_ERROR is not None:
+        return [], [], [f"filed-completion consult SKIPPED — {_CORE_READER_ERROR}"]
+
+    filed = filed_complete_at(project_root, feature_name, config)
+    filed_complete: list[str] = []
+    retracted: list[str] = []
+    for task in tasks:
+        if task["done"]:
             continue
-        rng = _RANGE_RE.match(piece)
-        if rng:
-            major_a, minor_a, major_b, minor_b = (int(g) for g in rng.groups())
-            if major_a == major_b and minor_a <= minor_b:
-                out.update(f"{major_a}.{n}" for n in range(minor_a, minor_b + 1))
+        tid = task_id_of(task.get("text", ""))
+        if not tid:
             continue
-        if _TASK_ID_RE.match(piece):
-            out.add(piece)
-    return out
-
-
-_TIMESTAMP_RE = re.compile(r"^timestamp:\s*(\S+)", re.MULTILINE)
-
-#: How far back to look for a retraction. A tasks.md does not accumulate
-#: thousands of commits, and an unbounded `git log -p` on a large history is
-#: not something a post-commit hook should run. If the scan hits this bound
-#: without finding an un-tick it says so rather than concluding there was none.
-UNTICK_SCAN_COMMITS = 200
-
-
-def _filing_time(text: str) -> datetime | None:
-    m = _TIMESTAMP_RE.search(text)
-    if not m:
-        return None
-    try:
-        return datetime.fromisoformat(m.group(1).strip().replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def filed_complete_at(
-    project_root: Path, change: str, config: dict[str, Any]
-) -> dict[str, datetime | None]:
-    """Task id -> the NEWEST filing time for it, for *change*.
-
-    `None` as a value means a filing exists but carries no parseable
-    timestamp; callers treat that as "filed, age unknown".
-    """
-    bus_rel = config.get("communication", {}).get("bus_path", ".agents/bus")
-    out: dict[str, datetime | None] = {}
-    for sub in ("active", "archive"):
-        d = project_root / bus_rel / sub
-        if not d.is_dir():
+        if tid not in filed and COMPLETED_ALL not in filed:
+            continue  # nothing filed for it — ordinary dispatch
+        if not is_effectively_complete(tid, filed, tasks_path):
+            # Filed, but the filing predates this task's most recent un-tick.
+            # Un-ticking is how a retraction is expressed, so the evidence is
+            # stale and the task goes back out rather than being cited forever.
+            retracted.append(task["text"])
             continue
-        # Matched on FRONTMATTER, not filename. The filenames the CLI happens
-        # to generate contain "task-complete", but that is a convention, not a
-        # contract — `type:` is the field that defines the message.
-        for f in d.glob("*.md"):
-            try:
-                text = f.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            if not re.search(r"^type:\s*task-complete\s*$", text, re.MULTILINE):
-                continue
-            if not re.search(rf"^change:\s*{re.escape(change)}\s*$", text, re.MULTILINE):
-                continue
-            when = _filing_time(text)
-            for m in _COMPLETED_RE.finditer(text):
-                for tid in _parse_completed_spec(m.group(1)):
-                    prev = out.get(tid, "missing")
-                    if prev == "missing" or (when is not None and (prev is None or when > prev)):
-                        out[tid] = when
-    return out
-
-
-def filed_complete_ids(project_root: Path, change: str, config: dict[str, Any]) -> set[str]:
-    """Task ids with a filed `task-complete` for *change*, pending OR resolved.
-
-    Both live in `bus/active` — acks sit beside them in `active/acks`, so a
-    resolved filing is still a filing and still counts. Archive is scanned too
-    so a swept bus does not resurrect finished work.
-    """
-    return set(filed_complete_at(project_root, change, config))
-
-
-def last_untick_at(tasks_path: Path, task_id: str) -> datetime | None:
-    """When *task_id* was most recently un-ticked (`[x]` -> `[ ]`), if ever.
-
-    A RETRACTED completion had no representation: the consult skipped
-    re-dispatch on the strength of the old filing, so an over-claimed task
-    could never come back. spec-agent's shape (20260926T183603) — ignore
-    filings older than the most recent un-tick — needs no new message type,
-    because un-ticking is already how a retraction is expressed.
-
-    An ordinary tasks.md edit is NOT a retraction: only a commit that turns
-    this specific line from `[x]` to `[ ]` counts. That distinction is what
-    keeps the original tick-latency fix intact (the 14:56 pushes edited
-    tasks.md without un-ticking cli's 1.3).
-    """
-    import subprocess
-
-    if not shutil.which("git"):
-        return None
-    repo = tasks_path.parent
-    try:
-        log = subprocess.run(
-            ["git", "log", f"-{UNTICK_SCAN_COMMITS}", "--format=%H %cI", "--", tasks_path.name],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    marker = re.compile(rf"^-\s*-\s*\[[xX]\]\s+{re.escape(task_id)}\b")
-    readded = re.compile(rf"^\+\s*-\s*\[ \]\s+{re.escape(task_id)}\b")
-    for line in log.stdout.splitlines():
-        parts = line.split(None, 1)
-        if len(parts) != 2:
-            continue
-        sha, when = parts
-        try:
-            diff = subprocess.run(
-                ["git", "show", "--format=", "-U0", sha, "--", tasks_path.name],
-                cwd=repo,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            ).stdout
-        except (OSError, subprocess.SubprocessError):
-            continue
-        if any(marker.match(ln) for ln in diff.splitlines()) and any(
-            readded.match(ln) for ln in diff.splitlines()
-        ):
-            try:
-                return datetime.fromisoformat(when.replace("Z", "+00:00"))
-            except ValueError:
-                return None
-    return None
+        task["done"] = True
+        task["filed_complete"] = True
+        filed_complete.append(task["text"])
+    return filed_complete, retracted, []
 
 
 # ---------------------------------------------------------------------------
@@ -679,32 +587,11 @@ def main() -> int:
 
     # Consult the bus BEFORE assigning: a task whose completion is already
     # filed is done for dispatch purposes, even though tasks.md has not been
-    # swept yet. Never silent — the skipped ones are counted and named below.
-    filed = filed_complete_at(project_root, feature_name, config)
-    filed_complete: list[str] = []
-    retracted: list[str] = []
-    for t_ in tasks:
-        if t_["done"]:
-            continue
-        tid = task_id_of(t_.get("text", ""))
-        if not tid:
-            continue
-        key = tid if tid in filed else (_ALL if _ALL in filed else None)
-        if key is None:
-            continue
-        # A RETRACTED completion outranks the filing that preceded it.
-        # Un-ticking is how a retraction is expressed, so a filing older than
-        # the most recent un-tick of THIS task is stale evidence and the task
-        # goes back out. Without this, an over-claimed task could never
-        # re-dispatch — the consult would cite the withdrawn filing forever.
-        filed_at = filed.get(key)
-        untick_at = last_untick_at(tasks_path, tid)
-        if untick_at is not None and (filed_at is None or filed_at < untick_at):
-            retracted.append(t_["text"])
-            continue
-        t_["done"] = True
-        t_["filed_complete"] = True
-        filed_complete.append(t_["text"])
+    # swept yet. Never silent — the skipped ones are counted and named below,
+    # and a consult that could not run at all reports itself as a problem.
+    filed_complete, retracted, consult_problems = _consult_filed(
+        tasks, tasks_path, project_root, feature_name, config
+    )
 
     # A task ANNOTATED for a repo that did not resolve to an owner is a DROP,
     # not an absence: someone asked for it and nobody got it. An unannotated
@@ -748,6 +635,7 @@ def main() -> int:
     report["retracted_tasks"] = retracted
     report["envelope_carried"] = bool(envelope_section)
     report["envelope_problems"] = envelope_problems
+    report["consult_problems"] = consult_problems
 
     # Counts on every run, on stderr so they are visible even when stdout is
     # consumed as JSON. A verb that did work says what it did.
@@ -768,6 +656,16 @@ def main() -> int:
     # authorization at all, and the delivering agent needs to know that is why.
     for problem in envelope_problems:
         print(f"  envelope: {problem}", file=sys.stderr)
+    # A consult that could not run is NOT a run that found nothing filed. Both
+    # dispatch every task; only one of them is correct, so the line has to say
+    # which happened.
+    for problem in consult_problems:
+        print(f"  WARNING: {problem}", file=sys.stderr)
+        print(
+            "  Every task was re-dispatched without checking the bus — "
+            "already-filed work may be assigned again.",
+            file=sys.stderr,
+        )
 
     if dropped:
         # A drop is an error, not a silent omission (delta, scenario 1).

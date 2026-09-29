@@ -27,8 +27,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from otaman_plugin.map_tasks import (
-    _ALL,
+# task-complete-reconciler 1.1: the reader is core's now (core #85). These stay
+# in plugin's suite as CONTRACT tests against the port — plugin's dispatch
+# consult is a caller, and a core-side change that alters these semantics has to
+# fail here, where the consult lives, not only in core's own suite.
+from otaman_core.task_complete import (
+    COMPLETED_ALL as _ALL,
+)
+from otaman_core.task_complete import (
     _parse_completed_spec,
     filed_complete_ids,
     task_id_of,
@@ -265,7 +271,7 @@ class TestRetractionOutranksTheFiling:
         )
 
     def test_an_untick_after_the_filing_re_dispatches(self, tmp_path):
-        from otaman_plugin.map_tasks import last_untick_at
+        from otaman_core.task_complete import last_untick_at
 
         root, specs, tasks = self._git_repo(tmp_path)
         self._commit(specs, tasks, "# t\n\n- [ ] 1.5 @otaman-r the task\n", "init")
@@ -278,7 +284,7 @@ class TestRetractionOutranksTheFiling:
         """The guard on the original fix. cli's 1.3 was never ticked; the
         14:56 push merely edited the file. If that counted as a retraction the
         tick-latency bug comes straight back."""
-        from otaman_plugin.map_tasks import last_untick_at
+        from otaman_core.task_complete import last_untick_at
 
         root, specs, tasks = self._git_repo(tmp_path)
         self._commit(specs, tasks, "# t\n\n- [ ] 1.3 @otaman-r console view\n", "init")
@@ -294,7 +300,7 @@ class TestRetractionOutranksTheFiling:
         )
 
     def test_another_tasks_untick_does_not_retract_mine(self, tmp_path):
-        from otaman_plugin.map_tasks import last_untick_at
+        from otaman_core.task_complete import last_untick_at
 
         root, specs, tasks = self._git_repo(tmp_path)
         self._commit(specs, tasks, "# t\n\n- [x] 1.1 @otaman-r a\n- [ ] 1.3 @otaman-r b\n", "init")
@@ -308,7 +314,7 @@ class TestRetractionOutranksTheFiling:
         """Without history we cannot see a retraction. Keep skipping — the
         base case is 'no retraction', and re-dispatching everything whenever
         history is unreadable would reinstate the original bug broadly."""
-        from otaman_plugin.map_tasks import last_untick_at
+        from otaman_core.task_complete import last_untick_at
 
         plain = tmp_path / "nogit"
         plain.mkdir()
@@ -365,3 +371,124 @@ class TestRetractionOutranksTheFiling:
         assert report.get("filed_complete") == 1, proc.stderr
         assert report.get("retracted") == 0
         assert report.get("dispatched") == 1, "the genuinely new task must still go out"
+
+
+class TestReaderIsSingleHomedInCore:
+    """task-complete-reconciler 1.1 (core #85, 579e105).
+
+    plugin's dispatch consult and cli's sweep/drift-count must read ONE
+    implementation. The rule they share is subtle — a filing older than its
+    task's most recent un-tick is stale evidence — and two copies of it drift
+    apart precisely when a retraction is in play, which is the case nobody
+    exercises by hand.
+    """
+
+    def test_consult_uses_cores_reader_object(self):
+        """Identity, not behaviour: a re-added local copy that merely behaves
+        the same today is the drift this task exists to prevent."""
+        import otaman_core.task_complete as core
+
+        from otaman_plugin import map_tasks
+
+        assert map_tasks.filed_complete_at is core.filed_complete_at
+        assert map_tasks.is_effectively_complete is core.is_effectively_complete
+        assert map_tasks.task_id_of is core.task_id_of
+        assert map_tasks.COMPLETED_ALL is core.COMPLETED_ALL
+
+    def test_no_local_copy_remains(self):
+        """The functions must not be REDEFINED in map_tasks after the import.
+
+        A definition further down the file silently shadows the import and both
+        the identity assertions above and this one are how that gets caught.
+        """
+        source = (REPO / "src" / "otaman_plugin" / "map_tasks.py").read_text(encoding="utf-8")
+        for name in (
+            "task_id_of",
+            "_parse_completed_spec",
+            "filed_complete_at",
+            "filed_complete_ids",
+            "last_untick_at",
+            "_filing_time",
+        ):
+            assert f"def {name}(" not in source, f"map_tasks still defines {name} locally"
+
+    def test_retraction_rule_is_not_reimplemented_inline(self):
+        """The combined check is `is_effectively_complete`, not a hand-rolled
+        comparison of a filing time against an un-tick time."""
+        source = (REPO / "src" / "otaman_plugin" / "map_tasks.py").read_text(encoding="utf-8")
+        assert "is_effectively_complete(" in source
+        assert "last_untick_at(" not in source, (
+            "the consult reimplements the retraction comparison instead of "
+            "delegating to is_effectively_complete"
+        )
+
+
+class TestLaggardBundleDegradesLoudly:
+    """The installed bundle can lag the checkout, so the import is probed.
+
+    A consult that could not run and a consult that found nothing filed both
+    dispatch every task. Only one of them is correct. If the skipped consult is
+    silent, the operator reads a re-dispatch storm as a clean run — which is
+    the exact failure the consult was built to end.
+    """
+
+    def test_unavailable_reader_reports_a_problem_and_dispatches(self, tmp_path, monkeypatch):
+        from otaman_plugin import map_tasks
+
+        monkeypatch.setattr(map_tasks, "_CORE_READER_ERROR", "no module named task_complete")
+        tasks = [{"text": "1.3 @otaman-cli console view", "done": False}]
+        filed, retracted, problems = map_tasks._consult_filed(
+            tasks, tmp_path / "tasks.md", tmp_path, "some-change", {}
+        )
+        assert problems, "a consult that could not run reported nothing"
+        assert "SKIPPED" in problems[0]
+        assert filed == [] and retracted == []
+        assert tasks[0]["done"] is False, "the task must go out rather than be suppressed"
+
+    def test_the_problem_names_the_import_failure(self, tmp_path, monkeypatch):
+        """'consult skipped' without the reason leaves nobody able to fix it."""
+        from otaman_plugin import map_tasks
+
+        monkeypatch.setattr(map_tasks, "_CORE_READER_ERROR", "cannot import name 'x'")
+        _, _, problems = map_tasks._consult_filed([], tmp_path / "t.md", tmp_path, "c", {})
+        assert "cannot import name 'x'" in problems[0]
+
+    def test_available_reader_reports_no_problem(self, tmp_path):
+        """The warning must not fire on the ordinary path — a warning that is
+        always on is a warning nobody reads."""
+        from otaman_plugin import map_tasks
+
+        assert map_tasks._CORE_READER_ERROR is None
+        _, _, problems = map_tasks._consult_filed([], tmp_path / "t.md", tmp_path, "c", {})
+        assert problems == []
+
+
+class TestConsultOutcomesStayDistinct:
+    """no-silent-success clause 1: skipped, retracted, and could-not-consult are
+    three different events and must not collapse into one count."""
+
+    def test_report_carries_consult_problems(self, tmp_path):
+        root = _program(tmp_path.resolve())
+        helper = TestDispatchEndToEnd()
+        tasks = helper._change(
+            root,
+            "session-runtime-freshness",
+            "# tasks\n\n- [ ] 1.3 @otaman-cli console view\n",
+        )
+        _file_completion(root, change="session-runtime-freshness", completed="tasks 1.3")
+        proc, report = helper._run(tasks, tmp_path)
+        assert "consult_problems" in report, proc.stderr
+        assert report["consult_problems"] == [], "a healthy run must report no consult problem"
+
+    def test_a_skip_and_a_retraction_are_named_differently(self, tmp_path):
+        root = _program(tmp_path.resolve())
+        helper = TestDispatchEndToEnd()
+        tasks = helper._change(
+            root,
+            "session-runtime-freshness",
+            "# tasks\n\n- [ ] 1.3 @otaman-cli console view\n",
+        )
+        _file_completion(root, change="session-runtime-freshness", completed="tasks 1.3")
+        proc, _ = helper._run(tasks, tmp_path)
+        assert "filed-complete, not re-dispatched" in proc.stderr
+        assert "retracted since filing" not in proc.stderr
