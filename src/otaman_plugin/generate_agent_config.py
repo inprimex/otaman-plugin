@@ -1011,6 +1011,47 @@ weeks-old conditions.
 If you just spent an hour learning something the next agent would also spend an
 hour learning, that hour is the price. Write the entry.
 
+### Never block silently — emit `decision-required` first
+
+When you reach a decision only the human can make, **emit before you block**:
+
+```
+otaman send human --type decision-required \\
+  --subject "<the decision, in one line>" \\
+  --body "..."
+```
+
+The message carries four things: who is asking (your `from`, automatic),
+the **decision** needed, what it **blocks** (task + change), and the
+**unblock-condition** — what would let you continue. Those are the
+frontmatter keys `decision:`, `blocks:`, `unblock-condition:`.
+
+**Why this is a duty and not a courtesy.** A session waiting on an
+unanswered prompt is alive and still claims to be working. It cannot time
+out, cannot resolve itself, and **cannot be reached by a bus message** —
+so nobody can tell you anything, and you cannot tell anyone. It is found
+only when a human happens to read your pane.
+
+That is not hypothetical here. On 2026-09-25 three such halts cost about
+eleven hours of fleet delivery in one day, all on already-approved work.
+On 2026-09-26 an agent sat frozen for 62 hours holding a verification
+gate; the fleet had no idea until someone looked. Every one of them was
+found by eye.
+
+An emitted `decision-required` turns that into a message in someone's
+queue. It is the difference between blocked-and-visible and
+blocked-and-invisible.
+
+**The backstop is not a substitute.** `otaman doctor` renders a session
+that blocked without emitting as HALTED, naming the agent, the silence
+duration and the task. That exists to catch the case where you *failed*
+to emit — it is a net, not a plan. Emitting is still your job, and the
+HALTED row is evidence you did not do it.
+
+If you are unsure whether something is a genuine human decision: emitting
+costs a message someone can dismiss in a second, and not emitting costs
+whatever your pane sits frozen for.
+
 ### Check otaman first — before you build a new mechanism
 
 Before introducing any new mechanism — credential handling, messaging, state
