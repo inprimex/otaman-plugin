@@ -372,11 +372,99 @@ def last_untick_at(tasks_path: Path, task_id: str) -> datetime | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# The delivery authorization envelope, carried into the assignment (dae 2.3)
+
+
+def envelope_block(tasks_path: Path) -> tuple[str, list[str]]:
+    """The envelope section for an assignment, plus any loud problems.
+
+    A delivering agent must know its action classes WITHOUT reading specs repo
+    state — that is the whole point of carrying it. So dispatch resolves the
+    change's `authorizes:` here and writes the answer into the message.
+
+    Honesty over brevity: every registry class is `runtime-honored: limited`
+    until cli 2.2 records a measured value, and a limited class AUTHORIZES
+    NOTHING (design D6). Printing a declared class without that marker would
+    tell an agent it may proceed unprompted when the runtime will still stop
+    it — the envelope must never promise autonomy the runtime refuses.
+
+    Returns `("", [problem, ...])` on a malformed envelope: nothing is carried,
+    which authorizes nothing, and the problem is surfaced rather than swallowed.
+    """
+    problems: list[str] = []
+    cfg_path = tasks_path.parent / ".openspec.yaml"
+    if not cfg_path.is_file():
+        return "", problems
+    try:
+        import yaml
+
+        raw = (yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}).get("authorizes")
+    except Exception as exc:  # noqa: BLE001 - unreadable config is a problem, not a crash
+        return "", [f"could not read {cfg_path.name} for authorizes: {exc}"]
+    if raw is None:
+        return "", problems
+
+    try:
+        from otaman_core.delivery_envelope import (
+            LIMITED,
+            proceeds_without_prompt,
+            runtime_honored,
+            validate_envelope,
+        )
+    except Exception:
+        return "", ["installed otaman-core has no delivery_envelope — envelope NOT carried"]
+
+    try:
+        env = validate_envelope(raw)
+    except Exception as exc:  # noqa: BLE001 - EnvelopeError and anything malformed
+        return "", [f"envelope refused, NOT carried (nothing is authorized): {exc}"]
+    if not env:
+        return "", problems
+
+    lines = ["", "## Delivery authorization envelope", ""]
+    lines.append(
+        "Declared on this change and carried here so you do not have to read "
+        "specs repo state. It expires when the change archives."
+    )
+    lines.append("")
+    lines.append("| action class | scope | runtime-honored | proceeds unprompted |")
+    lines.append("|---|---|---|---|")
+    any_honored = False
+    for cls in sorted(env):
+        scope = env[cls]
+        scope_txt = ", ".join(scope) if scope else "(every target)"
+        marker = runtime_honored(cls) or "not in registry"
+        # A scoped class answers differently per target, so ask about each one
+        # rather than a representative: "proceeds" here means "for the scope as
+        # declared", and a class that proceeds for none of its targets must not
+        # read as if it proceeds.
+        targets = scope if scope else [None]
+        ok = any(proceeds_without_prompt(env, cls, target) for target in targets)
+        any_honored = any_honored or ok
+        lines.append(f"| `{cls}` | {scope_txt} | {marker} | {'yes' if ok else '**no**'} |")
+    lines.append("")
+    if not any_honored:
+        lines.append(
+            "**Nothing here proceeds unprompted.** Every class above is "
+            f"`runtime-honored: {LIMITED}` — which authorizes nothing by declaration "
+            "(design D6). The runtime still prompts, so these route to "
+            "`decision-required` exactly like an undeclared action. Emit before you "
+            "block."
+        )
+    lines.append(
+        "Anything NOT listed above is outside every envelope: escalate via "
+        "`decision-required` rather than freezing."
+    )
+    return "\n".join(lines) + "\n", problems
+
+
 def create_bus_messages(
     project_root: Path,
     tasks: list[dict[str, Any]],
     feature_name: str,
     config: dict[str, Any],
+    envelope_section: str = "",
 ) -> list[str]:
     """Create bus messages for each agent with their assigned tasks.
 
@@ -448,7 +536,7 @@ The following tasks from the feature "{feature_name}" are assigned to you:
 {chr(10).join(task_lines)}
 
 Please implement these in your owned repos and send a completion message when done.
-"""
+{envelope_section}"""
         msg_path = active_dir / filename
         msg_path.write_text(content, encoding="utf-8")
         created.append(msg_path.relative_to(project_root).as_posix())
@@ -630,7 +718,8 @@ def main() -> int:
     ]
 
     # Create bus messages
-    created = create_bus_messages(project_root, tasks, feature_name, config)
+    envelope_section, envelope_problems = envelope_block(tasks_path)
+    created = create_bus_messages(project_root, tasks, feature_name, config, envelope_section)
 
     # Build report
     report = {
@@ -657,6 +746,8 @@ def main() -> int:
     report["filed_complete_tasks"] = filed_complete
     report["retracted"] = len(retracted)
     report["retracted_tasks"] = retracted
+    report["envelope_carried"] = bool(envelope_section)
+    report["envelope_problems"] = envelope_problems
 
     # Counts on every run, on stderr so they are visible even when stdout is
     # consumed as JSON. A verb that did work says what it did.
@@ -673,6 +764,10 @@ def main() -> int:
         print(f"  filed-complete, not re-dispatched: {text[:90]}", file=sys.stderr)
     for text in retracted:
         print(f"  retracted since filing, re-dispatched: {text[:90]}", file=sys.stderr)
+    # A refused envelope must never be silent: the assignment then carries no
+    # authorization at all, and the delivering agent needs to know that is why.
+    for problem in envelope_problems:
+        print(f"  envelope: {problem}", file=sys.stderr)
 
     if dropped:
         # A drop is an error, not a silent omission (delta, scenario 1).
