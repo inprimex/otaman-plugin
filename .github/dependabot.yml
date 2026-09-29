@@ -6,6 +6,18 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     labels: ["dependencies"]
+    ignore:
+      # fastmcp 3 removed the `tool.fn` accessor, which this repo uses at 62
+      # call sites across the MCP server tests and documents as the convention
+      # in CLAUDE.md. A major bump does not fail loudly — it fails every one of
+      # those tests — so it must arrive as a deliberate migration (port the
+      # convention, re-verify both stdio servers), never as a dependency PR.
+      #
+      # Closed twice already as #33 and #87; without this rule dependabot
+      # re-raises it weekly, and each recurrence is a chance someone merges it.
+      # Minor and patch updates inside 2.x still flow.
+      - dependency-name: "fastmcp"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
