@@ -19,6 +19,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -150,3 +151,86 @@ class TestBypassRestoredFails:
     def test_real_gate_does_not(self, tmp_path):
         ok, _ = check_dispatch_allowed(_change(tmp_path, stage="authored"), BLOCK)
         assert ok is False, "the real gate must refuse where the bypass allowed"
+
+
+class TestUnevaluableGateIsNeverSilent:
+    """The 2026-09-30 incident, reproduced.
+
+    `requested_by` in security-gates-hook-c's `.openspec.yaml` carried an
+    unquoted colon inside its value. `yaml.safe_load` raised ScannerError, one
+    bare `except Exception: return True, []` swallowed it, and FIVE agents
+    (core, cli, deploy, plugin, spec) received task-assignments for a change at
+    stage `authored` — with nothing printed. core-agent's fix quoted the value
+    2m13s later; the assignments were already out.
+
+    Three cases that must stay apart:
+      - no `.openspec.yaml`        -> no gate is declared; allow, say nothing
+      - core lacks the module      -> laggard bundle; allow, say nothing
+      - declared but unparseable   -> a gate EXISTS and was not evaluated;
+                                      allow (a bad file must not disarm the
+                                      dispatcher) but SAY SO
+
+    The third collapsing into the first two is what made the dispatch silent.
+    """
+
+    #: Verbatim from security-gates-hook-c before ce8c410 quoted it.
+    REAL_BAD_LINE = (
+        "requested_by: cofounder-agent (SCR 20260622T210418, "
+        "research-grounded: verification-gates-research.md)\n"
+    )
+
+    def _broken(self, tmp_path: Path, name: str = "sghc") -> Path:
+        d = tmp_path / "openspec" / "changes" / name
+        d.mkdir(parents=True)
+        (d / "tasks.md").write_text("- [ ] 1.4 @otaman-plugin do it\n", encoding="utf-8")
+        (d / ".openspec.yaml").write_text(
+            "schema: spec-driven\n" + self.REAL_BAD_LINE + "stage: authored\n",
+            encoding="utf-8",
+        )
+        return d / "tasks.md"
+
+    def test_the_real_file_is_genuinely_unparseable(self, tmp_path):
+        """Guard the fixture itself: if this ever parses, the test below is
+        vacuous and would pass while proving nothing."""
+        with pytest.raises(yaml.YAMLError):
+            yaml.safe_load("schema: spec-driven\n" + self.REAL_BAD_LINE)
+
+    def test_unparseable_gate_is_reported_not_swallowed(self, tmp_path):
+        ok, lines = check_dispatch_allowed(self._broken(tmp_path), BLOCK)
+        assert ok is True, "a bad file must not disarm the dispatcher"
+        assert lines, "the gate could not be evaluated and NOTHING was said"
+
+    def test_the_report_names_the_parse_failure(self, tmp_path):
+        _, lines = check_dispatch_allowed(self._broken(tmp_path), BLOCK)
+        blob = "\n".join(lines)
+        assert "ScannerError" in blob, "the reason must be named, not just 'failed'"
+        assert "WITHOUT a stage check" in blob
+
+    def test_it_points_at_the_command_that_gives_the_real_answer(self, tmp_path):
+        """A warning an agent cannot act on is nearly as bad as silence."""
+        _, lines = check_dispatch_allowed(self._broken(tmp_path), BLOCK)
+        assert "otaman spec gate" in "\n".join(lines)
+
+    def test_uses_the_exported_marker(self, tmp_path):
+        from otaman_plugin.map_tasks import GATE_NOT_EVALUATED
+
+        _, lines = check_dispatch_allowed(self._broken(tmp_path), BLOCK)
+        assert any(ln.startswith(GATE_NOT_EVALUATED) for ln in lines)
+
+    def test_a_missing_openspec_yaml_stays_silent(self, tmp_path):
+        """The case the old handler was WRITTEN for must not become noisy —
+        a change with no gate file has no gate, and saying so on every
+        dispatch would train everyone to ignore the line."""
+        ok, lines = check_dispatch_allowed(_change(tmp_path, stage=None), BLOCK)
+        assert ok is True and lines == []
+
+    def test_a_valid_gate_says_nothing_about_evaluation(self, tmp_path):
+        ok, lines = check_dispatch_allowed(_change(tmp_path, stage="spec-approved"), BLOCK)
+        assert ok is True and lines == []
+
+    def test_unevaluable_differs_from_no_gate_at_all(self, tmp_path):
+        """Both allow the dispatch. Only one of them checked anything."""
+        _, no_gate = check_dispatch_allowed(_change(tmp_path, stage=None, name="a"), BLOCK)
+        _, broken = check_dispatch_allowed(self._broken(tmp_path, name="b"), BLOCK)
+        assert no_gate == []
+        assert broken != no_gate

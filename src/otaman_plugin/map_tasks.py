@@ -451,6 +451,11 @@ Please implement these in your owned repos and send a completion message when do
     return created
 
 
+#: Prefix of the line emitted when a DECLARED gate could not be evaluated.
+#: Exported so callers test the fact rather than re-deriving a substring.
+GATE_NOT_EVALUATED = "[map-tasks] GATE NOT EVALUATED"
+
+
 def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bool, list[str]]:
     """Consult the dispatch gate for the change owning *tasks_path*.
 
@@ -473,9 +478,19 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
     policy someone chose. Making refusal unconditional is a POLICY change
     (``enforcement: block``), not a conformance fix.
 
-    Degrades to allow-with-no-message when core lacks the gate or the change
-    carries no ``.openspec.yaml`` — a dispatcher must not be disarmed by a
-    laggard bundle, and the read surfaces refuse loudly instead.
+    Degrades to allow-with-no-message ONLY when the gate genuinely does not
+    apply: core lacks the module (laggard bundle), or the change carries no
+    ``.openspec.yaml``. A dispatcher must not be disarmed by either, and the
+    read surfaces refuse loudly instead.
+
+    A gate that is DECLARED but could not be evaluated is a third case, and
+    conflating it with the two above cost real dispatches. On 2026-09-30 an
+    unquoted colon in ``requested_by`` made ``.openspec.yaml`` unparseable;
+    ``yaml.safe_load`` raised, one bare ``except`` swallowed it, and five
+    agents received task-assignments for a change at stage ``authored`` with
+    nothing printed. "No gate file" means there is no gate. "Unparseable gate
+    file" means a gate IS declared and could not be read — so the dispatch
+    still proceeds, and it SAYS SO.
     """
     try:
         import yaml as _yaml
@@ -491,8 +506,17 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
         change = _yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
         program = config.get("spec_policy") if isinstance(config, dict) else None
         decision = check_dispatch_gate(change, resolve_spec_policy(program_block=program))
-    except Exception:
-        return True, []
+    except Exception as exc:
+        # NOT silence. The gate is declared here and could not be evaluated;
+        # dispatch proceeds so a bad file cannot disarm the dispatcher, but an
+        # unevaluated gate must never look like a passed one.
+        return True, [
+            f"{GATE_NOT_EVALUATED} for {tasks_path.parent.name!r}: {type(exc).__name__}: {exc}",
+            "[map-tasks]   .openspec.yaml is present but could not be read — "
+            "dispatch proceeded WITHOUT a stage check.",
+            "[map-tasks]   Verify with `otaman spec gate "
+            f"{tasks_path.parent.name} --at dispatch` before acting on these assignments.",
+        ]
 
     violations = list(getattr(decision, "violations", ()) or ())
     if not violations:
@@ -561,6 +585,9 @@ def main() -> int:
         print(line, file=sys.stderr)
     if not may_dispatch:
         return 1
+    # A dispatch that proceeded WITHOUT a stage check must be recoverable from
+    # the report, not only from whoever was watching stderr at the time.
+    gate_unevaluated = [ln for ln in gate_lines if ln.startswith(GATE_NOT_EVALUATED)]
 
     # Parse and map tasks
     tasks = parse_tasks_md(tasks_path)
@@ -635,6 +662,8 @@ def main() -> int:
     report["envelope_carried"] = bool(envelope_section)
     report["envelope_problems"] = envelope_problems
     report["consult_problems"] = consult_problems
+    report["gate_evaluated"] = not gate_unevaluated
+    report["gate_problems"] = gate_unevaluated
 
     # Counts on every run, on stderr so they are visible even when stdout is
     # consumed as JSON. A verb that did work says what it did.
