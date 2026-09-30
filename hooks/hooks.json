@@ -1,5 +1,5 @@
 {
-  "description": "Otaman hooks — ownership enforcement + bus status",
+  "description": "Otaman hooks \u2014 ownership enforcement + bus status",
   "hooks": {
     "PreToolUse": [
       {
@@ -120,6 +120,10 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/acting-human-boot.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-start-specs-drain.sh"
           }
         ]
       }

@@ -29,10 +29,14 @@ from pathlib import Path
 REQUIRED_FUNCTION = "find_maestro_root"
 
 #: Hooks that source `_resolve.sh` and are therefore subject to this check.
+#: Names are resolved against `scripts/` first, then `hooks/` — see
+#: `_resolve_sh_for`. task-complete-reconciler 2.1 added the first
+#: `hooks/`-resident entry.
 LIVENESS_CHECKED_HOOKS = (
     "post-commit-hook.sh",
     "spec-change-hook.sh",
     "check-branch.sh",
+    "session-start-specs-drain.sh",
 )
 
 
@@ -57,6 +61,41 @@ class Liveness:
         return "live" if self.ok else "inert"
 
 
+def locate_hook(scripts_dir: Path, hook_name: str) -> Path:
+    """Where a checked hook lives: `scripts/` for the git hooks, `hooks/` for
+    the session hooks.
+
+    Returns the `scripts/` path when neither exists, so a genuinely missing
+    hook still reports as missing against a sensible location rather than
+    vanishing from the check.
+    """
+    candidate = scripts_dir / hook_name
+    if candidate.is_file():
+        return candidate
+    sibling = scripts_dir.parent / "hooks" / hook_name
+    if sibling.is_file():
+        return sibling
+    return candidate
+
+
+def _resolve_sh_for(hook_path: Path) -> Path | None:
+    """Where *hook_path* actually sources `_resolve.sh` from.
+
+    Hooks in `scripts/` source it as a sibling; hooks in `hooks/` source
+    `../scripts/_resolve.sh`. Probing only the sibling location reported every
+    `hooks/`-resident script as inert — a FALSE ALARM, which erodes the check
+    faster than missing one would: an install gate that cries wolf gets
+    disabled, and then the real haulops shape sails through.
+    """
+    for candidate in (
+        hook_path.parent / "_resolve.sh",
+        hook_path.parent.parent / "scripts" / "_resolve.sh",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def probe_hook_liveness(hook_path: Path) -> Liveness:
     """Can *hook_path* load its dependencies and define REQUIRED_FUNCTION?
 
@@ -67,7 +106,11 @@ def probe_hook_liveness(hook_path: Path) -> Liveness:
     if not hook_path.is_file():
         return Liveness(False, True, f"{hook_path.name} is not installed at {hook_path}")
 
-    resolve = hook_path.parent / "_resolve.sh"
+    resolve = _resolve_sh_for(hook_path)
+    if resolve is None:
+        # Report against the path the hook would source, so the message names
+        # somewhere real rather than a location we never looked.
+        resolve = hook_path.parent / "_resolve.sh"
     if not resolve.is_file():
         # The haulops shape exactly: entry point present, dependency absent.
         return Liveness(

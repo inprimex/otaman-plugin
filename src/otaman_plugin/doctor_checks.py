@@ -213,7 +213,11 @@ def check_installed_hooks_are_live(otaman_root: Path) -> list[DoctorWarning]:
     never silence — so `not-checked` is reported as `info` rather than being
     dropped.
     """
-    from otaman_plugin.hook_liveness import LIVENESS_CHECKED_HOOKS, probe_hook_liveness
+    from otaman_plugin.hook_liveness import (
+        LIVENESS_CHECKED_HOOKS,
+        locate_hook,
+        probe_hook_liveness,
+    )
 
     out: list[DoctorWarning] = []
     scripts_dir = _plugin_scripts_dir()
@@ -228,7 +232,7 @@ def check_installed_hooks_are_live(otaman_root: Path) -> list[DoctorWarning]:
         ]
 
     for hook_name in LIVENESS_CHECKED_HOOKS:
-        verdict = probe_hook_liveness(scripts_dir / hook_name)
+        verdict = probe_hook_liveness(locate_hook(scripts_dir, hook_name))
         if verdict.ok:
             continue
         out.append(
