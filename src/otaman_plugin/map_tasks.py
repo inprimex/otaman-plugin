@@ -503,8 +503,8 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
     "No gate file" still means no gate is declared, and stays silent.
     """
     try:
-        import yaml as _yaml
-        from otaman_core.spec_lifecycle import check_dispatch_gate, resolve_spec_policy
+        import yaml as _yaml  # noqa: F401 - kept for the laggard-bundle fallback below
+        from otaman_core.spec_lifecycle import resolve_spec_policy
     except Exception:
         return True, []
 
@@ -513,37 +513,69 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
         return True, []
 
     try:
-        change = _yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
         program = config.get("spec_policy") if isinstance(config, dict) else None
-        decision = check_dispatch_gate(change, resolve_spec_policy(program_block=program))
-    except Exception as exc:
-        # A declared gate that cannot be read is an UNVERIFIABLE stage, not an
-        # absent one. Treat it as violating and honour the configured mode, so
-        # a malformed file is never a softer path than a readable bad stage.
-        try:
-            program = config.get("spec_policy") if isinstance(config, dict) else None
-            blocking = resolve_spec_policy(program_block=program).enforcement == "block"
-        except Exception:  # noqa: BLE001 - policy unreadable too: take the safe side
-            blocking = True
-        verb = "DISPATCH REFUSED" if blocking else "DISPATCH WARNING"
-        lines = [
-            f"{GATE_NOT_EVALUATED} for {tasks_path.parent.name!r}: {type(exc).__name__}: {exc}",
-            f"[map-tasks]   {verb}: .openspec.yaml is present but could not be read, "
-            "so the stage cannot be verified.",
-            "[map-tasks]   Fix the file, or check the stage with "
-            f"`otaman spec gate {tasks_path.parent.name} --at dispatch`.",
+        policy = resolve_spec_policy(program_block=program)
+    except Exception:  # noqa: BLE001 - policy unreadable: cannot verify anything
+        return False, [
+            f"{GATE_NOT_EVALUATED} for {tasks_path.parent.name!r}: "
+            "the enforcement policy itself could not be resolved.",
+            "[map-tasks]   DISPATCH REFUSED: nothing about the stage can be verified.",
         ]
-        if not blocking:
-            lines.append(
-                "[map-tasks]   enforcement=warn — dispatched anyway, WITHOUT a stage check."
+
+    # Single-home the read+gate in core (core #90). Its entry is the only place
+    # that can tell an ABSENT .openspec.yaml from an UNPARSEABLE one — both
+    # arrive as {} through the parsed-mapping form — and it hard-refuses the
+    # unparseable case in EVERY mode.
+    #
+    # Mode-independence is the part I got wrong first time. I conditioned the
+    # refusal on `block`, reasoning that refusing under `warn` would override a
+    # policy someone chose. core-agent's correction (20260930T161820) settles
+    # it: `warn` is the L1 DEFAULT, so a warn-mode consult that only fails
+    # closed under block still waves an unreadable file through in the common
+    # configuration — which is the sghc incident intact. And `warn` means
+    # "tell me about a bad stage but proceed", not "proceed when the stage
+    # cannot be read at all"; an inability to verify is not a policy violation
+    # that a mode may downgrade (nss clause 2).
+    try:
+        from otaman_core.spec_lifecycle import check_dispatch_gate_at
+    except ImportError:
+        check_dispatch_gate_at = None  # type: ignore[assignment]
+
+    unreadable = False
+    stage = "<unset>"
+    if check_dispatch_gate_at is not None:
+        decision = check_dispatch_gate_at(meta, policy)
+        try:
+            from otaman_core.spec_lifecycle import openspec_is_unreadable, read_openspec
+
+            unreadable = openspec_is_unreadable(meta)
+            stage = (
+                "<unreadable>" if unreadable else (read_openspec(meta).get("stage") or "<unset>")
             )
-        return (not blocking), lines
+        except Exception:  # noqa: BLE001 - reporting detail only; the verdict stands
+            stage = "<unknown>"
+    else:
+        # Laggard bundle: core predates #90. Reproduce its semantics locally
+        # rather than degrading to the swallow this whole change removed.
+        from otaman_core.spec_lifecycle import check_dispatch_gate
+
+        try:
+            change = _yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
+        except Exception as exc:  # noqa: BLE001 - unparseable: refuse, every mode
+            return False, [
+                f"{GATE_NOT_EVALUATED} for {tasks_path.parent.name!r}: {type(exc).__name__}: {exc}",
+                "[map-tasks]   DISPATCH REFUSED: .openspec.yaml is present but could "
+                "not be read, so the stage cannot be verified.",
+                "[map-tasks]   Fix the file, or check the stage with "
+                f"`otaman spec gate {tasks_path.parent.name} --at dispatch`.",
+            ]
+        decision = check_dispatch_gate(change, policy)
+        stage = change.get("stage") or "<unset>"
 
     violations = list(getattr(decision, "violations", ()) or ())
     if not violations:
         return True, []
 
-    stage = change.get("stage", "<unset>")
     # Loud either way: a gate that fires silently is the defect it exists to
     # prevent (no-silent-success clause 1 — say what was refused and why).
     verb = "DISPATCH REFUSED" if not decision.allowed else "DISPATCH WARNING"
@@ -551,6 +583,18 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
         f"[map-tasks] {verb}: change {tasks_path.parent.name!r} is stage={stage}",
         *(f"[map-tasks]   - {v}" for v in violations),
     ]
+    if unreadable:
+        # An unverifiable stage is its own event, not just another violation:
+        # say it could not be CHECKED, and name the command that answers it.
+        lines.insert(
+            0,
+            f"{GATE_NOT_EVALUATED} for {tasks_path.parent.name!r}: "
+            ".openspec.yaml is present but does not parse.",
+        )
+        lines.append(
+            "[map-tasks]   Fix the file, or check the stage with "
+            f"`otaman spec gate {tasks_path.parent.name} --at dispatch`."
+        )
     if decision.allowed:
         lines.append(
             "[map-tasks]   dispatching anyway: spec_policy enforcement is "

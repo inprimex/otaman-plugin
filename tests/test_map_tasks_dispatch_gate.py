@@ -228,12 +228,31 @@ class TestUnevaluableGateIsNeverSilent:
         assert readable_bad is False
         assert unreadable is False, "malforming the file is a way past the gate"
 
-    def test_warn_mode_still_proceeds_and_says_so(self, tmp_path):
-        """Refusing under `warn` would override a policy someone chose — the
-        mode is honoured in both directions."""
+    def test_warn_mode_ALSO_refuses(self, tmp_path):
+        """REVERSED AGAIN (core-agent 20260930T161820), and this is the version
+        that matters most.
+
+        I first conditioned the refusal on `block`, reasoning that refusing
+        under `warn` would override a policy someone chose. But `warn` is the
+        L1 DEFAULT — so a consult that only fails closed under `block` still
+        waves an unreadable file through in the common configuration, leaving
+        the sghc incident intact for most tenants.
+
+        `warn` means "tell me about a bad stage but proceed". It does not mean
+        "proceed when the stage cannot be read at all": an inability to verify
+        is not a policy violation a mode may downgrade (nss clause 2).
+        """
         ok, lines = check_dispatch_allowed(self._broken(tmp_path), WARN)
-        assert ok is True
-        assert "WITHOUT a stage check" in "\n".join(lines)
+        assert ok is False, "an unreadable gate was waved through under the DEFAULT mode"
+        assert lines
+
+    def test_no_mode_downgrades_an_unverifiable_stage(self, tmp_path):
+        """Mode-independence stated directly, so a future mode cannot reopen it."""
+        for i, mode in enumerate(({"enforcement": "warn"}, {"enforcement": "block"})):
+            ok, _ = check_dispatch_allowed(
+                self._broken(tmp_path, name=f"m{i}"), {"spec_policy": mode}
+            )
+            assert ok is False, f"{mode} downgraded an unverifiable stage"
 
     def test_unreadable_policy_takes_the_safe_side(self, tmp_path, monkeypatch):
         """If even the enforcement mode cannot be resolved, refuse.
@@ -254,10 +273,13 @@ class TestUnevaluableGateIsNeverSilent:
         assert ok is False
 
     def test_the_report_names_the_parse_failure(self, tmp_path):
+        """The reason must be named, not just 'refused'. The wording is core's
+        now (#90 owns the read+gate), so assert the FACT rather than a phrase
+        only my old local branch produced."""
         _, lines = check_dispatch_allowed(self._broken(tmp_path), BLOCK)
         blob = "\n".join(lines)
-        assert "ScannerError" in blob, "the reason must be named, not just 'failed'"
-        assert "cannot be verified" in blob
+        assert "does not parse" in blob
+        assert "stage=<unreadable>" in blob, "an unreadable stage must not render as a real one"
 
     def test_it_points_at_the_command_that_gives_the_real_answer(self, tmp_path):
         """A warning an agent cannot act on is nearly as bad as silence."""
@@ -287,3 +309,45 @@ class TestUnevaluableGateIsNeverSilent:
         _, broken = check_dispatch_allowed(self._broken(tmp_path, name="b"), BLOCK)
         assert no_gate == []
         assert broken != no_gate
+
+
+class TestSingleHomedInCore:
+    """core #90 owns the read+gate: only it can tell an ABSENT .openspec.yaml
+    from an UNPARSEABLE one, because both reach the parsed-mapping form as {}.
+    The consult must delegate rather than re-derive that in a local try/except
+    — re-deriving it is exactly how the sghc dispatch happened.
+    """
+
+    def test_consult_uses_cores_entry(self, tmp_path, monkeypatch):
+        import otaman_core.spec_lifecycle as sl
+
+        seen = {}
+        real = sl.check_dispatch_gate_at
+
+        def spy(path, policy):
+            seen["path"] = path
+            return real(path, policy)
+
+        monkeypatch.setattr(sl, "check_dispatch_gate_at", spy)
+        check_dispatch_allowed(_change(tmp_path, stage="authored"), BLOCK)
+        assert seen.get("path") is not None, "the consult did not delegate to core"
+
+    def test_laggard_bundle_still_fails_closed(self, tmp_path, monkeypatch):
+        """A bundle predating core #90 must not degrade to the swallow this
+        whole change removed — the fallback reproduces core's semantics."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _fake(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "otaman_core.spec_lifecycle" and "check_dispatch_gate_at" in (
+                fromlist or ()
+            ):
+                raise ImportError("simulated pre-#90 core")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _fake)
+        broken = TestUnevaluableGateIsNeverSilent()._broken(tmp_path, name="lag")
+        ok, lines = check_dispatch_allowed(broken, WARN)
+        assert ok is False, "the laggard fallback waved an unreadable gate through"
+        assert lines
