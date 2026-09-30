@@ -488,9 +488,19 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
     unquoted colon in ``requested_by`` made ``.openspec.yaml`` unparseable;
     ``yaml.safe_load`` raised, one bare ``except`` swallowed it, and five
     agents received task-assignments for a change at stage ``authored`` with
-    nothing printed. "No gate file" means there is no gate. "Unparseable gate
-    file" means a gate IS declared and could not be read — so the dispatch
-    still proceeds, and it SAYS SO.
+    nothing printed.
+
+    An unverifiable stage is treated as a VIOLATING one, honouring the mode:
+    refused under ``block``, warned-and-proceeded under ``warn``. spec-agent
+    named the asymmetry that settles the direction (20260930T084339) — the
+    gate refused a READABLE ``authored`` stage while waving through an
+    UNREADABLE one, which makes malforming the file a way past the gate. This
+    is not the policy change I first took it for: under ``block`` a known-bad
+    stage is already refused, so refusing an unknowable one changes no
+    decision anybody configured. It only stops an unperformed check rendering
+    as a passed one (no-silent-success clause 2).
+
+    "No gate file" still means no gate is declared, and stays silent.
     """
     try:
         import yaml as _yaml
@@ -507,16 +517,27 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
         program = config.get("spec_policy") if isinstance(config, dict) else None
         decision = check_dispatch_gate(change, resolve_spec_policy(program_block=program))
     except Exception as exc:
-        # NOT silence. The gate is declared here and could not be evaluated;
-        # dispatch proceeds so a bad file cannot disarm the dispatcher, but an
-        # unevaluated gate must never look like a passed one.
-        return True, [
+        # A declared gate that cannot be read is an UNVERIFIABLE stage, not an
+        # absent one. Treat it as violating and honour the configured mode, so
+        # a malformed file is never a softer path than a readable bad stage.
+        try:
+            program = config.get("spec_policy") if isinstance(config, dict) else None
+            blocking = resolve_spec_policy(program_block=program).enforcement == "block"
+        except Exception:  # noqa: BLE001 - policy unreadable too: take the safe side
+            blocking = True
+        verb = "DISPATCH REFUSED" if blocking else "DISPATCH WARNING"
+        lines = [
             f"{GATE_NOT_EVALUATED} for {tasks_path.parent.name!r}: {type(exc).__name__}: {exc}",
-            "[map-tasks]   .openspec.yaml is present but could not be read — "
-            "dispatch proceeded WITHOUT a stage check.",
-            "[map-tasks]   Verify with `otaman spec gate "
-            f"{tasks_path.parent.name} --at dispatch` before acting on these assignments.",
+            f"[map-tasks]   {verb}: .openspec.yaml is present but could not be read, "
+            "so the stage cannot be verified.",
+            "[map-tasks]   Fix the file, or check the stage with "
+            f"`otaman spec gate {tasks_path.parent.name} --at dispatch`.",
         ]
+        if not blocking:
+            lines.append(
+                "[map-tasks]   enforcement=warn — dispatched anyway, WITHOUT a stage check."
+            )
+        return (not blocking), lines
 
     violations = list(getattr(decision, "violations", ()) or ())
     if not violations:
