@@ -451,6 +451,11 @@ Please implement these in your owned repos and send a completion message when do
     return created
 
 
+#: Prefix of the line emitted when a DECLARED gate could not be evaluated.
+#: Exported so callers test the fact rather than re-deriving a substring.
+GATE_NOT_EVALUATED = "[map-tasks] GATE NOT EVALUATED"
+
+
 def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bool, list[str]]:
     """Consult the dispatch gate for the change owning *tasks_path*.
 
@@ -473,9 +478,29 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
     policy someone chose. Making refusal unconditional is a POLICY change
     (``enforcement: block``), not a conformance fix.
 
-    Degrades to allow-with-no-message when core lacks the gate or the change
-    carries no ``.openspec.yaml`` — a dispatcher must not be disarmed by a
-    laggard bundle, and the read surfaces refuse loudly instead.
+    Degrades to allow-with-no-message ONLY when the gate genuinely does not
+    apply: core lacks the module (laggard bundle), or the change carries no
+    ``.openspec.yaml``. A dispatcher must not be disarmed by either, and the
+    read surfaces refuse loudly instead.
+
+    A gate that is DECLARED but could not be evaluated is a third case, and
+    conflating it with the two above cost real dispatches. On 2026-09-30 an
+    unquoted colon in ``requested_by`` made ``.openspec.yaml`` unparseable;
+    ``yaml.safe_load`` raised, one bare ``except`` swallowed it, and five
+    agents received task-assignments for a change at stage ``authored`` with
+    nothing printed.
+
+    An unverifiable stage is treated as a VIOLATING one, honouring the mode:
+    refused under ``block``, warned-and-proceeded under ``warn``. spec-agent
+    named the asymmetry that settles the direction (20260930T084339) — the
+    gate refused a READABLE ``authored`` stage while waving through an
+    UNREADABLE one, which makes malforming the file a way past the gate. This
+    is not the policy change I first took it for: under ``block`` a known-bad
+    stage is already refused, so refusing an unknowable one changes no
+    decision anybody configured. It only stops an unperformed check rendering
+    as a passed one (no-silent-success clause 2).
+
+    "No gate file" still means no gate is declared, and stays silent.
     """
     try:
         import yaml as _yaml
@@ -491,8 +516,28 @@ def check_dispatch_allowed(tasks_path: Path, config: dict[str, Any]) -> tuple[bo
         change = _yaml.safe_load(meta.read_text(encoding="utf-8")) or {}
         program = config.get("spec_policy") if isinstance(config, dict) else None
         decision = check_dispatch_gate(change, resolve_spec_policy(program_block=program))
-    except Exception:
-        return True, []
+    except Exception as exc:
+        # A declared gate that cannot be read is an UNVERIFIABLE stage, not an
+        # absent one. Treat it as violating and honour the configured mode, so
+        # a malformed file is never a softer path than a readable bad stage.
+        try:
+            program = config.get("spec_policy") if isinstance(config, dict) else None
+            blocking = resolve_spec_policy(program_block=program).enforcement == "block"
+        except Exception:  # noqa: BLE001 - policy unreadable too: take the safe side
+            blocking = True
+        verb = "DISPATCH REFUSED" if blocking else "DISPATCH WARNING"
+        lines = [
+            f"{GATE_NOT_EVALUATED} for {tasks_path.parent.name!r}: {type(exc).__name__}: {exc}",
+            f"[map-tasks]   {verb}: .openspec.yaml is present but could not be read, "
+            "so the stage cannot be verified.",
+            "[map-tasks]   Fix the file, or check the stage with "
+            f"`otaman spec gate {tasks_path.parent.name} --at dispatch`.",
+        ]
+        if not blocking:
+            lines.append(
+                "[map-tasks]   enforcement=warn — dispatched anyway, WITHOUT a stage check."
+            )
+        return (not blocking), lines
 
     violations = list(getattr(decision, "violations", ()) or ())
     if not violations:
@@ -561,6 +606,9 @@ def main() -> int:
         print(line, file=sys.stderr)
     if not may_dispatch:
         return 1
+    # A dispatch that proceeded WITHOUT a stage check must be recoverable from
+    # the report, not only from whoever was watching stderr at the time.
+    gate_unevaluated = [ln for ln in gate_lines if ln.startswith(GATE_NOT_EVALUATED)]
 
     # Parse and map tasks
     tasks = parse_tasks_md(tasks_path)
@@ -635,6 +683,8 @@ def main() -> int:
     report["envelope_carried"] = bool(envelope_section)
     report["envelope_problems"] = envelope_problems
     report["consult_problems"] = consult_problems
+    report["gate_evaluated"] = not gate_unevaluated
+    report["gate_problems"] = gate_unevaluated
 
     # Counts on every run, on stderr so they are visible even when stdout is
     # consumed as JSON. A verb that did work says what it did.
