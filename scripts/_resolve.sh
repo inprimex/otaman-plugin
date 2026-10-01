@@ -391,11 +391,25 @@ print(agent or "")
 # Echoes agent name and returns 0 on success; returns 1 (no output) if
 # identity cannot be resolved, the `otaman` CLI is unavailable, or its
 # output doesn't look like a bare agent name.
+# Returns 0 + the name on stdout when resolved; 3 when the CLI is CAPABLE,
+# ASKED and found nothing; 1 when the environment could not answer at all.
+#
+# The 1-vs-3 split is the whole point. An old `otaman` ignores --resolve-only,
+# prints its banner and exits 0, so it can never emit 3 — meaning 3 proves the
+# chain ran. Collapsing both into 1 is what let an unattributable agent write
+# anywhere: the hook had to allow, because denying would have bricked every
+# tenant on a lagging bundle, and a lagging bundle is this fleet's designed
+# steady state. See cli's UNRESOLVED_BUT_CAPABLE contract.
 resolve_enforcement_identity() {
     command -v otaman >/dev/null 2>&1 || return 1
 
-    local out
-    out="$(otaman whoami --resolve-only 2>/dev/null)" || return 1
+    local out rc
+    out="$(otaman whoami --resolve-only 2>/dev/null)"
+    rc=$?
+    if (( rc == 3 )); then
+        return 3
+    fi
+    (( rc == 0 )) || return 1
 
     # Must be exactly one line and a bare identifier — rejects multi-line
     # banners, blank output, and anything containing whitespace/box-drawing
