@@ -282,3 +282,79 @@ class TestTheStubRunsTheTestInterpreter:
         )
         assert proc.returncode == 0, f"stub could not resolve identity: {proc.stderr}"
         assert proc.stdout.strip() == AGENT, proc.stdout
+
+
+class TestUnattributableWriteFailsClosed:
+    """The ownership-hook member of the fail-open family, closed.
+
+    It used to `exit 0` on EVERY unresolved identity, so an agent nobody could
+    name wrote anywhere, silently. The reason it could not simply fail closed
+    is that denying would brick every tenant on a lagging bundle — and a
+    lagging bundle is this fleet's designed steady state, not an anomaly.
+
+    cli's exit 3 (UNRESOLVED_BUT_CAPABLE) is the discriminator core confirmed
+    (20261001T143851): a build too old to support `--resolve-only` prints a
+    banner and exits 0, so it can NEVER emit 3. Seeing 3 proves the chain ran
+    and found nothing.
+
+      exit 3   -> asked, found nothing  -> DENY
+      anything -> could not ask         -> ALLOW (stale CLI, no CLI)
+    """
+
+    @staticmethod
+    def _capable_but_empty_stub(tmp_path):
+        """A CURRENT build that resolves no identity: exits 3, prints nothing."""
+        bin_dir = tmp_path / "_exit3_stub"
+        bin_dir.mkdir()
+        stub = bin_dir / "otaman"
+        stub.write_text("#!/bin/sh\nexit 3\n", encoding="utf-8")
+        stub.chmod(0o755)
+        return str(bin_dir)
+
+    def test_exit_3_denies_the_write(self, project, tmp_path):
+        rc, parsed = run_write(
+            project,
+            project["base"] / "myrepo" / "x.py",
+            path=self._capable_but_empty_stub(tmp_path),
+        )
+        assert rc == 0
+        assert parsed is not None, "an unattributable write was allowed silently"
+        assert parsed["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_the_denial_is_actionable(self, project, tmp_path):
+        """A deny nobody can act on just looks like a broken hook."""
+        _, parsed = run_write(
+            project,
+            project["base"] / "myrepo" / "x.py",
+            path=self._capable_but_empty_stub(tmp_path),
+        )
+        reason = parsed["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "could not be identified" in reason
+        assert ".otaman" in reason and "whoami --resolve-only" in reason
+
+    def test_exit_3_and_stale_cli_reach_OPPOSITE_decisions(
+        self, project, tmp_path, otaman_stale_stub_bin
+    ):
+        """The distinction itself, asserted in one place.
+
+        Both are 'no identity'. Only one of them proves the chain ran. If a
+        future change collapses them again — in either direction — this fails
+        even if each case above could be satisfied another way.
+        """
+        denied, parsed_deny = run_write(
+            project,
+            project["base"] / "myrepo" / "x.py",
+            path=self._capable_but_empty_stub(tmp_path),
+        )
+        allowed, parsed_allow = run_write(
+            project, project["base"] / "myrepo" / "x.py", path=otaman_stale_stub_bin
+        )
+        assert parsed_deny is not None and parsed_allow is None
+        assert denied == 0 and allowed == 0
+
+    def test_a_resolvable_identity_is_untouched(self, project, otaman_stub_bin):
+        """The guard must not fire on the ordinary path — one that denies
+        everything gets disabled, and then it guards nothing."""
+        assert_allowed(
+            *run_write(project, project["base"] / "myrepo" / "x.py", path=str(otaman_stub_bin))
+        )

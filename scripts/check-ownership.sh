@@ -39,8 +39,11 @@ OWNERSHIP_FILE="$PROJECT_ROOT/.agents/ownership.json"
 # Resolve agent identity for enforcement (F013): only the per-directory
 # .otaman agent: marker is trusted — see resolve_enforcement_identity in
 # _resolve.sh for why OTAMAN_AGENT env / current-agent are excluded here.
-CURRENT_AGENT="$(resolve_enforcement_identity)" || exit 0
-[[ -n "$CURRENT_AGENT" ]] || exit 0
+# `&& ... || ...` rather than a bare assignment: `set -e` is in force, so a
+# non-zero return from the resolver would abort the hook before it could act
+# on the code. The old line absorbed that with `|| exit 0`, which is exactly
+# what discarded the 1-vs-3 distinction.
+CURRENT_AGENT="$(resolve_enforcement_identity)" && _identity_rc=0 || _identity_rc=$?
 
 # --- Portable JSON value extraction (no grep -P, no python) ---
 # Extracts the value for a given key from a JSON string.
@@ -65,6 +68,28 @@ _deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"},"systemMessage":"%s"}\n' "$esc" "$esc"
     exit 0
 }
+
+# FAILS CLOSED only where the CLI ASKED and found nothing (exit 3). This used
+# to `exit 0` on every unresolved identity, so an agent nobody could name
+# wrote anywhere, silently — the ownership-hook member of the fail-open family
+# (dispatch gate, this, core's ci-ok).
+#
+# Exit 3 is cli's UNRESOLVED_BUT_CAPABLE: a build old enough to lack
+# --resolve-only prints a banner and exits 0, so it can NEVER emit 3. Seeing 3
+# therefore proves the chain ran and found nothing — a genuinely
+# unattributable write.
+#
+# Anything else means the environment could not answer (no CLI, pre-F013
+# build), and that MUST still allow. A lagging bundle is this fleet's designed
+# steady state, not an anomaly, and denying there would brick ordinary work on
+# most tenants most of the time —
+# test_stale_cli_banner_output_fails_open_not_garbage_deny is load-bearing.
+#
+# Denial is per-WRITE via _deny, not per-session: reads and reasoning continue.
+if (( _identity_rc == 3 )); then
+    _deny "BLOCKED: the acting agent could not be identified, so repo ownership cannot be checked — refusing an unattributable write. Set \`agent:\` in this repo's .otaman marker, or run \`otaman whoami --resolve-only\` to see why the identity chain resolves to nothing."
+fi
+[[ -n "$CURRENT_AGENT" ]] || exit 0
 
 # --- knowledge-v2 3.1: partition write guard -------------------------------
 #
