@@ -116,7 +116,14 @@ def render_variant(variant_text: str, gates: Any) -> str:
     """
     by_layer = {la.layer: la for la in gates.layers}
     slow = by_layer.get("ci-slow")
-    opted_in = bool(slow and not slow.opt_in)
+    # `opt_in` is TRUE when this repo has opted in (core, after the fix to the
+    # gap this generator surfaced). It previously meant "this is an opt-in
+    # LAYER" and was monotonic from the language default, so the old reading
+    # was `not slow.opt_in`. When core corrected the semantics that reading
+    # inverted into the harmful direction — emitting ci-slow for every repo
+    # that had NOT opted in, which is precisely what deploy's contract warns
+    # trains people to ignore gates.
+    opted_in = bool(slow and slow.opt_in)
 
     text = variant_text
     if not opted_in:
