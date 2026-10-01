@@ -845,8 +845,165 @@ def check_halted_sessions(otaman_root: Path) -> list[Finding]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# check 6 — the installed harness vs the fleet's pin (harness-version-management 1.3)
+
+
+#: Where the pin lives: `runner.harnesses[].pin`. D1 makes the platform harness
+#: registry the ONE authority ("two sources WILL disagree — that lesson is
+#: literally in the knowledge pack"), so this reads there and nowhere else.
+#: Named in the not-checked reason, so if core 1.1 lands a different spelling
+#: the message says which field was looked for rather than reporting a clean
+#: fleet that was never compared.
+HARNESS_PIN_FIELD = "runner.harnesses[].pin"
+
+
+def _declared_pins(otaman_root: Path) -> dict[str, str]:
+    """`{harness id: pinned version}` from the platform harness registry."""
+    try:
+        import yaml
+
+        cfg = yaml.safe_load((otaman_root / "platform.yaml").read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - unreadable config is not-checked, handled by the caller
+        return {}
+    runner = cfg.get("runner") or {}
+    out: dict[str, str] = {}
+    for entry in runner.get("harnesses") or ():
+        if isinstance(entry, dict) and entry.get("id") and entry.get("pin"):
+            out[str(entry["id"])] = str(entry["pin"]).strip()
+    return out
+
+
+def _installed_harness_version(binary: str) -> str | None:
+    """`<binary> --version`, reduced to the version token, or None."""
+    exe = shutil.which(binary)
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"\d+\.\d+(?:\.\d+)?", proc.stdout or proc.stderr or "")
+    return match.group(0) if match else None
+
+
+def check_harness_vs_pin(otaman_root: Path) -> list[Finding]:
+    """Is the installed harness the version this fleet pinned?
+
+    NOT-CHECKED IS THE PERMANENT ANSWER FOR A PIN-LESS TENANT, not a stopgap
+    (spec-agent ruling 20261001T112410). A platform.yaml with no pin is a real
+    state the check must keep speaking about, so it renders `not-checked`
+    naming the field that would hold the pin — never `fresh`, which would
+    report a fleet as on-pin that was never compared.
+
+    Remedy names the provisioning act, because D3 is explicit that off-pin is
+    remediated at a provisioning act and never mid-session: an agent that
+    "fixes" its own harness mid-run changes the thing executing it.
+    """
+    try:
+        import yaml
+
+        cfg = yaml.safe_load((otaman_root / "platform.yaml").read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return [
+            Finding(
+                subject="harness",
+                check="harness-vs-pin",
+                verdict="not-checked",
+                reason=(
+                    f"platform.yaml could not be read ({type(exc).__name__}) — no pin comparison"
+                ),
+                remedy="Fix platform.yaml, then re-run `otaman doctor`.",
+            )
+        ]
+
+    harnesses = (cfg.get("runner") or {}).get("harnesses") or []
+    if not harnesses:
+        return [
+            Finding(
+                subject="harness",
+                check="harness-vs-pin",
+                verdict="not-checked",
+                reason=(
+                    "no harness registry in platform.yaml — nothing declares "
+                    "what should be installed"
+                ),
+                remedy=f"Declare the harness and its pin at `{HARNESS_PIN_FIELD}`.",
+            )
+        ]
+
+    pins = _declared_pins(otaman_root)
+    out: list[Finding] = []
+    for entry in harnesses:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        hid = str(entry["id"])
+        binary = str(entry.get("binary") or hid)
+        pin = pins.get(hid)
+        installed = _installed_harness_version(binary)
+
+        if pin is None:
+            out.append(
+                Finding(
+                    subject=f"harness:{hid}",
+                    check="harness-vs-pin",
+                    verdict="not-checked",
+                    reason=(
+                        f"no pin declared at `{HARNESS_PIN_FIELD}` for {hid!r} — "
+                        f"installed {installed or 'unknown'} was NOT compared against anything"
+                    ),
+                    remedy=f"Declare the exact version at `{HARNESS_PIN_FIELD}` for {hid!r}.",
+                    evidence={"harness": hid, "installed": installed, "pin": None},
+                )
+            )
+            continue
+
+        if installed is None:
+            out.append(
+                Finding(
+                    subject=f"harness:{hid}",
+                    check="harness-vs-pin",
+                    verdict="not-checked",
+                    reason=(
+                        f"{binary!r} is pinned to {pin} but its installed version could not be "
+                        "determined — absence of an answer is not a match"
+                    ),
+                    remedy=f"Check that {binary!r} is on PATH and answers `--version`.",
+                    evidence={"harness": hid, "installed": None, "pin": pin},
+                )
+            )
+            continue
+
+        matched = installed == pin
+        out.append(
+            Finding(
+                subject=f"harness:{hid}",
+                check="harness-vs-pin",
+                verdict="fresh" if matched else "skewed",
+                reason=(
+                    f"{binary} {installed} matches the pin"
+                    if matched
+                    else f"{binary} {installed} is OFF-PIN — the fleet pins {pin}"
+                ),
+                remedy=(
+                    None
+                    if matched
+                    else (
+                        f"Re-provision this tenant to {pin} (a provisioning act — never "
+                        "mid-session: changing the harness under a running agent changes "
+                        "the thing executing it)."
+                    )
+                ),
+                evidence={"harness": hid, "installed": installed, "pin": pin},
+            )
+        )
+    return out
+
+
 def assess(otaman_root: Path) -> list[Finding]:
-    """Checks 1-5 in a stable order. The single computation behind both the
+    """Checks 1-6 in a stable order. The single computation behind both the
     doctor section and the console session view (1.3)."""
     if not (otaman_root / "platform.yaml").is_file():
         # Not a program root — there is nothing for a runtime to be fresh
@@ -860,4 +1017,5 @@ def assess(otaman_root: Path) -> list[Finding]:
     out.extend(check_daemon_vs_config(otaman_root))
     out.extend(check_bundle_vs_latest_release(otaman_root))
     out.extend(check_halted_sessions(otaman_root))
+    out.extend(check_harness_vs_pin(otaman_root))
     return out
