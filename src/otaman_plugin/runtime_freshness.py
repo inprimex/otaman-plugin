@@ -45,6 +45,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from otaman_plugin import __version__
+
 Verdict = Literal["fresh", "stale", "skewed", "halted", "not-checked"]
 
 #: Only these inputs are snapshotted when a session starts. Hook SCRIPT bodies
@@ -1002,8 +1004,136 @@ def check_harness_vs_pin(otaman_root: Path) -> list[Finding]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# check 7 — generated instructions vs the generator (instruction-regeneration 1.3)
+
+
+#: cli's STAMP_RE contract (otaman_cli.generated_instructions): `generator=`
+#: first, extra fields tolerated. Matched here rather than imported so this
+#: check does not require the CLI to be importable — but the SHAPE is cli's,
+#: and test_stamp_shape_matches_clis_reader pins the two together.
+_STAMP_RE = re.compile(
+    r"<!--\s*otaman:generated\s+generator=(?P<version>[^\s]+)(?P<rest>[^>]*?)-->",
+    re.IGNORECASE,
+)
+
+#: The file every repo's instructions live in.
+INSTRUCTIONS_FILENAME = "CLAUDE.local.md"
+
+
+def _stamped_version(text: str) -> str | None:
+    match = _STAMP_RE.search(text or "")
+    return match.group("version").strip() if match else None
+
+
+def check_instructions_vs_generator(otaman_root: Path) -> list[Finding]:
+    """Were each repo's generated instructions written by THIS generator?
+
+    The detection half of instruction-regeneration; the regeneration ACT is
+    cli 1.1 and deploy 1.2. srf only reports, by design.
+
+    This exists because of a measured state, not a hypothetical: on 2026-09-29
+    every repo's CLAUDE.local.md was last written 2026-08-28 while the
+    generator had taken 19 commits since, so none of its output reached any
+    agent. The generator shipped; its output did not.
+
+    AN UNSTAMPED FILE IS NOT-CHECKED, not stale. Absence of a stamp means the
+    file predates stamping, so its provenance is unknown — which is a different
+    claim from "written by an older generator", and calling it stale would
+    assert something unmeasured.
+    """
+    try:
+        import yaml
+
+        cfg = yaml.safe_load((otaman_root / "platform.yaml").read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return [
+            Finding(
+                subject="instructions",
+                check="instructions-vs-generator",
+                verdict="not-checked",
+                reason=(
+                    f"platform.yaml could not be read ({type(exc).__name__}) — "
+                    "no repo list to check"
+                ),
+            )
+        ]
+
+    out: list[Finding] = []
+    for repo in cfg.get("repos") or ():
+        if not isinstance(repo, dict) or not repo.get("path"):
+            continue
+        name = str(repo.get("name") or repo["path"])
+        path = (otaman_root / repo["path"] / INSTRUCTIONS_FILENAME).resolve()
+        if not path.is_file():
+            out.append(
+                Finding(
+                    subject=f"instructions:{name}",
+                    check="instructions-vs-generator",
+                    verdict="not-checked",
+                    reason=f"no {INSTRUCTIONS_FILENAME} — this repo has never been generated for",
+                    remedy="Run `otaman init --update` to generate it.",
+                    evidence={"repo": name, "stamp": None, "generator": __version__},
+                )
+            )
+            continue
+        try:
+            stamped = _stamped_version(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            out.append(
+                Finding(
+                    subject=f"instructions:{name}",
+                    check="instructions-vs-generator",
+                    verdict="not-checked",
+                    reason=f"{INSTRUCTIONS_FILENAME} could not be read ({type(exc).__name__})",
+                )
+            )
+            continue
+
+        if stamped is None:
+            out.append(
+                Finding(
+                    subject=f"instructions:{name}",
+                    check="instructions-vs-generator",
+                    verdict="not-checked",
+                    reason=(
+                        "no generation stamp — this file predates stamping, so which "
+                        "generator wrote it is unknown (NOT the same as out of date)"
+                    ),
+                    remedy="Run `otaman init --update` to regenerate and stamp it.",
+                    evidence={"repo": name, "stamp": None, "generator": __version__},
+                )
+            )
+        elif stamped != __version__:
+            out.append(
+                Finding(
+                    subject=f"instructions:{name}",
+                    check="instructions-vs-generator",
+                    verdict="stale",
+                    reason=(
+                        f"written by generator {stamped}, but this bundle ships "
+                        f"{__version__} — the agent is reading instructions this "
+                        "generator did not produce"
+                    ),
+                    remedy="Run `otaman init --update` to regenerate it.",
+                    evidence={"repo": name, "stamp": stamped, "generator": __version__},
+                )
+            )
+        else:
+            out.append(
+                Finding(
+                    subject=f"instructions:{name}",
+                    check="instructions-vs-generator",
+                    verdict="fresh",
+                    reason=f"stamped {stamped}, matching this generator",
+                    evidence={"repo": name, "stamp": stamped, "generator": __version__},
+                )
+            )
+    return out
+
+
 def assess(otaman_root: Path) -> list[Finding]:
-    """Checks 1-6 in a stable order. The single computation behind both the
+    """Checks 1-7 in a stable order. The single computation behind both the
     doctor section and the console session view (1.3)."""
     if not (otaman_root / "platform.yaml").is_file():
         # Not a program root — there is nothing for a runtime to be fresh
@@ -1018,4 +1148,5 @@ def assess(otaman_root: Path) -> list[Finding]:
     out.extend(check_bundle_vs_latest_release(otaman_root))
     out.extend(check_halted_sessions(otaman_root))
     out.extend(check_harness_vs_pin(otaman_root))
+    out.extend(check_instructions_vs_generator(otaman_root))
     return out
