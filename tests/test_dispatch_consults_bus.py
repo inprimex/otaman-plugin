@@ -492,3 +492,47 @@ class TestConsultOutcomesStayDistinct:
         proc, _ = helper._run(tasks, tmp_path)
         assert "filed-complete, not re-dispatched" in proc.stderr
         assert "retracted since filing" not in proc.stderr
+
+
+class TestStemsAreMintedByCore:
+    """The dispatcher was the LAST writer hand-building the bus stem.
+
+    `otaman_core.bus_stem.build_stem` is the single home for
+    `<ts>-<sender>-to-<recipient>-<slug>.md`; nine cli sites and core already
+    go through it. map_tasks did not — it assembled the f-string itself.
+
+    That matters beyond tidiness. JTBD-149 (distributed workspaces) needs
+    message identity that survives two workspaces reconciling, and cofounder's
+    ruling (20261001T210702) is to reserve the identity field now. Any such
+    scheme lands in `build_stem` — and would have silently skipped dispatch
+    assignments while appearing to cover the whole bus.
+    """
+
+    def test_the_dispatcher_calls_cores_builder(self):
+        source = (REPO / "src" / "otaman_plugin" / "map_tasks.py").read_text(encoding="utf-8")
+        assert "from otaman_core.bus_stem import build_stem" in source
+        assert "build_stem(" in source
+
+    def test_no_hand_built_stem_remains(self):
+        """Guard the absence, not just the presence — adding the import while
+        leaving the f-string would pass the test above and change nothing."""
+        source = (REPO / "src" / "otaman_plugin" / "map_tasks.py").read_text(encoding="utf-8")
+        assert "-to-{owner}-" not in source, "a hand-built stem is back"
+
+    def test_filenames_are_unchanged_by_the_delegation(self, tmp_path):
+        """Byte-identical output. A format change here would orphan every ack
+        already filed against an existing stem."""
+        from otaman_core.bus_stem import build_stem
+
+        ts, owner, slug = "20261001T204500", "plugin-agent", "security-gates-hook-c"
+        assert (
+            build_stem(timestamp=ts, sender="otaman", recipient=owner, slug=f"tasks-{slug}")
+            == f"{ts}-otaman-to-{owner}-tasks-{slug}"
+        )
+
+    def test_the_in_run_suffix_is_documented_as_in_process_only(self):
+        """It de-duplicates within one dispatcher run and cannot see another
+        workspace — the precise gap JTBD-149 names. Pinned so nobody mistakes
+        it for cross-workspace uniqueness."""
+        source = (REPO / "src" / "otaman_plugin" / "map_tasks.py").read_text(encoding="utf-8")
+        assert "in-process only" in source
