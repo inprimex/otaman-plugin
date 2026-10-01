@@ -20,8 +20,8 @@ from otaman_plugin.observer_input import (
     Hunk,
     ObserverInput,
     assemble,
+    is_dissent,
     render,
-    resolve_disagreement,
 )
 
 SECRET = "AKIAIOSFODNN7EXAMPLE"
@@ -151,23 +151,52 @@ class TestRenderIsTheOnlyDoor:
         assert render(ObserverInput()) == ""
 
 
-class TestDisagreementIsFlaggedNotResolved:
-    def test_deterministic_vulnerable_blocks_even_when_observer_says_safe(self):
-        blocks, flag = resolve_disagreement(deterministic_vulnerable=True, observer_says_safe=True)
-        assert blocks is True
-        assert flag is True, "the dissent must reach a human, not be silently dropped"
+class TestDissentDetection:
+    """D3's dissent half. The BLOCKING half deliberately lives in core
+    (`is_blocked`, core #93) — see the docstring on `is_dissent`. A local copy
+    of a single-home rule is the drift class this change keeps paying down.
+    """
 
-    def test_agreement_on_vulnerable_blocks_without_a_triage_flag(self):
-        blocks, flag = resolve_disagreement(deterministic_vulnerable=True, observer_says_safe=False)
-        assert blocks is True and flag is False
+    def test_tools_vulnerable_observer_safe_is_a_dissent(self):
+        assert is_dissent(deterministic_vulnerable=True, observer_says_safe=True)
 
-    def test_observer_alone_never_blocks(self):
-        """Layer 5 is advisory by construction — the reverse disagreement
-        cannot stop a PR."""
-        blocks, flag = resolve_disagreement(
-            deterministic_vulnerable=False, observer_says_safe=False
-        )
-        assert blocks is False and flag is False
+    def test_agreement_on_vulnerable_is_not_a_dissent(self):
+        assert not is_dissent(deterministic_vulnerable=True, observer_says_safe=False)
 
-    def test_clean_on_both_sides_passes(self):
-        assert resolve_disagreement(False, True) == (False, False)
+    def test_observer_worried_tools_clean_is_not_a_dissent(self):
+        """Layer 5 cannot block, so there is nothing to adjudicate — and a
+        triage queue full of unactionable flags is where real ones hide."""
+        assert not is_dissent(deterministic_vulnerable=False, observer_says_safe=False)
+
+    def test_clean_on_both_sides(self):
+        assert not is_dissent(False, True)
+
+    def test_the_module_no_longer_decides_blocking(self):
+        """Guard the single-home boundary: if a blocking DECISION reappears
+        here, core's rule has a second implementation again.
+
+        Checks for a decision, not the word — the docstring deliberately
+        explains what was removed, and a test that forbids discussing the
+        history would make the file harder to understand to satisfy itself.
+        """
+        import ast
+        import pathlib as _pl
+
+        import otaman_plugin.observer_input as oi
+
+        assert not hasattr(oi, "resolve_disagreement")
+        tree = ast.parse(_pl.Path(oi.__file__).read_text(encoding="utf-8"))
+        assigned = {
+            t.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            for t in node.targets
+            if isinstance(t, ast.Name)
+        }
+        assert "blocks" not in assigned, "a blocking decision came back into this module"
+
+    def test_is_dissent_returns_a_plain_bool_not_a_verdict_pair(self):
+        """The old shape was `(blocks, flag)`. A tuple here would mean the
+        blocking half crept back in alongside the dissent."""
+        assert is_dissent(True, True) is True
+        assert isinstance(is_dissent(True, False), bool)

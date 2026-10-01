@@ -160,16 +160,20 @@ def render(observer_input: ObserverInput) -> str:
     return "\n".join(parts)
 
 
-def resolve_disagreement(
-    deterministic_vulnerable: bool, observer_says_safe: bool
-) -> tuple[bool, bool]:
-    """(blocks, flag_for_triage) — D3: deterministic wins, dissent is surfaced.
+def is_dissent(deterministic_vulnerable: bool, observer_says_safe: bool) -> bool:
+    """Does this pair constitute a D3 dissent worth recording for triage?
 
-    A tool saying vulnerable while the observer says safe BLOCKS, and the
-    disagreement is flagged for a human rather than resolved by whichever ran
-    last. The reverse is advisory by construction: layer 5 never blocks, so an
-    observer worrying about something the tools cleared cannot stop a PR.
+    NO LONGER RETURNS A BLOCKING DECISION. It used to return
+    ``(blocks, flag)`` with ``blocks = deterministic_vulnerable`` — correct,
+    but a second copy of a rule that now has one home in
+    ``otaman_core.security_gate_report.is_blocked`` (core #93), which core
+    states exists so the emitter and the renderer cannot disagree. Keeping a
+    local copy would be the two-implementations drift class: they agree until
+    the day they do not, and that is the day nobody is watching.
+
+    The reverse case — observer worried, tools clean — is not a dissent here.
+    Layer 5 cannot block, so there is nothing for a human to adjudicate, and a
+    triage queue full of unactionable "disagreements" is where the real ones
+    go to hide.
     """
-    blocks = deterministic_vulnerable
-    flag = deterministic_vulnerable and observer_says_safe
-    return blocks, flag
+    return deterministic_vulnerable and observer_says_safe
