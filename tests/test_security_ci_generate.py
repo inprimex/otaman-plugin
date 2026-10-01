@@ -40,7 +40,7 @@ PY_LANG = {
         "timeout": 6,
         "scanner-pair": ["trivy", "osv-scanner"],
     },
-    "ci-slow": {"tools": ["codeql"], "timeout": 30, "opt-in": True},
+    "ci-slow": {"tools": ["codeql"], "timeout": 30},
 }
 BLOCK = {"languages": {"python": PY_LANG, "shell": {"ci-fast": {"tools": ["shellcheck"]}}}}
 
@@ -159,6 +159,39 @@ class TestRendering:
         doc = yaml.safe_load(wf)
         assert "ci-slow" not in doc["jobs"]
         assert "ci-slow:" not in wf
+
+    def test_a_repo_that_DID_opt_in_gets_ci_slow(self):
+        """The other direction, and the one whose absence let an inversion
+        ship. core corrected `opt_in` from "this is an opt-in LAYER" (monotonic
+        from the language default) to "this REPO opted in" — the fix to the gap
+        this generator surfaced. Under the old reading the code said
+        `not slow.opt_in`, which was safe while opt_in was always True and
+        became "emit ci-slow for everyone who did NOT opt in" the moment the
+        semantics were corrected.
+
+        Testing only the omit side could never catch that, because both
+        readings omit when nothing opts in.
+        """
+        block = {
+            "languages": {"python": PY_LANG},
+            "repos": {"p": {"ci-slow": {"opt-in": True}}},
+        }
+        r = generate_for_repo({"name": "p", "tech": ["python"]}, block, TEMPLATES)
+        doc = yaml.safe_load(r.workflow)
+        assert "ci-slow" in doc["jobs"], "a repo that opted in did not get the job"
+        assert doc["jobs"]["ci-slow"]["if"] == "true"
+
+    def test_opting_in_and_not_produce_different_workflows(self):
+        """Guard the distinction itself rather than either branch."""
+        base = {"languages": {"python": PY_LANG}}
+        out = generate_for_repo({"name": "p", "tech": ["python"]}, base, TEMPLATES).workflow
+        opted = generate_for_repo(
+            {"name": "p", "tech": ["python"]},
+            {**base, "repos": {"p": {"ci-slow": {"opt-in": True}}}},
+            TEMPLATES,
+        ).workflow
+        assert out != opted
+        assert "ci-slow:" not in out and "ci-slow:" in opted
 
     def test_dropping_ci_slow_leaves_the_other_jobs_intact(self):
         """A line-based removal that ate the next job would be worse than
