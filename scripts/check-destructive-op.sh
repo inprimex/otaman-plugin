@@ -129,8 +129,11 @@ EOF
 # Depends on a documented Claude Code contract. If that contract changes,
 # this degrades toward asking MORE, not less: an unrecognised payload has no
 # agent_id, which... would read as main-thread. So the safe direction is not
-# automatic — `test_payload_contract_is_pinned` exists to fail loudly if the
-# field names this relies on stop appearing in the fixtures we assert against.
+# automatic — `tests/test_hook_contract.py::TestPayloadContractIsPinned` and
+# `TestAgentIdBothDirections` fail loudly if the field names this relies on
+# stop appearing, or if the fork/main-thread answers stop differing (hvm 2.1).
+# That suite is also run against a CANDIDATE harness before the fleet's pin
+# moves, which is the only point at which this can be caught before it bites.
 _is_subagent_call() {
     printf '%s' "$INPUT" | grep -q '"agent_id"[[:space:]]*:[[:space:]]*"[^"]' && return 0
     printf '%s' "$INPUT" | grep -q '"agent_type"[[:space:]]*:[[:space:]]*"[^"]' && return 0
