@@ -1,0 +1,11 @@
+# Placeholders otaman-deploy's Hook C caller variants expect the generator to
+# substitute (security-gates-hook-c 1.3/1.4). Interface only — see README.md.
+# Source of truth: otaman-deploy ce/ci-templates/security-gates/variants/*.yml
+CI_FAST_TOOLS
+CI_MEDIUM_TOOLS
+CI_SLOW_TOOLS
+SCANNER_PAIR
+CI_SLOW_OPT_IN
+CI_FAST_TIMEOUT
+CI_MEDIUM_TIMEOUT
+CI_SLOW_TIMEOUT

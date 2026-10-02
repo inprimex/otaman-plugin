@@ -11,7 +11,6 @@ which is the failure the whole ladder exists to prevent.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -46,38 +45,28 @@ PY_LANG = {
 }
 BLOCK = {"languages": {"python": PY_LANG, "shell": {"ci-fast": {"tools": ["shellcheck"]}}}}
 
-#: True inside GitHub Actions, where every sibling this suite reads is checked
-#: out on purpose.
-_IN_CI = os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI") == "true"
+#: The placeholders deploy's variants expect us to substitute, pinned in-repo.
+#: otaman-deploy is PRIVATE and otaman-plugin's CI has no token for it, so the
+#: real templates are unreachable in the gate. Pinning the INTERFACE (not
+#: deploy's file) is what lets CI verify our side of the contract at all.
+CONTRACT = REPO_ROOT / "tests" / "contracts" / "hook_c_placeholders.txt"
 
 
-@pytest.fixture
-def _require_deploy_templates():
-    """A cross-repo contract test must not SKIP SILENTLY in CI.
-
-    These read otaman-deploy's Hook C templates. They used to carry a plain
-    `skipif(not present)`, so when deploy added `{{ CI_*_TIMEOUT }}`
-    placeholders the suite went red locally and CI stayed GREEN on the same
-    commit — the gate reported a contract it had not checked, which is the
-    no-silent-success shape this codebase keeps paying for.
-
-    deploy is now checked out in the test job. So absence in CI is no longer
-    "not available", it is "the checkout that was supposed to provide it did
-    not" — a failure. Locally it still skips: a developer without the sibling
-    should not be blocked by it.
-    """
-    if (TEMPLATES / "variants" / "python.yml").is_file():
-        return
-    if _IN_CI:
-        pytest.fail(
-            "otaman-deploy sibling is absent in CI, so this cross-repo contract "
-            "test did NOT run. The test job checks it out deliberately — fix the "
-            "checkout rather than letting the gate pass on an unchecked contract."
-        )
-    pytest.skip("otaman-deploy sibling checkout not present (local run)")
+def pinned_placeholders() -> set[str]:
+    return {
+        line.strip()
+        for line in CONTRACT.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
 
 
-needs_templates = pytest.mark.usefixtures("_require_deploy_templates")
+needs_templates = pytest.mark.skipif(
+    not (TEMPLATES / "variants" / "python.yml").is_file(),
+    reason=(
+        "otaman-deploy sibling not present — it is PRIVATE, so CI cannot have it. "
+        "The pinned contract in tests/contracts/ is what the gate checks instead."
+    ),
+)
 
 
 class TestTechToLanguage:
@@ -288,67 +277,61 @@ class TestPolicyIsNotDecidedHere:
         assert doc["jobs"]["ci-fast"]["with"]["tools"] == "only-this-one"
 
 
-class TestTheSkipCannotGoSilentInCI:
-    """The blind spot itself, guarded.
+class TestTheContractIsCheckedInCI:
+    """The blind spot, closed as far as it honestly can be.
 
-    These contract tests read otaman-deploy. They carried a plain
-    `skipif(not present)`, and CI did not check deploy out — so when deploy
-    added `{{ CI_*_TIMEOUT }}` placeholders, the suite went red locally and CI
-    stayed GREEN on the same commit. The gate reported a contract it had never
-    checked.
+    These tests read otaman-deploy's Hook C templates. deploy is PRIVATE and
+    otaman-plugin is public with no token for it, so the real templates are
+    unreachable in the gate — they skipped, and CI reported green on a contract
+    it had never checked. deploy added `{{ CI_*_TIMEOUT }}` and my suite went
+    red locally while CI stayed green on the same commit.
 
-    Two halves to the fix. Deploy is now checked out in the test job (so these
-    run), and absence in CI is a FAILURE rather than a skip (so a broken
-    checkout cannot quietly reopen the hole).
+    I tried checking deploy out in CI first. It fails on the visibility
+    boundary, and granting a public repo's workflow read access to a private
+    one is a credentials decision, not mine to take.
+
+    So CI verifies MY SIDE against a pinned interface, and the sibling-present
+    run verifies the pinned interface still matches theirs. CI cannot do the
+    second — that is a real limit, stated rather than hidden.
     """
 
-    @staticmethod
-    def _decide(present: bool, in_ci: bool) -> str:
-        """The fixture's decision, isolated so it can be exercised directly.
+    def test_the_generator_substitutes_every_pinned_placeholder(self):
+        """Runs in CI. Without this the gate checked nothing at all."""
+        source = (REPO_ROOT / "src" / "otaman_plugin" / "security_ci_generate.py").read_text(
+            encoding="utf-8"
+        )
+        missing = sorted(p for p in pinned_placeholders() if p not in source)
+        assert not missing, f"generator does not substitute pinned placeholders: {missing}"
 
-        Mirrors `_require_deploy_templates`; `test_the_fixture_uses_this_rule`
-        below pins the two together so this cannot drift into testing itself.
+    def test_the_pinned_contract_is_not_empty(self):
+        """A contract file emptied by accident would make the test above pass
+        vacuously — the exact shape this whole change is about."""
+        assert len(pinned_placeholders()) >= 8
+
+    def test_deploys_file_is_not_vendored(self):
+        """Only the interface is pinned. deploy is private; copying their
+        template body into a public repo would publish it."""
+        contract_dir = REPO_ROOT / "tests" / "contracts"
+        for path in contract_dir.iterdir():
+            if path.suffix in {".yml", ".yaml"}:
+                raise AssertionError(f"a sibling's file appears vendored: {path.name}")
+
+    @needs_templates
+    def test_pinned_contract_matches_deploys_actual_templates(self):
+        """Drift detection. Runs only where the sibling exists — CI cannot.
+
+        If deploy adds or renames a placeholder, this fails HERE, which is the
+        signal the gate structurally cannot give.
         """
-        if present:
-            return "ran"
-        return "failed" if in_ci else "skipped"
+        import re
 
-    def test_absent_in_CI_is_a_failure_not_a_skip(self):
-        assert self._decide(present=False, in_ci=True) == "failed"
-
-    def test_absent_locally_still_skips(self):
-        """A developer without the sibling must not be blocked by it."""
-        assert self._decide(present=False, in_ci=False) == "skipped"
-
-    def test_present_runs_either_way(self):
-        assert self._decide(present=True, in_ci=True) == "ran"
-        assert self._decide(present=True, in_ci=False) == "ran"
-
-    def test_the_fixture_uses_this_rule(self):
-        """Guard against the mirror drifting from the real fixture."""
-        import inspect
-
-        src = inspect.getsource(_require_deploy_templates)
-        assert "pytest.fail(" in src and "_IN_CI" in src
-        assert "pytest.skip(" in src
-        assert src.index("pytest.fail(") < src.index("pytest.skip("), (
-            "the CI branch must be decided before the local skip"
-        )
-
-    def test_ci_checks_deploy_out_so_the_tests_actually_run(self):
-        """The other half. Without it, the guard above would just convert a
-        silent skip into a loud failure on every CI run."""
-        import yaml as _yaml
-
-        wf = _yaml.safe_load(
-            (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
-        )
-        repos = [
-            s.get("with", {}).get("repository", "")
-            for s in wf["jobs"]["test"]["steps"]
-            if isinstance(s, dict)
-        ]
-        assert "inprimex/otaman-deploy" in repos, (
-            "the test job does not check out otaman-deploy, so these contract "
-            "tests cannot run in CI"
+        found: set[str] = set()
+        for variant in (TEMPLATES / "variants").glob("*.yml"):
+            found |= set(re.findall(r"{{\s*([A-Z_]+)\s*}}", variant.read_text(encoding="utf-8")))
+        pinned = pinned_placeholders()
+        assert found == pinned, (
+            f"pinned contract has drifted from otaman-deploy's templates.\n"
+            f"  only in deploy: {sorted(found - pinned)}\n"
+            f"  only pinned   : {sorted(pinned - found)}\n"
+            f"Update tests/contracts/hook_c_placeholders.txt and the generator."
         )
