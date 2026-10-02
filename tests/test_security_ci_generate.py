@@ -25,6 +25,7 @@ from otaman_plugin.security_ci_generate import (
     languages_for,
 )
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = (
     Path(__file__).resolve().parent.parent.parent
     / "otaman-deploy"
@@ -44,9 +45,27 @@ PY_LANG = {
 }
 BLOCK = {"languages": {"python": PY_LANG, "shell": {"ci-fast": {"tools": ["shellcheck"]}}}}
 
+#: The placeholders deploy's variants expect us to substitute, pinned in-repo.
+#: otaman-deploy is PRIVATE and otaman-plugin's CI has no token for it, so the
+#: real templates are unreachable in the gate. Pinning the INTERFACE (not
+#: deploy's file) is what lets CI verify our side of the contract at all.
+CONTRACT = REPO_ROOT / "tests" / "contracts" / "hook_c_placeholders.txt"
+
+
+def pinned_placeholders() -> set[str]:
+    return {
+        line.strip()
+        for line in CONTRACT.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
 needs_templates = pytest.mark.skipif(
     not (TEMPLATES / "variants" / "python.yml").is_file(),
-    reason="otaman-deploy sibling checkout with 1.3 templates not present",
+    reason=(
+        "otaman-deploy sibling not present — it is PRIVATE, so CI cannot have it. "
+        "The pinned contract in tests/contracts/ is what the gate checks instead."
+    ),
 )
 
 
@@ -256,3 +275,63 @@ class TestPolicyIsNotDecidedHere:
         r = generate_for_repo({"name": "p", "tech": ["python"]}, block, TEMPLATES)
         doc = yaml.safe_load(r.workflow)
         assert doc["jobs"]["ci-fast"]["with"]["tools"] == "only-this-one"
+
+
+class TestTheContractIsCheckedInCI:
+    """The blind spot, closed as far as it honestly can be.
+
+    These tests read otaman-deploy's Hook C templates. deploy is PRIVATE and
+    otaman-plugin is public with no token for it, so the real templates are
+    unreachable in the gate — they skipped, and CI reported green on a contract
+    it had never checked. deploy added `{{ CI_*_TIMEOUT }}` and my suite went
+    red locally while CI stayed green on the same commit.
+
+    I tried checking deploy out in CI first. It fails on the visibility
+    boundary, and granting a public repo's workflow read access to a private
+    one is a credentials decision, not mine to take.
+
+    So CI verifies MY SIDE against a pinned interface, and the sibling-present
+    run verifies the pinned interface still matches theirs. CI cannot do the
+    second — that is a real limit, stated rather than hidden.
+    """
+
+    def test_the_generator_substitutes_every_pinned_placeholder(self):
+        """Runs in CI. Without this the gate checked nothing at all."""
+        source = (REPO_ROOT / "src" / "otaman_plugin" / "security_ci_generate.py").read_text(
+            encoding="utf-8"
+        )
+        missing = sorted(p for p in pinned_placeholders() if p not in source)
+        assert not missing, f"generator does not substitute pinned placeholders: {missing}"
+
+    def test_the_pinned_contract_is_not_empty(self):
+        """A contract file emptied by accident would make the test above pass
+        vacuously — the exact shape this whole change is about."""
+        assert len(pinned_placeholders()) >= 8
+
+    def test_deploys_file_is_not_vendored(self):
+        """Only the interface is pinned. deploy is private; copying their
+        template body into a public repo would publish it."""
+        contract_dir = REPO_ROOT / "tests" / "contracts"
+        for path in contract_dir.iterdir():
+            if path.suffix in {".yml", ".yaml"}:
+                raise AssertionError(f"a sibling's file appears vendored: {path.name}")
+
+    @needs_templates
+    def test_pinned_contract_matches_deploys_actual_templates(self):
+        """Drift detection. Runs only where the sibling exists — CI cannot.
+
+        If deploy adds or renames a placeholder, this fails HERE, which is the
+        signal the gate structurally cannot give.
+        """
+        import re
+
+        found: set[str] = set()
+        for variant in (TEMPLATES / "variants").glob("*.yml"):
+            found |= set(re.findall(r"{{\s*([A-Z_]+)\s*}}", variant.read_text(encoding="utf-8")))
+        pinned = pinned_placeholders()
+        assert found == pinned, (
+            f"pinned contract has drifted from otaman-deploy's templates.\n"
+            f"  only in deploy: {sorted(found - pinned)}\n"
+            f"  only pinned   : {sorted(pinned - found)}\n"
+            f"Update tests/contracts/hook_c_placeholders.txt and the generator."
+        )
