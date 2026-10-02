@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -173,3 +174,121 @@ class TestBrokenInstallSpeaks:
         assert r.returncode == 0, "a post-commit hook must never fail the commit"
         assert "_resolve.sh" in r.stderr, "a broken install must not be silent"
         assert "notify-change" in r.stderr, "and should name the workaround"
+
+
+def _spec_change_body(meta: Path) -> str:
+    msgs = sorted((meta / ".agents" / "bus" / "active").glob("*-spec-change.md"))
+    assert msgs, "hook wrote no spec-change message at all"
+    return msgs[-1].read_text(encoding="utf-8")
+
+
+class TestTheNoticeSaysWhyNotAStaticClaim:
+    """cli measured the old static sentence false in 4 of 5 cases
+    (20261002T204704), on 419 of 495 spec commits.
+
+    It read: "Fallback: `spec-agent` when no tasks.md exists; `spec-agent,
+    human` when no annotations." But five situations collapse into that same
+    recipient list, and the one that matters most is a TYPO'd annotation —
+    where the reader was told "this change assigns nobody" when the truth was
+    "the dispatch could not find the person it named".
+    """
+
+    def test_the_false_static_sentence_is_gone(self, tmp_path):
+        meta, specs = _program(tmp_path, repo_names=["prog-cli"])
+        _commit_tasks(specs, ["otaman-prog-cli"])
+        _run_hook(specs, tmp_path)
+        body = _spec_change_body(meta)
+        assert "Fallback: `spec-agent` when no tasks.md exists" not in body
+
+    @staticmethod
+    def _home_with_reachable_cli(home: Path) -> dict[str, str]:
+        """A HOME whose deployed-venv path resolves to an interpreter that can
+        import otaman_cli.
+
+        The fixture overrides HOME for isolation, which hides the real
+        deployed venv — so without this the hook can only ever take the
+        no-python branch here and the python branch would go untested. This
+        plants the interpreter where `resolve_otaman_python` looks for it.
+        """
+        venv_bin = home / ".local" / "venv" / "otaman" / "bin"
+        venv_bin.mkdir(parents=True, exist_ok=True)
+        link = venv_bin / "python"
+        if not link.exists():
+            link.symlink_to(sys.executable)
+        cli_src = REPO.parent / "otaman-cli" / "src"
+        core_src = REPO.parent / "otaman-core" / "src"
+        env = {**os.environ, "HOME": str(home)}
+        env.pop("OTAMAN_ROOT", None)
+        env.pop("MAESTRO_ROOT", None)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(cli_src), str(core_src), env.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
+        return env
+
+    def test_a_typod_annotation_is_named_not_reported_as_unassigned(self, tmp_path):
+        """THE case the old text got wrong. A typo must not read as 'nobody is
+        assigned' — it must name what could not be resolved."""
+        if not (REPO.parent / "otaman-cli" / "src" / "otaman_cli").is_dir():
+            pytest.skip("otaman-cli sibling not present")
+        meta, specs = _program(tmp_path, repo_names=["prog-cli"])
+        _commit_tasks(specs, ["otaman-prog-cli-agent"])  # repo is prog-cli, not prog-cli-agent
+        env = self._home_with_reachable_cli(tmp_path)
+        subprocess.run(
+            ["bash", str(HOOK)], cwd=specs, capture_output=True, text=True, timeout=60, env=env
+        )
+        body = _spec_change_body(meta)
+        assert "Why these recipients" in body, "the python branch did not run"
+        assert "otaman-prog-cli-agent" in body, (
+            "the unresolvable annotation is not named in the notice"
+        )
+
+    def test_a_resolved_change_prints_NO_reason_line_at_all(self, tmp_path):
+        """The reason is empty when real owners resolved, and the LINE must be
+        absent — not present-and-blank.
+
+        An earlier version asserted only that the fallback phrases were
+        missing, which an empty `**Why these recipients**: ` line satisfies
+        trivially. A sabotage printing exactly that scored 11/11 against it.
+        Must run on the python branch: the no-python path always emits a line,
+        so checking absence anywhere else would test the wrong thing.
+        """
+        if not (REPO.parent / "otaman-cli" / "src" / "otaman_cli").is_dir():
+            pytest.skip("otaman-cli sibling not present")
+        meta, specs = _program(tmp_path, repo_names=["prog-cli"])
+        _commit_tasks(specs, ["otaman-prog-cli"])  # resolves to a real owner
+        env = self._home_with_reachable_cli(tmp_path)
+        subprocess.run(
+            ["bash", str(HOOK)], cwd=specs, capture_output=True, text=True, timeout=60, env=env
+        )
+        body = _spec_change_body(meta)
+        assert "cli-agent" in _spec_change_to_line(meta), "owners did not resolve"
+        assert "Why these recipients" not in body, (
+            "a reason line was printed for a change whose owners resolved"
+        )
+
+    def test_the_no_python_path_says_undetermined_rather_than_asserting(self, tmp_path):
+        """A hook must never fail a commit, so the shell lookup stays. But an
+        unknown reason STATED beats a false reason printed confidently —
+        which was the whole defect."""
+        body = HOOK.read_text(encoding="utf-8")
+        assert "not determined (no interpreter here could import otaman_cli)" in body
+
+
+class TestTheChangeIsAField:
+    """cli: 419 of 495 notices carried the change only inside a path in
+    `**Changed files**`, so a reader or triage script parses a path for most
+    and reads a field for the rest."""
+
+    def test_the_change_name_is_its_own_field(self, tmp_path):
+        meta, specs = _program(tmp_path, repo_names=["prog-cli"])
+        _commit_tasks(specs, ["otaman-prog-cli"])
+        _run_hook(specs, tmp_path)
+        assert "**Change**: demo" in _spec_change_body(meta)
+
+    def test_it_does_not_require_parsing_a_path(self, tmp_path):
+        """The field must carry the bare name, not the tasks.md path."""
+        meta, specs = _program(tmp_path, repo_names=["prog-cli"])
+        _commit_tasks(specs, ["otaman-prog-cli"])
+        _run_hook(specs, tmp_path)
+        line = [ln for ln in _spec_change_body(meta).splitlines() if ln.startswith("**Change**:")]
+        assert line and "openspec/changes" not in line[0]
