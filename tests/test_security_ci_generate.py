@@ -151,6 +151,38 @@ class TestRendering:
         doc = yaml.safe_load(self._wf(repo_tech=("python", "bash")))
         assert "shellcheck" in doc["jobs"]["ci-fast"]["with"]["tools"]
 
+    def test_resolved_timeouts_are_substituted(self):
+        """deploy added the placeholders (their half of the seam gap); core
+        resolves `timeout` in SECONDS and deploy's field is `timeout_seconds`,
+        so this passes through with NO conversion."""
+        doc = yaml.safe_load(self._wf())
+        # deploy quotes the placeholder, so YAML yields a string; Actions
+        # coerces it for the `type: number` input.
+        assert str(doc["jobs"]["ci-fast"]["with"]["timeout_seconds"]) == "2"
+        assert str(doc["jobs"]["ci-medium"]["with"]["timeout_seconds"]) == "6"
+
+    def test_the_seconds_value_is_not_converted(self):
+        """core warned the hazard explicitly: with a minutes-named field,
+        seconds would be written as minutes — 300s becoming 300 minutes,
+        silently. Pin that the resolved number arrives unchanged."""
+        block = {
+            "languages": {
+                "python": {"ci-fast": {"tools": ["x"], "timeout": 300}},
+            }
+        }
+        doc = yaml.safe_load(self._wf(block=block))
+        assert str(doc["jobs"]["ci-fast"]["with"]["timeout_seconds"]) == "300"
+
+    def test_an_unset_timeout_renders_the_sentinel_zero_not_empty(self):
+        """0 is deploy's sentinel: their job does
+        `timeout_seconds > 0 && convert || timeout_minutes`, so 0 selects the
+        template's own fallback. An empty string would be an invalid value for
+        a `type: number` input and fail the workflow at run time — I had it
+        empty first and read their reusable workflow to check."""
+        block = {"languages": {"python": {"ci-fast": {"tools": ["x"]}}}}
+        doc = yaml.safe_load(self._wf(block=block))
+        assert str(doc["jobs"]["ci-fast"]["with"]["timeout_seconds"]) == "0"
+
     def test_ci_slow_is_omitted_entirely_not_emitted_disabled(self):
         """deploy's contract: an advisory job nobody asked for burns minutes on
         every PR and gets ignored, which trains people to ignore the blocking
