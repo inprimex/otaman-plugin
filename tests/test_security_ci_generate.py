@@ -11,6 +11,7 @@ which is the failure the whole ladder exists to prevent.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from otaman_plugin.security_ci_generate import (
     languages_for,
 )
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = (
     Path(__file__).resolve().parent.parent.parent
     / "otaman-deploy"
@@ -44,10 +46,38 @@ PY_LANG = {
 }
 BLOCK = {"languages": {"python": PY_LANG, "shell": {"ci-fast": {"tools": ["shellcheck"]}}}}
 
-needs_templates = pytest.mark.skipif(
-    not (TEMPLATES / "variants" / "python.yml").is_file(),
-    reason="otaman-deploy sibling checkout with 1.3 templates not present",
-)
+#: True inside GitHub Actions, where every sibling this suite reads is checked
+#: out on purpose.
+_IN_CI = os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI") == "true"
+
+
+@pytest.fixture
+def _require_deploy_templates():
+    """A cross-repo contract test must not SKIP SILENTLY in CI.
+
+    These read otaman-deploy's Hook C templates. They used to carry a plain
+    `skipif(not present)`, so when deploy added `{{ CI_*_TIMEOUT }}`
+    placeholders the suite went red locally and CI stayed GREEN on the same
+    commit — the gate reported a contract it had not checked, which is the
+    no-silent-success shape this codebase keeps paying for.
+
+    deploy is now checked out in the test job. So absence in CI is no longer
+    "not available", it is "the checkout that was supposed to provide it did
+    not" — a failure. Locally it still skips: a developer without the sibling
+    should not be blocked by it.
+    """
+    if (TEMPLATES / "variants" / "python.yml").is_file():
+        return
+    if _IN_CI:
+        pytest.fail(
+            "otaman-deploy sibling is absent in CI, so this cross-repo contract "
+            "test did NOT run. The test job checks it out deliberately — fix the "
+            "checkout rather than letting the gate pass on an unchecked contract."
+        )
+    pytest.skip("otaman-deploy sibling checkout not present (local run)")
+
+
+needs_templates = pytest.mark.usefixtures("_require_deploy_templates")
 
 
 class TestTechToLanguage:
@@ -256,3 +286,69 @@ class TestPolicyIsNotDecidedHere:
         r = generate_for_repo({"name": "p", "tech": ["python"]}, block, TEMPLATES)
         doc = yaml.safe_load(r.workflow)
         assert doc["jobs"]["ci-fast"]["with"]["tools"] == "only-this-one"
+
+
+class TestTheSkipCannotGoSilentInCI:
+    """The blind spot itself, guarded.
+
+    These contract tests read otaman-deploy. They carried a plain
+    `skipif(not present)`, and CI did not check deploy out — so when deploy
+    added `{{ CI_*_TIMEOUT }}` placeholders, the suite went red locally and CI
+    stayed GREEN on the same commit. The gate reported a contract it had never
+    checked.
+
+    Two halves to the fix. Deploy is now checked out in the test job (so these
+    run), and absence in CI is a FAILURE rather than a skip (so a broken
+    checkout cannot quietly reopen the hole).
+    """
+
+    @staticmethod
+    def _decide(present: bool, in_ci: bool) -> str:
+        """The fixture's decision, isolated so it can be exercised directly.
+
+        Mirrors `_require_deploy_templates`; `test_the_fixture_uses_this_rule`
+        below pins the two together so this cannot drift into testing itself.
+        """
+        if present:
+            return "ran"
+        return "failed" if in_ci else "skipped"
+
+    def test_absent_in_CI_is_a_failure_not_a_skip(self):
+        assert self._decide(present=False, in_ci=True) == "failed"
+
+    def test_absent_locally_still_skips(self):
+        """A developer without the sibling must not be blocked by it."""
+        assert self._decide(present=False, in_ci=False) == "skipped"
+
+    def test_present_runs_either_way(self):
+        assert self._decide(present=True, in_ci=True) == "ran"
+        assert self._decide(present=True, in_ci=False) == "ran"
+
+    def test_the_fixture_uses_this_rule(self):
+        """Guard against the mirror drifting from the real fixture."""
+        import inspect
+
+        src = inspect.getsource(_require_deploy_templates)
+        assert "pytest.fail(" in src and "_IN_CI" in src
+        assert "pytest.skip(" in src
+        assert src.index("pytest.fail(") < src.index("pytest.skip("), (
+            "the CI branch must be decided before the local skip"
+        )
+
+    def test_ci_checks_deploy_out_so_the_tests_actually_run(self):
+        """The other half. Without it, the guard above would just convert a
+        silent skip into a loud failure on every CI run."""
+        import yaml as _yaml
+
+        wf = _yaml.safe_load(
+            (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+        )
+        repos = [
+            s.get("with", {}).get("repository", "")
+            for s in wf["jobs"]["test"]["steps"]
+            if isinstance(s, dict)
+        ]
+        assert "inprimex/otaman-deploy" in repos, (
+            "the test job does not check out otaman-deploy, so these contract "
+            "tests cannot run in CI"
+        )
