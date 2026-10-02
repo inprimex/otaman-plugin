@@ -1895,11 +1895,34 @@ def otaman_list_agents(cwd: str) -> dict[str, Any]:
 
 @mcp.tool
 def otaman_cleanup(cwd: str, dry_run: bool = False) -> dict[str, Any]:
-    """Archive old bus messages that are fully acknowledged.
+    """Archive old bus messages — and, past the delete window, DESTROY them.
+
+    NOT archive-only, despite what this docstring said until 2026-10-02. The
+    underlying cleanup runs two steps in ONE invocation: it archives fully-acked
+    messages past `archive_days`, then deletes archive month-directories past
+    `delete_days`. On a bus that has not been swept in months, a message is
+    archived and purged seconds apart in the same run.
+
+    deploy-agent lost 591 messages to exactly this on 2026-10-01 and recovered
+    them only because otaman-meta happens to be a git repo with the deletions
+    uncommitted. A tenant without that accident loses them outright.
+
+    `dry_run` DOES NOT PROTECT YOU and is the trap, not the safeguard: it
+    reports what would be "Archived", lists the month buckets, and never says
+    delete. A month older than the delete window appearing in that list will be
+    destroyed, not moved. deploy read it as "these will be moved", said so, and
+    was wrong.
+
+    This tool is currently INERT — its helper script is not shipped, so every
+    call returns an error rather than doing anything. That is luck, not design:
+    it is a second path to the same operation and would have had the same
+    effect. There is a fleet-wide DO-NOT-RUN advisory on the verb
+    (deploy-agent 20261001T215947) until cli ships a fix.
 
     Args:
         cwd: Current working directory
-        dry_run: If True, show what would be archived without doing it
+        dry_run: Reports intent only. Does NOT distinguish archive from delete —
+            read the advisory above before trusting its output.
     """
     import subprocess
     import sys
