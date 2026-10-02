@@ -38,6 +38,7 @@ except ImportError:
 
 
 from otaman_core._resolve import find_maestro_root as find_project_root  # shared resolver
+from otaman_core.bus_stem import build_stem  # the ONE stem writer
 
 # spec-gate-hardening 1.3(c): same slug shape otaman-core's validate_message
 # enforces on x-gate-waived, so an invalid/malformed env value is dropped
@@ -406,6 +407,7 @@ def create_bus_messages(
             unassigned.append(task)
 
     created: list[str] = []
+    orchestrator_id = "otaman"
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     now_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
 
@@ -415,17 +417,32 @@ def create_bus_messages(
             continue
 
         slug = feature_name.lower().replace(" ", "-")[:30]
-        # Add index suffix to avoid collisions when multiple agents get tasks in same second
+        # Index suffix de-duplicates within THIS run when several agents are
+        # assigned in the same second. It is in-process only: it cannot see a
+        # second dispatcher, let alone a second workspace, which is exactly the
+        # collision class JTBD-149 raises. Left as-is deliberately — widening
+        # it is an identity decision (cofounder 20261001T210702: reserve the
+        # field, defer the routing), not a local patch.
         ts = f"{now_ts}{i:02d}" if i > 0 else now_ts
+
+        # Minted through core's single home, NOT hand-built. This was the last
+        # writer bypassing `otaman_core.bus_stem.build_stem` — nine cli sites
+        # and core already go through it. A uniqueness scheme added there would
+        # silently have skipped dispatch assignments, so the single-home fix
+        # would ship while the one writer that ignored it kept minting
+        # colliding ids. Output is byte-identical to the previous hand-built
+        # string, so this changes no filename anyone has already acked.
+        stem = build_stem(
+            timestamp=ts, sender=orchestrator_id, recipient=owner, slug=f"tasks-{slug}"
+        )
         msg_id = f"{ts}-tasks-{slug}"
-        filename = f"{ts}-otaman-to-{owner}-tasks-{slug}.md"
+        filename = f"{stem}.md"
 
         task_lines = []
         for t in pending_tasks:
             repo_tag = f" ({t['repo']})" if t.get("repo") else ""
             task_lines.append(f"- [ ] {t['text']}{repo_tag}")
 
-        orchestrator_id = "otaman"
         content = f"""---
 id: {msg_id}
 from: {orchestrator_id}
