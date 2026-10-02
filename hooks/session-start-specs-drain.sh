@@ -38,12 +38,16 @@ if [[ "${OTAMAN_SPECS_DRAIN:-1}" == "0" ]]; then
     exit 0
 fi
 
-if command -v python3 >/dev/null 2>&1; then
-    _PY="python3"
-elif command -v python >/dev/null 2>&1; then
-    _PY="python"
-else
-    _log "not-checked-no-python: no interpreter on PATH — drain did not run"
+# Resolve an interpreter that can IMPORT otaman_plugin, not merely one that
+# exists. This hook used a bare `command -v python3` chain — the same defect
+# deploy-agent measured in resolve_otaman_python (20261002T141745), written
+# into a hook I added the day before. specs-drain.py degrades to
+# `not-checked-no-deps` under an interpreter without the module, so the drain
+# would have reported honestly and done nothing on every deployed tenant.
+_PY="$(resolve_otaman_python "$HOOK_DIR/.." otaman_plugin 2>/dev/null)" || _PY=""
+if [[ -z "$_PY" ]]; then
+    _log "not-checked-no-python: no interpreter can import otaman_plugin — drain did not run"
+    printf 'otaman: specs tick drain did not run — no interpreter can import otaman_plugin\n' >&2
     exit 0
 fi
 

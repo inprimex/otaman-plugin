@@ -449,28 +449,65 @@ read_expected_routing() {
 #   plugin_root_dir: the otaman-plugin repo root (workspace venv is
 #   assumed to live one level up from it, per the uv-workspace layout).
 resolve_otaman_python() {
+    # Returns a python that can actually IMPORT what the caller needs — not
+    # merely one that exists.
+    #
+    # Usage: resolve_otaman_python [plugin_root] [module]
+    #   module defaults to otaman_core, which every consumer needs. Pass
+    #   otaman_plugin when the script being run imports it.
+    #
+    # It used to know only the dev uv-workspace venv ($plugin_root/../.venv),
+    # so on every DEPLOYED tenant it fell through to bare `python3` and handed
+    # callers an interpreter without the module they were about to use.
+    # Measured by deploy-agent (20261002T141745); reproduced here from the
+    # installed tree before changing anything. Root cause of spec-agent's dead
+    # push-dispatch, and all 8 tenants carry this file.
+    #
+    # EXISTENCE IS NOT CAPABILITY. The old test was `[[ -x ... ]]`, which is
+    # precisely why a python that exists but cannot import was returned as
+    # success. Each candidate is now probed with a real import, so the next
+    # layout change fails over instead of succeeding into a broken
+    # interpreter — and the layout WILL change again, because it already has.
+    #
+    # WHY THE MODULE IS A PARAMETER rather than hardcoded: measured here, the
+    # dev workspace venv imports otaman_core but NOT otaman_plugin (pytest
+    # supplies that path via pyproject `pythonpath`; it is not installed).
+    # Probing for otaman_plugin unconditionally would therefore reject the dev
+    # venv and change dev behaviour, which deploy explicitly asked to leave
+    # alone — and probing only for otaman_core would hand an otaman_plugin
+    # caller the same broken interpreter this fix is about. Callers differ:
+    # check_bus_message.py needs otaman_core, specs-drain.py needs
+    # otaman_plugin.
     local plugin_root="${1:-$PWD}"
+    local module="${2:-otaman_core}"
+    local candidate
 
-    local workspace_venv="$plugin_root/../.venv"
-    if [[ -x "$workspace_venv/bin/python" ]]; then
-        echo "$workspace_venv/bin/python"
-        return 0
-    elif [[ -x "$workspace_venv/Scripts/python.exe" ]]; then
-        echo "$workspace_venv/Scripts/python.exe"
-        return 0
-    fi
+    for candidate in \
+        "$plugin_root/../.venv/bin/python" \
+        "$plugin_root/../.venv/Scripts/python.exe" \
+        "$HOME/.local/venv/otaman/bin/python" \
+        "$HOME/.local/venv/otaman/Scripts/python.exe"
+    do
+        if [[ -x "$candidate" ]] && "$candidate" -c "import $module" >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
 
-    if command -v python3 >/dev/null 2>&1; then
-        echo "python3"
-        return 0
-    elif command -v py >/dev/null 2>&1; then
-        echo "py"
-        return 0
-    elif command -v python >/dev/null 2>&1; then
-        echo "python"
-        return 0
-    fi
+    # Last resort: a bare interpreter from PATH, and ONLY if it can import.
+    # Returning one that cannot is the defect being fixed.
+    for candidate in python3 py python; do
+        if command -v "$candidate" >/dev/null 2>&1 \
+           && "$candidate" -c "import $module" >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
 
+    # Nothing can import it. Fail CLOSED with nothing on stdout: callers test
+    # the return code, and echoing a broken interpreter is what went wrong.
     return 1
 }
+
+
 
