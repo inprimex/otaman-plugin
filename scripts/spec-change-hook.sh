@@ -113,6 +113,13 @@ while IFS= read -r _f; do
     fi
 done <<< "$CHANGED_FILES"
 
+# Name the change as a FIELD, not only inside a path in Changed files. cli
+# measured 419 of 495 spec commits carrying it only as a path, so a reader or
+# a triage script has to parse `openspec/changes/<name>/tasks.md` for most
+# notices and read a field for the rest (20261002T204704).
+_SPEC_CHANGE_DIRS_ONELINE="$(echo "$_SPEC_CHANGE_DIRS" | sed '/^$/d' | paste -sd', ' -)"
+[[ -z "$_SPEC_CHANGE_DIRS_ONELINE" ]] && _SPEC_CHANGE_DIRS_ONELINE="(none — no openspec/changes/ files in this commit)"
+
 TO_FIELD="spec-agent, human"  # default: no openspec/changes/ files in this commit
 
 if [[ -n "$_SPEC_CHANGE_DIRS" ]]; then
@@ -201,6 +208,55 @@ CATEGORY_LIST=""
 for c in $CHANGE_CATEGORIES; do
     CATEGORY_LIST="$CATEGORY_LIST- $c"$'\n'
 done
+# --- WHY these recipients (cli's single home, 20261002T204704) --------------
+#
+# The hook used to print a STATIC sentence claiming recipients fall back only
+# when tasks.md is missing or carries no annotation. cli measured that FIVE
+# situations collapse into the same ['spec-agent','human'] list, so the
+# sentence was false in four of them — including the one that matters most: an
+# annotation naming a repo the program lacks. A TYPO. The reader was told
+# "this change assigns nobody" when the truth was "the dispatch could not find
+# the person it named". cli removed it from notify_change and computes a
+# reason; this hook kept printing it, on 419 of 495 spec commits.
+#
+# `otaman_cli.notify_change.resolve_recipients` is the single home for the
+# recipient list this hook already mirrors (see the comment above the shell
+# lookup). Calling it makes the two writers agree BY CONSTRUCTION rather than
+# by a comment promising they do.
+#
+# The shell lookup above stays as the no-python path: this is a post-commit
+# hook and must never fail a commit. When python is unavailable we say the
+# reason is unavailable rather than asserting one — an unknown reason stated
+# is better than a false reason printed confidently, which is the whole defect.
+WHY_LINE=""
+# plugin_root is the REPO root, not scripts/ — the same expression the
+# map-tasks call below uses. Passing the scripts dir looks for
+# scripts/../.venv and misses the dev workspace venv one level up.
+_why_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_why_py="$(resolve_otaman_python "$_why_root" otaman_cli 2>/dev/null)" || _why_py=""
+if [[ -n "$_why_py" && -n "$_SPEC_CHANGE_DIRS" ]]; then
+    _first_change="$(echo "$_SPEC_CHANGE_DIRS" | head -1)"
+    WHY_LINE="$("$_why_py" - "$PWD" "$_first_change" "$PLATFORM_YAML" <<'PYEOF' 2>/dev/null || true
+import sys
+from pathlib import Path
+
+try:
+    from otaman_cli.notify_change import resolve_recipients
+except Exception:
+    sys.exit(0)
+try:
+    _recipients, reason = resolve_recipients(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+except Exception as exc:  # noqa: BLE001 - a hook must not fail a commit
+    print(f"**Why these recipients**: could not be determined ({type(exc).__name__})")
+    sys.exit(0)
+if reason:
+    print(f"**Why these recipients**: {reason}")
+PYEOF
+)"
+elif [[ -n "$_SPEC_CHANGE_DIRS" ]]; then
+    WHY_LINE="**Why these recipients**: not determined (no interpreter here could import otaman_cli)"
+fi
+
 
 cat > "$MSG_FILE" << EOF
 ---
@@ -221,11 +277,12 @@ Commit \`${COMMIT_HASH}\` by ${COMMIT_AUTHOR}: ${COMMIT_MSG}
 ${CATEGORY_LIST}
 **Affected spec areas**:
 ${AFFECTED_LIST}
+**Change**: ${_SPEC_CHANGE_DIRS_ONELINE}
 **Changed files**:
 $(echo "$CHANGED_FILES" | sed 's/^/- /')
 
 Recipients are derived from \`tasks.md\` \`@otaman-<repo>\` annotations in affected change directories.
-Fallback: \`spec-agent\` when no tasks.md exists; \`spec-agent, human\` when no annotations.
+${WHY_LINE}
 Use \`/otaman:check\` to see this notification.
 EOF
 
