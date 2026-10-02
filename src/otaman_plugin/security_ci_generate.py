@@ -130,7 +130,30 @@ def render_variant(variant_text: str, gates: Any) -> str:
         text = _drop_job(text, "ci-slow")
 
     pair = by_layer.get("ci-medium")
+
+    def _timeout(layer: str) -> str:
+        """core resolves `timeout` in SECONDS; deploy's field is
+        `timeout_seconds`, so this passes through with NO conversion.
+
+        core flagged the hazard explicitly (20261001T113100): had the template
+        kept `timeout_minutes`, seconds would have been written into a minutes
+        field — a 300s budget becoming 300 minutes, silently. deploy chose the
+        seconds-named field, which removes the mismatch rather than asking
+        every caller to remember it.
+
+        An unset timeout renders "0", which is deploy's SENTINEL, not a real
+        budget: their job does `timeout_seconds > 0 && convert || timeout_minutes`,
+        so 0 selects the template's own fallback. Rendering "" instead would be
+        an invalid value for a `type: number` input and fail the workflow at run
+        time — I had it empty first and read their reusable workflow to check.
+        """
+        gate = by_layer.get(layer)
+        return "0" if gate is None or gate.timeout is None else str(gate.timeout)
+
     replacements = {
+        "{{ CI_FAST_TIMEOUT }}": _timeout("ci-fast"),
+        "{{ CI_MEDIUM_TIMEOUT }}": _timeout("ci-medium"),
+        "{{ CI_SLOW_TIMEOUT }}": _timeout("ci-slow"),
         "{{ CI_FAST_TOOLS }}": ",".join(by_layer["ci-fast"].tools) if "ci-fast" in by_layer else "",
         "{{ CI_MEDIUM_TOOLS }}": ",".join(by_layer["ci-medium"].tools)
         if "ci-medium" in by_layer
