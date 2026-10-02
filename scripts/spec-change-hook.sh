@@ -253,7 +253,14 @@ if echo "$CHANGED_FILES" | grep -qiE 'tasks\.md$'; then
         # resolve_otaman_python exists for (and what the archive sweep below
         # already uses). The old bare-python3 chain is why this path could
         # only ever have worked by accident.
-        PYTHON="$(resolve_otaman_python "$(dirname "$SCRIPT_DIR")" 2>/dev/null)" || PYTHON=""
+        # The module is named explicitly. The comment above has said "MUST be
+        # able to import otaman_plugin" since this was written, but the call
+        # did not ASK for that — the resolver probed otaman_core, which the
+        # dev venv has and otaman_plugin is absent from. Stating the
+        # requirement in a comment while the code checks something weaker is
+        # how it stayed broken (deploy-agent 20261002T141745).
+        PYTHON="$(resolve_otaman_python "$(dirname "$SCRIPT_DIR")" otaman_plugin 2>/dev/null)" \
+            || PYTHON=""
 
         if [[ -n "$PYTHON" ]]; then
             # Run map-tasks on each changed tasks.md.
