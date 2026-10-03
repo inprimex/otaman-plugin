@@ -49,11 +49,19 @@ class TestStage1Passed:
 
 
 def _gates(primary="stakeholder-affected", fallback="role-based"):
-    """The hook config the migrated picker now resolves through (csp 1.2)."""
+    """The hook config the migrated picker resolves through (csp 1.2/1.4).
+
+    The `roles:` table and a `role-based` arm are MANDATORY as of core 1.4 —
+    a pairing that cannot select for a self-owned single-repo proposal is
+    refused when the config is parsed, not when a proposal goes unreviewed.
+    """
     from otaman_core.verification_gates import parse_verification_gates
 
     return parse_verification_gates(
-        {"hooks": {scd.SPEC_CRITIQUE_HOOK: {"primary": primary, "fallback": fallback}}}
+        {
+            "roles": {r.owner: ["critic"] for r in _platform().repos},
+            "hooks": {scd.SPEC_CRITIQUE_HOOK: {"primary": primary, "fallback": fallback}},
+        }
     )
 
 
@@ -242,19 +250,30 @@ class TestDispatchCritique:
         assert result is None, "the D2 cap did not stop a 3rd pass"
 
     def test_returns_none_when_the_policy_selects_nobody(self):
-        """NOT the old "every repo is affected" case — under
-        stakeholder-affected that now selects every owner and yields a critic.
-        The policy selects nobody when there is nothing to select OVER, and
-        with no fallback configured there is nowhere else to go.
+        """The genuinely empty case, twice revised as the spec moved.
+
+        It was "every repo is affected" (D4's shape). Then "nothing to select
+        over, no fallback" — which core 1.4 now refuses at parse, because a
+        pairing that cannot select is a config error. What is left is a roster
+        whose only declared critic IS the proposer: evaluated, and the answer
+        is nobody.
         """
+        from otaman_core.verification_gates import parse_verification_gates
+
+        gates = parse_verification_gates(
+            {
+                "roles": {"cli-agent": ["critic"]},
+                "hooks": {scd.SPEC_CRITIQUE_HOOK: {"primary": "role-based"}},
+            }
+        )
         result = scd.dispatch_critique(
             platform=_platform(),
             change="c",
-            affected_repos=[],
+            affected_repos=["otaman-cli"],
             proposer="cli-agent",
             lint_result=_lint_result(),
             proposal_summary="x",
-            gates=_gates(fallback=None),
+            gates=gates,
         )
         assert result is None
 
