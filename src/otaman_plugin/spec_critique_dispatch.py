@@ -168,35 +168,6 @@ def derive_verdict(findings: list[CritiqueFinding]) -> str:
     return "pass"
 
 
-#: How a resolved route is written into a cost record.
-#:
-#: PROVISIONAL, and flagged to core (llm-router-backend 1.6). `record_critic_cost`
-#: types `route` as `str | None` and its docstring calls it "the resolved route id
-#: ... from effective_route" — but `effective_route` returns a `Route` dataclass
-#: (family/model/local), and no canonical string form exists anywhere. cli's
-#: `AgentRoute.label` is a DISPLAY string ("anthropic/claude-opus-5 (leaves
-#: tenant)") for the doctor surface, not a telemetry key.
-#:
-#: This is the FIRST call site fleet-wide (the task measured zero), so whatever is
-#: written here becomes the de facto format that later records are compared
-#: against. Rendering lives in this one function precisely so core can replace it
-#: with a `Route.id` and there is exactly one line to change — not a format spread
-#: across call sites that accumulate records in it.
-def route_id(route: Any) -> str | None:
-    """`family/model` for a resolved route, or None when the agent declares none.
-
-    None is a real value, not a failure: core's docstring says it means the
-    backend default with no router configured. Writing a placeholder string
-    there would make "no router" indistinguishable from a route literally
-    named that.
-    """
-    if route is None:
-        return None
-    model = getattr(route, "model", "")
-    family = getattr(route, "family", "")
-    return f"{family}/{model}" if model else family
-
-
 def record_critique_cost(
     *,
     change: str,
@@ -224,14 +195,25 @@ def record_critique_cost(
     """
     from otaman_core.spec_gate import record_critic_cost
 
-    resolved = None
+    # core's `Route.id` INLINE, with no local wrapper — spec-agent's 2.1 gate
+    # wants it grep-guardable that no call site formats a route key by hand,
+    # and a surviving helper is the drift seed: the next person edits the
+    # helper, not the type (core 20261003T022741).
+    #
+    # `.id` is INSIDE the try deliberately. A core predating #121 raises
+    # AttributeError here and lands on None — not on a hand-rolled fallback,
+    # which would write keys COLLIDING with core's once the bundle catches up
+    # (a local invocation under the off-tenant key). A null route is honestly
+    # lossy; a wrong key is silently wrong.
+    route_key: str | None = None
     if platform_config is not None:
         try:
             from otaman_core.llm_router import effective_route
 
             resolved = effective_route(platform_config, critic)
-        except Exception:  # noqa: BLE001 - router config absent/malformed
-            resolved = None
+            route_key = resolved.id if resolved is not None else None
+        except Exception:  # noqa: BLE001 - router config absent/malformed, or pre-#121 core
+            route_key = None
 
     return record_critic_cost(
         change=change,
@@ -241,7 +223,7 @@ def record_critique_cost(
         output_tokens=output_tokens,
         usd=usd,
         at=at,
-        route=route_id(resolved),
+        route=route_key,
     )
 
 
