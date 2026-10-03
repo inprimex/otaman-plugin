@@ -16,8 +16,9 @@ result alone.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from otaman_core.owner_paths import PlatformConfig
@@ -165,6 +166,83 @@ def derive_verdict(findings: list[CritiqueFinding]) -> str:
     if any(f.result == "comment" for f in findings):
         return "has-comments"
     return "pass"
+
+
+#: How a resolved route is written into a cost record.
+#:
+#: PROVISIONAL, and flagged to core (llm-router-backend 1.6). `record_critic_cost`
+#: types `route` as `str | None` and its docstring calls it "the resolved route id
+#: ... from effective_route" — but `effective_route` returns a `Route` dataclass
+#: (family/model/local), and no canonical string form exists anywhere. cli's
+#: `AgentRoute.label` is a DISPLAY string ("anthropic/claude-opus-5 (leaves
+#: tenant)") for the doctor surface, not a telemetry key.
+#:
+#: This is the FIRST call site fleet-wide (the task measured zero), so whatever is
+#: written here becomes the de facto format that later records are compared
+#: against. Rendering lives in this one function precisely so core can replace it
+#: with a `Route.id` and there is exactly one line to change — not a format spread
+#: across call sites that accumulate records in it.
+def route_id(route: Any) -> str | None:
+    """`family/model` for a resolved route, or None when the agent declares none.
+
+    None is a real value, not a failure: core's docstring says it means the
+    backend default with no router configured. Writing a placeholder string
+    there would make "no router" indistinguishable from a route literally
+    named that.
+    """
+    if route is None:
+        return None
+    model = getattr(route, "model", "")
+    family = getattr(route, "family", "")
+    return f"{family}/{model}" if model else family
+
+
+def record_critique_cost(
+    *,
+    change: str,
+    critic: str,
+    pass_index: int,
+    input_tokens: int,
+    output_tokens: int,
+    usd: float,
+    at: str,
+    platform_config: Mapping[str, Any] | None = None,
+) -> Any:
+    """Build the cost record for one completed critic invocation (lrb 1.6).
+
+    The dispatcher owns the invocation and its tokens, so the dispatcher bills.
+    The route is resolved through core's `effective_route` — the single
+    resolution point the cli doctor and the bridge dispatch also read — rather
+    than re-parsed from config here.
+
+    Returns the record; emitting it is the caller's, matching core's own split
+    ("this module owns the shape, not the transport").
+
+    Degrades to an unrouted record rather than failing: a telemetry record that
+    cannot name its route is still worth having, and losing the cost line
+    because routing config is absent would be a worse trade than a null route.
+    """
+    from otaman_core.spec_gate import record_critic_cost
+
+    resolved = None
+    if platform_config is not None:
+        try:
+            from otaman_core.llm_router import effective_route
+
+            resolved = effective_route(platform_config, critic)
+        except Exception:  # noqa: BLE001 - router config absent/malformed
+            resolved = None
+
+    return record_critic_cost(
+        change=change,
+        critic=critic,
+        pass_index=pass_index,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        usd=usd,
+        at=at,
+        route=route_id(resolved),
+    )
 
 
 def build_critique_result(
