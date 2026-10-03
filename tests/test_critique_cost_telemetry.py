@@ -172,6 +172,36 @@ class TestTheKeyIsCoresNotMine:
         assert r.route is None, "a pre-#121 core produced a route key anyway"
         assert r.input_tokens == 7 and r.usd == 0.5, "the cost record was lost"
 
+    def test_the_key_is_CONSUMED_not_recomputed(self, monkeypatch):
+        """cli's catch (20261003T020223): comparing the key against a real
+        `Route` is VACUOUS, because any recomputation reproduces that form
+        exactly. Two of cli's five sabotages passed on exactly this blindness.
+
+        So: a route whose `.id` is deliberately NOT derivable from its fields.
+        Only consuming core's id can produce it; every renderer, mine included,
+        fails here.
+        """
+        import otaman_core.llm_router as lr
+
+        class OpaqueId:
+            family, model, local = "ollama", "llama3", True
+            id = "core-says-this-is-the-key"
+
+        monkeypatch.setattr(lr, "effective_route", lambda cfg, agent: OpaqueId())
+        r = record_critique_cost(
+            change="d",
+            critic="c",
+            pass_index=1,
+            input_tokens=7,
+            output_tokens=3,
+            usd=0.5,
+            at="z",
+            platform_config={"agents": [{"name": "c"}]},
+        )
+        assert r.route == "core-says-this-is-the-key", (
+            "the key was recomputed from the route's fields, not read off core's .id"
+        )
+
     def test_no_hand_formatted_route_key_anywhere_in_the_plugin(self):
         """spec-agent's 2.1 grep-guard, implemented: no call site builds a
         route key by hand. `llm_router` is the only place that may."""
