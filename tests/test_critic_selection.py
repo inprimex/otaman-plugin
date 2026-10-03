@@ -60,6 +60,10 @@ def _config(primary="stakeholder-affected", clearances=None, fallback="role-base
     hook = {"primary": primary}
     if fallback is not None:
         hook["fallback"] = fallback
+    if "role-based" in (primary, fallback):
+        # csp 1.6: a role-based hook with no target-role is refused at parse,
+        # same as one with no roles table. Both inputs live in the file now.
+        hook["target-role"] = "critic"
     return parse_verification_gates(
         {
             "clearances": clearances or {},
@@ -316,7 +320,13 @@ class TestThePickerMigrated:
         return parse_verification_gates(
             {
                 "roles": ROLES,
-                "hooks": {"spec-proposal-critique": {"primary": primary, "fallback": fallback}},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": primary,
+                        "fallback": fallback,
+                        "target-role": "critic",
+                    }
+                },
             }
         )
 
@@ -387,6 +397,7 @@ class TestTheFourEmptyOutcomesAreDistinct:
                     "spec-proposal-critique": {
                         "primary": "stakeholder-affected",
                         "fallback": "role-based",
+                        "target-role": "critic",
                     }
                 },
             }
@@ -407,7 +418,12 @@ class TestTheFourEmptyOutcomesAreDistinct:
         cfg = parse_verification_gates(
             {
                 "roles": {"a-agent": ["critic"]},
-                "hooks": {"spec-proposal-critique": {"primary": "role-based"}},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "role-based",
+                        "target-role": "critic",
+                    }
+                },
             }
         )
         choice = select_critic(PLATFORM, ("a",), proposer="a-agent", config=cfg)
@@ -434,6 +450,7 @@ class TestItFailsClosedOnAnEngineThatCannotEnforceD4:
                     "spec-proposal-critique": {
                         "primary": "stakeholder-affected",
                         "fallback": "role-based",
+                        "target-role": "critic",
                     }
                 },
             }
@@ -489,7 +506,15 @@ class TestTheGapIsClosedByConfigurationCompleteness:
         return parse_verification_gates(
             {
                 "roles": ROLES,
-                "hooks": {"spec-proposal-critique": {"primary": primary, "fallback": fallback}},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": primary,
+                        "fallback": fallback,
+                        **(
+                            {"target-role": "critic"} if "role-based" in (primary, fallback) else {}
+                        ),
+                    }
+                },
                 "clearances": {"b-agent": ["internal"], "c-agent": ["internal"]},
             }
         )
@@ -544,42 +569,97 @@ class TestTheGapIsClosedByConfigurationCompleteness:
         hole wearing the right name."""
         with pytest.raises(VerificationGatesError, match="needs a roles table"):
             parse_verification_gates(
-                {"hooks": {"h": {"primary": "stakeholder-affected", "fallback": "role-based"}}}
+                {
+                    "hooks": {
+                        "h": {
+                            "primary": "stakeholder-affected",
+                            "fallback": "role-based",
+                            "target-role": "critic",
+                        }
+                    }
+                }
             )
 
 
-class TestCouldNotEvaluateIsNotNoCritics:
-    """The conflation I was one core release away from shipping.
+class TestCouldNotEvaluateSurvivesButCannotBeREACHEDFromConfig:
+    """The vacuity my own tripwire warned about, and it was right.
 
-    `could_not_evaluate` (a declared input is missing, and it is NAMED) and
-    `no-eligible-critic` (the policy ran and chose nobody) are different
-    answers, and only the first is the tenant's config to fix. The tripwire
-    for this fired on the same run as the roles one.
+    csp 1.4 made `could_not_evaluate` distinct from no-eligible-critic, and I
+    surfaced it as a fifth CriticChoice reason. csp 1.6 then put `target-role`
+    in config and extended the parse-time refusal, so a role-based hook now
+    needs BOTH a roles table and a target-role or the parse refuses it.
+
+    `role-based` is the only policy that reports missing inputs, and its two
+    inputs are now both parse-guaranteed. `ctx.target_role or hp.target_role`
+    means a caller passing None gets the hook's configured value, so a caller
+    cannot force the state either. From any PARSEABLE config, the
+    could-not-evaluate path is unreachable.
+
+    That is the right outcome — it is what configuration-completeness MEANS —
+    but it leaves me with a reason code nothing can produce. Two honest
+    options: delete it, or keep it as defence-in-depth against a core that
+    reports a state I must not fold. Kept, because folding is precisely the
+    defect csp 1.4 exists to prevent and core's field is still there for a
+    future policy with declared inputs. What is NOT kept is a test pretending
+    to drive it through a real config — that test would assert nothing.
     """
 
     def _cfg(self):
         return parse_verification_gates(
             {
                 "roles": ROLES,
-                "hooks": {"spec-proposal-critique": {"primary": "role-based"}},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "role-based",
+                        "target-role": "critic",
+                    }
+                },
             }
         )
 
-    def test_a_missing_target_role_reports_COULD_NOT_EVALUATE(self):
-        choice = select_critic(
+    def test_a_parseable_config_can_no_longer_produce_it(self):
+        """The measurement behind this whole rewrite. Even asking for it
+        explicitly does not get it: core falls back to the hook's value."""
+        forced = select_critic(
             PLATFORM, ("a",), proposer="a-agent", config=self._cfg(), target_role=None
         )
-        assert choice.critic is None
-        assert choice.reason == COULD_NOT_EVALUATE
-        assert choice.reason != NO_ELIGIBLE
+        assert forced.reason != COULD_NOT_EVALUATE
+        assert forced.critic == "b-agent", "the hook's configured role resolved it"
 
-    def test_it_NAMES_the_missing_input(self):
-        """ "Could not evaluate" without saying what is absent leaves the
-        tenant guessing at their own config."""
-        choice = select_critic(
-            PLATFORM, ("a",), proposer="a-agent", config=self._cfg(), target_role=None
-        )
-        assert "target_role" in choice.missing_inputs
+    def test_core_REFUSES_the_config_that_used_to_produce_it(self):
+        """What used to be a runtime could-not-evaluate is now a parse error,
+        which is strictly better: the tenant learns when they write the file."""
+        with pytest.raises(VerificationGatesError, match="target.role|cannot select"):
+            parse_verification_gates(
+                {
+                    "roles": ROLES,
+                    "hooks": {"spec-proposal-critique": {"primary": "role-based"}},
+                }
+            )
+
+    def test_the_mapping_STILL_WORKS_if_core_ever_reports_it(self, monkeypatch):
+        """Defence-in-depth, driven by a stubbed result rather than a config
+        that cannot exist. If a future policy gains a declared input, this is
+        what stops me folding it into no-eligible-critic — the csp 1.4 defect,
+        which I was one release away from shipping once already.
+        """
+        import otaman_core.verification_gates as vg
+
+        real = vg.select_critics
+
+        def _stub(config, hook, ctx):
+            result = real(config, hook, ctx)
+            return type(result)(
+                hook=result.hook,
+                policy=result.policy,
+                critics=(),
+                could_not_evaluate=("consumers",),
+            )
+
+        monkeypatch.setattr(vg, "select_critics", _stub)
+        choice = select_critic(PLATFORM, ("a",), proposer="a-agent", config=self._cfg())
+        assert choice.reason == COULD_NOT_EVALUATE, "folded into no-eligible-critic again"
+        assert choice.missing_inputs == ("consumers",), "it must NAME what was missing"
 
     def test_an_evaluated_policy_that_chose_nobody_is_still_NO_ELIGIBLE(self):
         """The other side of the distinction — otherwise everything empty
@@ -587,7 +667,12 @@ class TestCouldNotEvaluateIsNotNoCritics:
         cfg = parse_verification_gates(
             {
                 "roles": {"a-agent": ["critic"]},
-                "hooks": {"spec-proposal-critique": {"primary": "role-based"}},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "role-based",
+                        "target-role": "critic",
+                    }
+                },
             }
         )
         choice = select_critic(PLATFORM, ("a",), proposer="a-agent", config=cfg)
@@ -595,72 +680,72 @@ class TestCouldNotEvaluateIsNotNoCritics:
         assert choice.reason == NO_ELIGIBLE
         assert choice.missing_inputs == ()
 
-    def test_the_dispatcher_supplies_a_target_role_so_tenants_do_not_have_to(self):
-        """core refuses a hook with no roles table at parse time. It CANNOT
-        refuse a caller that forgot `target_role`, so a tenant with a correct
-        config would still get could-not-evaluate on every proposal unless the
-        dispatcher names a role. It does, by default."""
-        from otaman_plugin.critic_selection import SPEC_CRITIQUE_ROLE
 
-        assert SPEC_CRITIQUE_ROLE == "critic"
-        choice = select_critic(PLATFORM, ("a",), proposer="a-agent", config=self._cfg())
-        assert choice.reason != COULD_NOT_EVALUATE
-        assert choice.critic == "b-agent"
-
-
-class TestCsp17IsWaitingOnCore16:
-    """csp 1.7 is assigned and explicitly gated: "(after core 1.6)".
-
-    core 1.6 moves `target_role` into `verification-gates.yaml` per hook and
-    extends the parse-time refusal to a hook naming `role-based` with no
-    target role. Then 1.7 drops my dispatcher-side constant and reads it from
-    config.
-
-    core main is at #122 (csp 1.4) as of 2026-10-03T06:40Z, so there is no
-    config field to read and nothing to implement. Acked READ, not resolved.
-
-    THE CONSTANT STAYS UNTIL IT CAN BE REPLACED, not dropped early. Dropping
-    it before the field exists means every proposal reports
-    could-not-evaluate on `target_role` — the exact breakage the constant was
-    added to prevent four hours ago, re-introduced in the name of a task that
-    cannot complete yet.
-
-    The same tripwire shape caught a real defect this morning: the csp 1.4
-    pair fired in CI and one of them stopped me shipping core's
-    could-not-evaluate folded into no-eligible-critic. A landing that is quiet
-    is a landing that gets consumed wrong.
+class TestCsp17TheConstantIsGone:
+    """csp 1.7: the dispatcher-side target-role constant is deleted, not
+    defaulted. core 1.6 resolves `ctx.target_role or hp.target_role`, so a
+    surviving constant would SHADOW the configured value for every caller
+    routing through here — a hook misconfigured in the file would keep working
+    in this one place and nowhere else. Same single-home rule as route_id.
     """
 
-    def test_target_role_is_not_in_the_gate_config_yet(self):
-        from otaman_core.verification_gates import HookPolicy, VerificationGatesConfig
+    def test_the_constant_does_not_exist(self):
+        import otaman_plugin.critic_selection as m
 
-        hook_fields = set(HookPolicy.__dataclass_fields__)
-        cfg_fields = set(VerificationGatesConfig.__dataclass_fields__)
-        landed = {"target_role", "target_roles"} & (hook_fields | cfg_fields)
-        assert not landed, (
-            f"core 1.6 HAS LANDED — the gate config now carries {sorted(landed)}. "
-            "csp 1.7 is now implementable: (1) read target_role from the hook "
-            "policy instead of SPEC_CRITIQUE_ROLE; (2) DELETE the constant, do "
-            "not leave it as a default — a surviving fallback is the second home "
-            "that makes a missing config field look configured; (3) core's parse "
-            "now refuses a role-based hook with no target_role, so the "
-            "could-not-evaluate path for a missing role becomes unreachable from "
-            "a parseable config — check whether its test still has a way to fire."
-        )
+        assert not hasattr(m, "SPEC_CRITIQUE_ROLE"), "the constant is back"
 
-    def test_the_constant_is_still_load_bearing_until_then(self):
-        """Proof the constant is doing work right now, so dropping it early is
-        a regression and not a cleanup."""
-        from otaman_plugin.critic_selection import SPEC_CRITIQUE_ROLE
+    def test_no_role_string_is_hard_coded_in_the_module(self):
+        """A literal "critic" reintroduced anywhere is the constant wearing a
+        different name."""
+        import ast
+        import pathlib
 
+        import otaman_plugin.critic_selection as m
+
+        tree = ast.parse(pathlib.Path(m.__file__).read_text(encoding="utf-8"))
+        literals = [
+            n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and n.value == "critic"
+        ]
+        assert not literals, "a hard-coded role literal is back in the module"
+
+    def test_build_context_leaves_target_role_UNSET_by_default(self):
+        """Setting it unconditionally is how the file gets shadowed."""
+        assert build_context(PLATFORM, proposer="a-agent").target_role is None
+
+    def test_the_hooks_CONFIGURED_role_is_what_selects(self):
         cfg = parse_verification_gates(
             {
-                "roles": ROLES,
-                "hooks": {"spec-proposal-critique": {"primary": "role-based"}},
+                "roles": {"b-agent": ["reviewer"], "c-agent": ["critic"]},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "role-based",
+                        "target-role": "reviewer",
+                    }
+                },
             }
         )
-        with_default = select_critic(PLATFORM, ("a",), proposer="a-agent", config=cfg)
-        without = select_critic(PLATFORM, ("a",), proposer="a-agent", config=cfg, target_role=None)
-        assert with_default.critic == "b-agent"
-        assert without.reason == COULD_NOT_EVALUATE
-        assert SPEC_CRITIQUE_ROLE == "critic"
+        choice = select_critic(PLATFORM, ("a",), proposer="a-agent", config=cfg)
+        assert choice.critic == "b-agent", (
+            "the hook asked for 'reviewer'; selecting c-agent would mean a "
+            "hard-coded 'critic' won over the file"
+        )
+
+    def test_a_caller_may_still_override(self):
+        """core supports `ctx.target_role or hp.target_role`, so the override
+        is a real contract, not a leftover. Passing it through is not the
+        same as defaulting it."""
+        cfg = parse_verification_gates(
+            {
+                "roles": {"b-agent": ["reviewer"], "c-agent": ["critic"]},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "role-based",
+                        "target-role": "reviewer",
+                    }
+                },
+            }
+        )
+        choice = select_critic(
+            PLATFORM, ("a",), proposer="a-agent", config=cfg, target_role="critic"
+        )
+        assert choice.critic == "c-agent"

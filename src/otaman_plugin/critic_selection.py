@@ -114,6 +114,9 @@ def build_context(
         "repo_owners": repo_owners,
         "consumers": tuple(consumers),
         "agent_roles": dict(agent_roles or {}),
+        # None by default (csp 1.7): core resolves `ctx.target_role or
+        # hp.target_role`, so leaving it unset lets the hook's configured
+        # role win. Setting it here unconditionally would shadow the file.
         "target_role": target_role,
     }
     if proposer is not None and "proposer" in getattr(SelectionContext, "__dataclass_fields__", {}):
@@ -207,12 +210,24 @@ NO_ELIGIBLE = "no-eligible-critic"
 #: this module was one core release away from shipping it.
 COULD_NOT_EVALUATE = "could-not-evaluate"
 
-#: The role the spec-critique hook selects for. `role-based` reads the roles
-#: table from config (core 1.4) but takes `target_role` from the CALLER, so a
-#: tenant that declares `roles:` still gets nothing unless the dispatcher names
-#: which role it wants. Core refuses a hook with no roles table at parse time;
-#: it cannot refuse a caller that forgot the role, so the default lives here.
-SPEC_CRITIQUE_ROLE = "critic"
+# SPEC_CRITIQUE_ROLE is DELETED (csp 1.7).
+#
+# It existed for four hours as the workaround for an input core's parse could
+# not see: `role-based` read its roles table from config but took
+# `target_role` from the caller, so a tenant with a correct
+# verification-gates.yaml still got could-not-evaluate on every proposal.
+#
+# core 1.6 moved it into the file — `target-role:` per hook, resolved inside
+# `select_critics` as `ctx.target_role or hp.target_role`, with the parse-time
+# refusal extended to a role-based hook that declares neither. So the constant
+# is not merely redundant: keeping it would shadow the configured value for
+# every caller that routes through here, and a hook misconfigured in the file
+# would keep working HERE and nowhere else. Deleted, not defaulted — the
+# route_id lesson.
+#
+# The generalisable half, from spec-agent's ruling: parse-time refusal can
+# only guard inputs the parse can SEE, so every input an invariant makes
+# load-bearing has to live in config.
 
 
 def invariant_enforced() -> bool:
@@ -266,7 +281,7 @@ def select_critic(
     exclude: frozenset[str] | set[str] = frozenset(),
     sensitivity: str | None = None,
     agent_roles: dict[str, tuple[str, ...]] | None = None,
-    target_role: str | None = SPEC_CRITIQUE_ROLE,
+    target_role: str | None = None,
 ) -> CriticChoice:
     """JTBD-57's Stage-2 picker, now resolved through core's declared policies.
 

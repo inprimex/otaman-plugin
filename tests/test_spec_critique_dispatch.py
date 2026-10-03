@@ -60,13 +60,18 @@ def _gates(primary="stakeholder-affected", fallback="role-based"):
     return parse_verification_gates(
         {
             "roles": {r.owner: ["critic"] for r in _platform().repos},
-            "hooks": {scd.SPEC_CRITIQUE_HOOK: {"primary": primary, "fallback": fallback}},
+            "hooks": {
+                scd.SPEC_CRITIQUE_HOOK: {
+                    "primary": primary,
+                    "fallback": fallback,
+                    # csp 1.6: the role lives in the FILE now, not in a
+                    # dispatcher constant. A role-based hook without it is
+                    # refused at parse.
+                    "target-role": "critic",
+                }
+            },
         }
     )
-
-
-def _roles():
-    return {r.owner: ("critic",) for r in _platform().repos}
 
 
 class TestThePickerIsNoLongerHere:
@@ -228,8 +233,6 @@ class TestDispatchCritique:
             lint_result=_lint_result(warns=1),
             proposal_summary="x",
             gates=_gates(),
-            agent_roles=_roles(),
-            target_role="critic",
         )
         assert result is not None
         assert result.to != "cli-agent"
@@ -244,8 +247,6 @@ class TestDispatchCritique:
             proposal_summary="x",
             pass_index=3,
             gates=_gates(),
-            agent_roles=_roles(),
-            target_role="critic",
         )
         assert result is None, "the D2 cap did not stop a 3rd pass"
 
@@ -263,7 +264,12 @@ class TestDispatchCritique:
         gates = parse_verification_gates(
             {
                 "roles": {"cli-agent": ["critic"]},
-                "hooks": {scd.SPEC_CRITIQUE_HOOK: {"primary": "role-based"}},
+                "hooks": {
+                    scd.SPEC_CRITIQUE_HOOK: {
+                        "primary": "role-based",
+                        "target-role": "critic",
+                    }
+                },
             }
         )
         result = scd.dispatch_critique(
@@ -308,8 +314,6 @@ class TestDispatchCritique:
             proposal_summary="x",
             pass_index=1,
             gates=_gates(),
-            agent_roles=_roles(),
-            target_role="critic",
         )
         second = scd.dispatch_critique(
             platform=platform,
@@ -321,8 +325,6 @@ class TestDispatchCritique:
             pass_index=2,
             previous_critics=(first.to,),
             gates=_gates(),
-            agent_roles=_roles(),
-            target_role="critic",
         )
         assert second is not None
         assert second.to != first.to
