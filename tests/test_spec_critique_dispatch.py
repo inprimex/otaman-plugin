@@ -48,36 +48,64 @@ class TestStage1Passed:
         assert scd.stage1_passed(_lint_result(errors=1, warns=3)) is False
 
 
-class TestSelectCritic:
-    def test_excludes_affected_repos(self):
-        critic = scd.select_critic(_platform(), ["otaman-cli"], proposer="cli-agent")
-        assert critic != "cli-agent"
-        assert critic is not None
+def _gates(primary="stakeholder-affected", fallback="role-based"):
+    """The hook config the migrated picker now resolves through (csp 1.2)."""
+    from otaman_core.verification_gates import parse_verification_gates
 
-    def test_excludes_proposer_even_if_repo_not_affected(self):
-        # proposer's repo not in affected_repos, but proposer itself must
-        # never review its own proposal (D4 "never reviews its own scope").
-        critic = scd.select_critic(_platform(), ["otaman-bridge"], proposer="plugin-agent")
-        assert critic != "plugin-agent"
+    return parse_verification_gates(
+        {"hooks": {scd.SPEC_CRITIQUE_HOOK: {"primary": primary, "fallback": fallback}}}
+    )
 
-    def test_deterministic_same_inputs_same_critic(self):
-        platform = _platform()
-        a = scd.select_critic(platform, ["otaman-cli"], proposer="cli-agent")
-        b = scd.select_critic(platform, ["otaman-cli"], proposer="cli-agent")
-        assert a == b
 
-    def test_honors_exclude_set(self):
-        platform = _platform()
-        first = scd.select_critic(platform, ["otaman-cli"], proposer="cli-agent")
-        second = scd.select_critic(platform, ["otaman-cli"], proposer="cli-agent", exclude={first})
-        assert second != first
-        assert second is not None
+def _roles():
+    return {r.owner: ("critic",) for r in _platform().repos}
 
-    def test_returns_none_when_every_repo_is_affected(self):
-        platform = _platform()
-        all_repos = [r.name for r in platform.repos]
-        critic = scd.select_critic(platform, all_repos, proposer="cli-agent")
-        assert critic is None
+
+class TestThePickerIsNoLongerHere:
+    """csp 1.2 retired this module's local D4 rule onto core's declared
+    policies. These tests moved with it (test_critic_selection.py); what stays
+    here is the DISPATCHER's contract with the new picker."""
+
+    def test_the_local_rule_is_gone(self):
+        src = Path(scd.__file__).read_text(encoding="utf-8")
+        assert "def select_critic(" not in src
+        assert "sorted(candidates)[0]" not in src
+
+    def test_without_gate_config_the_dispatcher_declines_rather_than_guessing(self):
+        """The retired rule needed no config, so it ALWAYS produced a critic.
+        The policy engine needs one. A tenant that has not written
+        verification-gates.yaml gets no Stage 2 — and that is a stated reason,
+        not a silent nothing, because the alternative is a dispatcher that
+        quietly stopped looking like one that found nobody.
+        """
+        from otaman_plugin.critic_selection import NO_CONFIG, select_critic
+
+        choice = select_critic(_platform(), ["otaman-cli"], proposer="cli-agent")
+        assert choice.critic is None
+        assert choice.reason == NO_CONFIG
+
+        assert (
+            scd.dispatch_critique(
+                platform=_platform(),
+                change="c",
+                affected_repos=["otaman-cli"],
+                proposer="cli-agent",
+                lint_result=_lint_result(),
+                proposal_summary="x",
+            )
+            is None
+        )
+
+    def test_a_CriticChoice_is_not_accidentally_truthy_against_a_name(self):
+        """Guarding the trap this migration walked into: the old tests read
+        `assert critic != "cli-agent"`, and a CriticChoice satisfies that for
+        free. Two of them kept passing while selecting nobody at all."""
+        from otaman_plugin.critic_selection import select_critic
+
+        choice = select_critic(_platform(), ["otaman-cli"], proposer="cli-agent")
+        assert choice != "cli-agent"  # true, and meaningless — hence .critic
+        assert choice.critic is None
+        assert choice.selected is False
 
 
 class TestBuildCritiqueDispatch:
@@ -191,6 +219,9 @@ class TestDispatchCritique:
             proposer="cli-agent",
             lint_result=_lint_result(warns=1),
             proposal_summary="x",
+            gates=_gates(),
+            agent_roles=_roles(),
+            target_role="critic",
         )
         assert result is not None
         assert result.to != "cli-agent"
@@ -204,21 +235,48 @@ class TestDispatchCritique:
             lint_result=_lint_result(),
             proposal_summary="x",
             pass_index=3,
+            gates=_gates(),
+            agent_roles=_roles(),
+            target_role="critic",
         )
-        assert result is None
+        assert result is None, "the D2 cap did not stop a 3rd pass"
 
-    def test_returns_none_when_no_eligible_critic(self):
-        platform = _platform()
-        all_repos = [r.name for r in platform.repos]
+    def test_returns_none_when_the_policy_selects_nobody(self):
+        """NOT the old "every repo is affected" case — under
+        stakeholder-affected that now selects every owner and yields a critic.
+        The policy selects nobody when there is nothing to select OVER, and
+        with no fallback configured there is nowhere else to go.
+        """
         result = scd.dispatch_critique(
-            platform=platform,
+            platform=_platform(),
             change="c",
-            affected_repos=all_repos,
+            affected_repos=[],
             proposer="cli-agent",
             lint_result=_lint_result(),
             proposal_summary="x",
+            gates=_gates(fallback=None),
         )
         assert result is None
+
+    def test_every_repo_affected_now_YIELDS_a_critic(self):
+        """The behaviour change this migration makes, asserted rather than
+        discovered later: D4 required an UNaffected repo, so a change touching
+        everything had no critic. stakeholder-affected has the opposite shape —
+        every owner is a stakeholder — and independence comes from the
+        proposer exclusion instead.
+        """
+        platform = _platform()
+        result = scd.dispatch_critique(
+            platform=platform,
+            change="c",
+            affected_repos=[r.name for r in platform.repos],
+            proposer="cli-agent",
+            lint_result=_lint_result(),
+            proposal_summary="x",
+            gates=_gates(),
+        )
+        assert result is not None, "a fleet-wide change gets no review at all"
+        assert result.to != "cli-agent"
 
     def test_second_pass_excludes_first_passs_critic(self):
         platform = _platform()
@@ -230,6 +288,9 @@ class TestDispatchCritique:
             lint_result=_lint_result(),
             proposal_summary="x",
             pass_index=1,
+            gates=_gates(),
+            agent_roles=_roles(),
+            target_role="critic",
         )
         second = scd.dispatch_critique(
             platform=platform,
@@ -240,6 +301,9 @@ class TestDispatchCritique:
             proposal_summary="x",
             pass_index=2,
             previous_critics=(first.to,),
+            gates=_gates(),
+            agent_roles=_roles(),
+            target_role="critic",
         )
         assert second is not None
         assert second.to != first.to
