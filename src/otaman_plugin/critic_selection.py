@@ -200,6 +200,20 @@ HOOK_UNCONFIGURED = "hook-unconfigured"
 INVARIANT_UNENFORCEABLE = "invariant-unenforceable"
 NO_ELIGIBLE = "no-eligible-critic"
 
+#: core 1.4's fifth state, surfaced rather than folded. A policy that could not
+#: be EVALUATED for want of a declared input is not a policy that chose nobody
+#: — one is the tenant's config to fix and names what is missing, the other is
+#: an answer. Folding them is the conflation the csp ruling exists to end, and
+#: this module was one core release away from shipping it.
+COULD_NOT_EVALUATE = "could-not-evaluate"
+
+#: The role the spec-critique hook selects for. `role-based` reads the roles
+#: table from config (core 1.4) but takes `target_role` from the CALLER, so a
+#: tenant that declares `roles:` still gets nothing unless the dispatcher names
+#: which role it wants. Core refuses a hook with no roles table at parse time;
+#: it cannot refuse a caller that forgot the role, so the default lives here.
+SPEC_CRITIQUE_ROLE = "critic"
+
 
 def invariant_enforced() -> bool:
     """Whether the INSTALLED engine removes the proposer from a selection (#104).
@@ -231,6 +245,11 @@ class CriticChoice:
     excluded_proposer: bool = False
     fell_back: bool = False
     dropped_uncleared: tuple[str, ...] = ()
+    #: The declared inputs that were missing, when `reason` is
+    #: COULD_NOT_EVALUATE. Named, never just counted — "could not evaluate"
+    #: without saying what is absent leaves the tenant guessing at their own
+    #: config.
+    missing_inputs: tuple[str, ...] = ()
 
     @property
     def selected(self) -> bool:
@@ -247,7 +266,7 @@ def select_critic(
     exclude: frozenset[str] | set[str] = frozenset(),
     sensitivity: str | None = None,
     agent_roles: dict[str, tuple[str, ...]] | None = None,
-    target_role: str | None = None,
+    target_role: str | None = SPEC_CRITIQUE_ROLE,
 ) -> CriticChoice:
     """JTBD-57's Stage-2 picker, now resolved through core's declared policies.
 
@@ -306,11 +325,24 @@ def select_critic(
     # it carries prior passes' critics for the D2 cap, which core knows nothing
     # about.
     remaining = tuple(c for c in result.critics if c not in exclude)
+
+    # core 1.4: a non-empty `could_not_evaluate` means the policy never ran for
+    # want of a declared input, and the tuple NAMES them. Distinct from an
+    # empty selection, which is an answer.
+    missing = tuple(getattr(result, "could_not_evaluate", ()) or ())
+    if remaining:
+        reason = None
+    elif missing:
+        reason = COULD_NOT_EVALUATE
+    else:
+        reason = NO_ELIGIBLE
+
     return CriticChoice(
         critic=remaining[0] if remaining else None,
         policy=result.policy,
-        reason=None if remaining else NO_ELIGIBLE,
+        reason=reason,
         excluded_proposer=bool(getattr(result, "excluded_proposer", False)),
         fell_back=result.fell_back,
         dropped_uncleared=tuple(result.dropped_uncleared),
+        missing_inputs=missing,
     )
