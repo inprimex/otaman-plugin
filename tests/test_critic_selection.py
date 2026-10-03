@@ -483,13 +483,53 @@ class TestWhatAConfigCanActuallyExpress:
         assert choice.policy == "sensitivity-scoped"
         assert choice.fell_back is True
 
-    def test_the_roles_table_is_still_absent_from_the_gate_config(self):
-        """The tripwire. If core adds a roles table, the recommendation I
-        retracted becomes available again and spec-agent should hear so."""
+    def test_the_roles_table_has_not_landed_yet_csp_1_4(self):
+        """A tripwire with an INSTRUCTION, not just an alarm.
+
+        spec-agent ruled the gap option 2+3 (20261003T043726): core 1.4 adds
+        the roles table and a parse-time refusal, cli 1.5 renders it. So this
+        is no longer "tell spec-agent" — that question is closed and the work
+        is dispatched. When it goes red, core 1.4 has landed and there is a
+        specific list of things to do.
+
+        A tripwire whose instruction is out of date sends the next reader to
+        re-litigate a settled question, which is worse than no tripwire.
+        """
         from otaman_core.verification_gates import VerificationGatesConfig
 
         fields = set(VerificationGatesConfig.__dataclass_fields__)
         assert "agent_roles" not in fields and "roles" not in fields, (
-            "the gate config now carries roles — `role-based` became "
-            "configurable; tell spec-agent, the csp gap report says it is not"
+            "core 1.4 HAS LANDED — the gate config now carries roles. To do, in "
+            "order: (1) feed the table into build_context so role-based has its "
+            "inputs; (2) re-run the four-policy measurement below — role-based "
+            "should now select, and its parametrised case must move out of the "
+            "no-coverage list; (3) surface core's could-not-evaluate as its own "
+            "CriticChoice reason, see the test directly below this one."
+        )
+
+    def test_core_has_not_yet_split_could_not_evaluate_from_no_critics(self):
+        """The conflation this module would otherwise ship, pre-armed.
+
+        core 1.4 makes could-not-evaluate (a declared input is missing, and it
+        is NAMED) distinct from no-eligible-critic (the policy ran and chose
+        nobody). My `CriticChoice` has no reason for the first, so the moment
+        core draws that line I would collapse it into NO_ELIGIBLE — reporting
+        "the policy selected nobody" where the truth is "I could not know".
+
+        That is precisely the defect cli shipped in the module whose docstring
+        says it exists to prevent it (20261003T040454), and the reason the
+        ruling called the distinction out. Pre-arming it here costs one test
+        and means I cannot ship the same bug quietly.
+        """
+        from otaman_core.verification_gates import SelectionResult
+
+        from otaman_plugin.critic_selection import NO_ELIGIBLE
+
+        core_fields = set(SelectionResult.__dataclass_fields__)
+        landed = {"could_not_evaluate", "unevaluable", "missing_inputs"} & core_fields
+        assert not landed, (
+            f"core now reports {sorted(landed)} — add a distinct CriticChoice reason "
+            f"for it and STOP folding it into {NO_ELIGIBLE!r}; 'the policy chose "
+            "nobody' and 'a declared input was missing' are different answers and "
+            "only one of them is the tenant's fault"
         )
