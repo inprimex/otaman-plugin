@@ -606,3 +606,61 @@ class TestCouldNotEvaluateIsNotNoCritics:
         choice = select_critic(PLATFORM, ("a",), proposer="a-agent", config=self._cfg())
         assert choice.reason != COULD_NOT_EVALUATE
         assert choice.critic == "b-agent"
+
+
+class TestCsp17IsWaitingOnCore16:
+    """csp 1.7 is assigned and explicitly gated: "(after core 1.6)".
+
+    core 1.6 moves `target_role` into `verification-gates.yaml` per hook and
+    extends the parse-time refusal to a hook naming `role-based` with no
+    target role. Then 1.7 drops my dispatcher-side constant and reads it from
+    config.
+
+    core main is at #122 (csp 1.4) as of 2026-10-03T06:40Z, so there is no
+    config field to read and nothing to implement. Acked READ, not resolved.
+
+    THE CONSTANT STAYS UNTIL IT CAN BE REPLACED, not dropped early. Dropping
+    it before the field exists means every proposal reports
+    could-not-evaluate on `target_role` — the exact breakage the constant was
+    added to prevent four hours ago, re-introduced in the name of a task that
+    cannot complete yet.
+
+    The same tripwire shape caught a real defect this morning: the csp 1.4
+    pair fired in CI and one of them stopped me shipping core's
+    could-not-evaluate folded into no-eligible-critic. A landing that is quiet
+    is a landing that gets consumed wrong.
+    """
+
+    def test_target_role_is_not_in_the_gate_config_yet(self):
+        from otaman_core.verification_gates import HookPolicy, VerificationGatesConfig
+
+        hook_fields = set(HookPolicy.__dataclass_fields__)
+        cfg_fields = set(VerificationGatesConfig.__dataclass_fields__)
+        landed = {"target_role", "target_roles"} & (hook_fields | cfg_fields)
+        assert not landed, (
+            f"core 1.6 HAS LANDED — the gate config now carries {sorted(landed)}. "
+            "csp 1.7 is now implementable: (1) read target_role from the hook "
+            "policy instead of SPEC_CRITIQUE_ROLE; (2) DELETE the constant, do "
+            "not leave it as a default — a surviving fallback is the second home "
+            "that makes a missing config field look configured; (3) core's parse "
+            "now refuses a role-based hook with no target_role, so the "
+            "could-not-evaluate path for a missing role becomes unreachable from "
+            "a parseable config — check whether its test still has a way to fire."
+        )
+
+    def test_the_constant_is_still_load_bearing_until_then(self):
+        """Proof the constant is doing work right now, so dropping it early is
+        a regression and not a cleanup."""
+        from otaman_plugin.critic_selection import SPEC_CRITIQUE_ROLE
+
+        cfg = parse_verification_gates(
+            {
+                "roles": ROLES,
+                "hooks": {"spec-proposal-critique": {"primary": "role-based"}},
+            }
+        )
+        with_default = select_critic(PLATFORM, ("a",), proposer="a-agent", config=cfg)
+        without = select_critic(PLATFORM, ("a",), proposer="a-agent", config=cfg, target_role=None)
+        assert with_default.critic == "b-agent"
+        assert without.reason == COULD_NOT_EVALUATE
+        assert SPEC_CRITIQUE_ROLE == "critic"
