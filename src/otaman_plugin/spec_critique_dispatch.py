@@ -20,9 +20,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from otaman_plugin.critic_selection import SPEC_CRITIQUE_HOOK, select_critic
+
 if TYPE_CHECKING:
     from otaman_core.owner_paths import PlatformConfig
     from otaman_core.spec_gate import LintResult
+    from otaman_core.verification_gates import VerificationGatesConfig
 
 #: The versioned rubric skill (design D3). Referenced by id only — this
 #: module never reads the skill file; the critic session does that itself.
@@ -55,35 +58,11 @@ def stage1_passed(lint_result: LintResult) -> bool:
     return not any(f.level == "error" for f in lint_result.findings)
 
 
-def select_critic(
-    platform: PlatformConfig,
-    affected_repos: list[str] | tuple[str, ...] | set[str],
-    *,
-    proposer: str,
-    exclude: frozenset[str] | set[str] = frozenset(),
-) -> str | None:
-    """Deterministically pick a structurally independent critic (D4).
-
-    Eligible = the agent owns a repo declared in ``platform.repos``, that
-    repo is NOT in ``affected_repos``, and the agent is neither ``proposer``
-    nor in ``exclude`` (callers pass prior passes' critics here to avoid
-    repeating the same critic across a proposal's 2-pass cap, though the
-    spec only requires the affected_repos exclusion).
-
-    Deterministic = candidates are sorted by agent name and the first is
-    returned, so the same inputs always yield the same critic. Returns
-    ``None`` if no eligible candidate exists (e.g. every declared repo is
-    affected) — callers treat that as "Stage 2 doesn't run", not an error.
-    """
-    affected = set(affected_repos)
-    candidates = {
-        repo.owner
-        for repo in platform.repos
-        if repo.name not in affected and repo.owner != proposer and repo.owner not in exclude
-    }
-    if not candidates:
-        return None
-    return sorted(candidates)[0]
+# `select_critic` MOVED to `otaman_plugin.critic_selection` (csp 1.2).
+#
+# It is not re-exported from here. A re-export is how the old rule would have
+# survived as something to edit, and the whole task was retiring the local rule
+# in favour of core's declared policies. Import it from its home.
 
 
 @dataclass(frozen=True)
@@ -271,6 +250,11 @@ def dispatch_critique(
     proposal_summary: str,
     pass_index: int = 1,
     previous_critics: tuple[str, ...] = (),
+    gates: VerificationGatesConfig | None = None,
+    hook: str = SPEC_CRITIQUE_HOOK,
+    sensitivity: str | None = None,
+    agent_roles: dict[str, tuple[str, ...]] | None = None,
+    target_role: str | None = None,
 ) -> CritiqueDispatch | None:
     """Orchestrate one Stage-2 dispatch decision.
 
@@ -285,14 +269,20 @@ def dispatch_critique(
     if pass_index > MAX_PASSES:
         return None
 
-    critic = select_critic(
+    choice = select_critic(
         platform,
         affected_repos,
         proposer=proposer,
+        config=gates,
+        hook=hook,
         exclude=frozenset(previous_critics),
+        sensitivity=sensitivity,
+        agent_roles=agent_roles,
+        target_role=target_role,
     )
-    if critic is None:
+    if not choice.selected:
         return None
+    critic = choice.critic
 
     return build_critique_dispatch(
         change=change,
@@ -315,6 +305,5 @@ __all__ = [
     "build_critique_result",
     "derive_verdict",
     "dispatch_critique",
-    "select_critic",
     "stage1_passed",
 ]

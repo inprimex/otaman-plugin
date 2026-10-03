@@ -17,12 +17,16 @@ import pytest
 import yaml
 
 from otaman_plugin.security_ci_generate import (
+    FROM_NEITHER,
+    FROM_PLATFORM,
+    FROM_VERIFICATION_GATES,
     GENERATED,
     NO_GATES,
     NO_VARIANT,
     OPT_OUT,
     generate_for_repo,
     languages_for,
+    resolve_gate_config,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -335,3 +339,73 @@ class TestTheContractIsCheckedInCI:
             f"  only pinned   : {sorted(pinned - found)}\n"
             f"Update tests/contracts/hook_c_placeholders.txt and the generator."
         )
+
+
+class TestTheGateConfigHomeMigration:
+    """csp 1.2: `verification-gates.yaml` becomes the single home for gate
+    config, retiring sghc's `platform.yaml` relocation note."""
+
+    BLOCK = {"languages": {"python": {"ci-fast": {"tools": ["ruff"]}}}}
+
+    def test_the_new_home_wins(self):
+        _, source, _ = resolve_gate_config({"security-gates": {}}, {"security-gates": self.BLOCK})
+        assert source == FROM_VERIFICATION_GATES
+
+    def test_the_old_home_still_works_mid_migration(self):
+        config, source, both = resolve_gate_config({"security-gates": self.BLOCK}, None)
+        assert source == FROM_PLATFORM
+        assert both is False
+        assert "python" in config.languages
+
+    def test_neither_is_not_the_same_as_empty_gates(self):
+        """nss clause 1: "nobody configured this" and "configured with nothing"
+        are different, and only the first is a config gap."""
+        _, source, _ = resolve_gate_config({}, {})
+        assert source == FROM_NEITHER
+        _, configured, _ = resolve_gate_config({"security-gates": {}}, None)
+        assert configured == FROM_PLATFORM
+
+    def test_declaring_BOTH_is_reported_not_silently_preferred(self):
+        """The relocation note says one home at a time. core resolves silently
+        in favour of the new one — right at runtime, wrong to be quiet about,
+        because the only other symptom is platform.yaml edits doing nothing."""
+        _, source, both = resolve_gate_config(
+            {"security-gates": self.BLOCK}, {"security-gates": self.BLOCK}
+        )
+        assert both is True
+        assert source == FROM_VERIFICATION_GATES
+
+    def test_the_precedence_is_cores_not_re_derived_here(self):
+        """A reader that re-implements "new home first, else old" is the second
+        home of a migration rule, and the two copies disagree on exactly the
+        repos that are mid-move."""
+        import pathlib
+
+        import otaman_plugin.security_ci_generate as m
+
+        src = pathlib.Path(m.__file__).read_text(encoding="utf-8")
+        assert "resolve_security_gates" in src, "it must call core's resolver"
+        assert src.count("resolve_security_gates") >= 1
+
+    def test_a_resolved_config_reaches_generation(self, tmp_path):
+        """The migrated path must actually DRIVE the generator, not just parse.
+
+        Without this the whole clause could be satisfied by a resolver nothing
+        calls, and every repo would keep reading the old home.
+        """
+        variants = tmp_path / "variants"
+        variants.mkdir()
+        (variants / "python.yml").write_text("jobs:\n  ci-fast:\n    steps: []\n")
+
+        config, _, _ = resolve_gate_config({}, {"security-gates": self.BLOCK})
+        result = generate_for_repo(
+            {"name": "demo", "tech": ["python"]}, None, tmp_path, gates_config=config
+        )
+        assert result.outcome == GENERATED, (
+            f"gates declared in the NEW home did not reach the generator: {result.reason}"
+        )
+
+        # ...and the OLD call shape, with no gates_config, sees nothing — which
+        # is why the resolver had to be threaded through rather than added beside.
+        blind = generate_for_repo({"name": "demo", "tech": ["python"]}, None, tmp_path)
+        assert blind.outcome == NO_GATES

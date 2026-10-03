@@ -27,6 +27,7 @@ did. So no workflow is written and the reason is named.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -191,20 +192,73 @@ def _drop_job(text: str, job: str) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
+#: Where the `security-gates:` block is read from, as a recorded fact rather
+#: than an assumption. csp 1.2 makes `verification-gates.yaml` the single home
+#: for gate config; `platform.yaml` is the pre-migration home.
+FROM_VERIFICATION_GATES = "verification-gates.yaml"
+FROM_PLATFORM = "platform.yaml"
+FROM_NEITHER = "neither"
+
+
+def resolve_gate_config(
+    platform_config: Mapping[str, Any] | None,
+    verification_gates_config: Mapping[str, Any] | None = None,
+) -> tuple[Any, str, bool]:
+    """``(SecurityGatesConfig, which-file-won, declared-in-both)``.
+
+    csp 1.2 moves the `security-gates:` block out of `platform.yaml` and into
+    `verification-gates.yaml`, retiring sghc's relocation note. core #101 owns
+    the two-location resolution (`resolve_security_gates` reads the new home
+    first) — this does NOT re-derive that precedence, it calls it. A reader
+    that re-implements "new home first, else old" is the second home of a
+    migration rule, and during a migration the two copies disagree on exactly
+    the repos that are mid-move.
+
+    What IS this module's to say is WHICH file won and whether both declared
+    it. core resolves silently in favour of the new home, which is the right
+    runtime behaviour and the wrong thing to be quiet about: the relocation
+    note says "one home at a time — do not declare both", so a repo declaring
+    both is a config error whose only symptom would otherwise be edits to
+    `platform.yaml` having no effect.
+    """
+    from otaman_core.security_gates import resolve_security_gates
+
+    platform_config = platform_config or {}
+    in_new = bool(verification_gates_config) and "security-gates" in verification_gates_config
+    in_old = "security-gates" in platform_config
+    config = resolve_security_gates(platform_config, verification_gates_config)
+    if in_new:
+        source = FROM_VERIFICATION_GATES
+    elif in_old:
+        source = FROM_PLATFORM
+    else:
+        source = FROM_NEITHER
+    return config, source, (in_new and in_old)
+
+
 def generate_for_repo(
     repo: dict[str, Any],
     config_block: Any,
     templates_dir: Path,
+    *,
+    gates_config: Any = None,
 ) -> GenerationResult:
-    """Resolve *repo*'s gates and render its workflow, or say why not."""
+    """Resolve *repo*'s gates and render its workflow, or say why not.
+
+    Pass *gates_config* (an already-resolved `SecurityGatesConfig`, from
+    :func:`resolve_gate_config`) when the caller has both documents and the
+    block may have migrated. *config_block* is the pre-migration path: a raw
+    `security-gates:` mapping lifted out of `platform.yaml` by the caller.
+    """
     from otaman_core.security_gates import parse_security_gates, resolve_repo_gates
 
     name = str(repo.get("name", "<unnamed>"))
     languages, unknown = languages_for(repo.get("tech"))
 
-    gates = resolve_repo_gates(
-        parse_security_gates(config_block), name, languages=languages or None
+    resolved_config = (
+        gates_config if gates_config is not None else parse_security_gates(config_block)
     )
+    gates = resolve_repo_gates(resolved_config, name, languages=languages or None)
 
     if gates.opt_out:
         # STATED, never silent — the spec requires a visible skip, and doctor
