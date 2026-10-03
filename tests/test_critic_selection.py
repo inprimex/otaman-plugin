@@ -76,14 +76,52 @@ class TestContextBuilding:
         assert ctx.proposer == "a-agent", "core cannot exclude whom it is not told about"
         assert set(ctx.candidates) == {"a-agent", "b-agent", "c-agent"}
 
-    def test_the_old_local_filter_is_gone_from_the_source(self):
-        """A surviving local filter would make a sabotaged core look correct."""
+    def test_the_proposer_is_PASSED_never_COMPARED(self):
+        """A surviving local filter would make a sabotaged core look correct.
+
+        `!= proposer` alone was too narrow a guard — cli hit the same thing on
+        their surface and ruled the distinction that actually holds
+        (20261003T040454): deriving the exclusion needs the proposer in a
+        COMPARISON; delegating it only needs the proposer PASSED. So this bans
+        every comparison and membership form rather than one spelling.
+
+        Their phrasing is "passed, never bound", which is right for their
+        surface and cannot be literal here: this module must take `proposer`
+        as a parameter in order to hand it to core at all. The portable half
+        of the rule is the comparison.
+        """
+        import ast
         import pathlib
 
         import otaman_plugin.critic_selection as m
 
-        src = pathlib.Path(m.__file__).read_text(encoding="utf-8")
-        assert "!= proposer" not in src, "the second home of the D4 invariant is back"
+        def _names(node):
+            return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+        tree = ast.parse(pathlib.Path(m.__file__).read_text(encoding="utf-8"))
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            parts = [node.left, *node.comparators]
+            if not any("proposer" in _names(part) for part in parts):
+                continue
+            # `proposer is not None` is a PRESENCE check — core cannot exclude
+            # whom it is not told about, so asking whether there is one is the
+            # delegating path, not a filter. Comparing it to anything else is
+            # the filter.
+            others = [
+                part
+                for part in parts
+                if "proposer" not in _names(part)
+                and not (isinstance(part, ast.Constant) and part.value is None)
+            ]
+            if others:
+                offenders.append(f"line {node.lineno}: {ast.unparse(node)}")
+        assert not offenders, (
+            f"the proposer is COMPARED, not just passed — the D4 invariant has a "
+            f"second home again: {offenders}"
+        )
 
     def test_candidates_are_deterministic(self):
         """Same inputs, same order — a selection that varies run to run cannot
@@ -265,7 +303,20 @@ class TestThePickerMigrated:
         )
 
     def test_the_case_that_held_this_task_now_picks_an_independent_critic(self):
-        """proposer owns the ONLY affected repo — the exact inversion."""
+        """proposer owns the ONLY affected repo — the exact inversion.
+
+        NOTE the `agent_roles`/`target_role` arguments: `role-based` reads them
+        off the SELECTION CONTEXT, and no config file carries a roles table —
+        not `verification-gates.yaml` (clearances + hooks only) and not
+        `platform.yaml`. cli caught the same thing in their surface and had
+        been reporting `role-based` as locally evaluated when it never was
+        (20261003T040454).
+
+        So this proves the PLUMBING works when a caller supplies roles. It does
+        NOT prove a tenant can configure its way to this outcome, and the test
+        name must not be read that way — see
+        `test_NO_config_only_fallback_restores_a_self_owned_proposal`.
+        """
         choice = select_critic(
             PLATFORM,
             ("a",),
@@ -368,3 +419,77 @@ class TestItFailsClosedOnAnEngineThatCannotEnforceD4:
 
         monkeypatch.setattr(vg, "SelectionResult", NoMarker)
         assert invariant_enforced() is False
+
+
+class TestWhatAConfigCanActuallyExpress:
+    """The correction to my own csp gap report (cli 20261003T040454).
+
+    I told spec-agent a `role-based` fallback restores coverage for a
+    self-owned proposal. It does — in the call I made, which supplied
+    `agent_roles` and `target_role`. NO CONFIG FILE CARRIES A ROLES TABLE:
+    `parse_verification_gates` holds clearances + hooks, and platform.yaml has
+    no agent roles either. So the recommendation named an input a tenant
+    cannot declare.
+
+    cli hit the identical thing one layer over — they had been rendering
+    `role-based` hooks as `evaluated=True, critics=()`, reporting "selected
+    nobody" where the truth was "could not know". Same conflation, two
+    surfaces, one afternoon.
+    """
+
+    def _cfg(self, fallback):
+        return parse_verification_gates(
+            {
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "stakeholder-affected",
+                        "fallback": fallback,
+                    }
+                },
+                "clearances": {"b-agent": ["internal"], "c-agent": ["internal"]},
+            }
+        )
+
+    @pytest.mark.parametrize(
+        "fallback",
+        ["sensitivity-scoped", "stakeholder-affected", "consumer-chain", "role-based"],
+    )
+    def test_NO_config_only_fallback_restores_a_self_owned_proposal(self, fallback):
+        """All four policies, config-derivable inputs only. None of them work.
+
+        `consumer-chain` and `role-based` read context fields no config
+        declares; `stakeholder-affected` is the primary that just emptied;
+        `sensitivity-scoped` returns nothing without a sensitivity class. The
+        gap is therefore wider than I first reported, not narrower.
+        """
+        choice = select_critic(PLATFORM, ("a",), proposer="a-agent", config=self._cfg(fallback))
+        assert choice.critic is None, (
+            f"fallback {fallback!r} now selects from config alone — if a roles or "
+            "consumers table reached the config, re-check the gap report"
+        )
+
+    def test_the_ONE_configuration_that_does_work(self):
+        """`sensitivity-scoped` + a declared class. Clearances ARE in the
+        config, and sensitivity is a per-proposal property the dispatcher
+        knows — so unlike roles, both halves are actually reachable."""
+        choice = select_critic(
+            PLATFORM,
+            ("a",),
+            proposer="a-agent",
+            config=self._cfg("sensitivity-scoped"),
+            sensitivity="internal",
+        )
+        assert choice.critic == "b-agent"
+        assert choice.policy == "sensitivity-scoped"
+        assert choice.fell_back is True
+
+    def test_the_roles_table_is_still_absent_from_the_gate_config(self):
+        """The tripwire. If core adds a roles table, the recommendation I
+        retracted becomes available again and spec-agent should hear so."""
+        from otaman_core.verification_gates import VerificationGatesConfig
+
+        fields = set(VerificationGatesConfig.__dataclass_fields__)
+        assert "agent_roles" not in fields and "roles" not in fields, (
+            "the gate config now carries roles — `role-based` became "
+            "configurable; tell spec-agent, the csp gap report says it is not"
+        )
