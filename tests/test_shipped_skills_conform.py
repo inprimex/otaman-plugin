@@ -11,13 +11,18 @@ with a missing or empty description does not fail; it ships, loads, and never
 fires. That is the silent-success shape, in the one place where the symptom is
 indistinguishable from "the user never asked for it".
 
-WHAT THIS DOES NOT DECIDE. ppsm's spec example writes `id: example:my-skill`
-and a `triggers: - keywords: [...]` mapping; all ten shipped skills write
-`name:` and a flat string list, which is what Claude Code actually reads. One
-of those is wrong and it is NOT this test's call — ppsm 2.4 is spec-agent's
-task. So this pins the shape the fleet ACTUALLY ships, consistently, and the
-divergence is reported rather than silently resolved in either direction.
-Picking a side here would make the wrong one canon by being first.
+THE NAME KEY IS NOW CANON, AND IT WENT THE OTHER WAY. This file originally
+pinned `name:` + flat triggers only as "what the fleet actually ships",
+because ppsm's spec example wrote `id:` and keyword-objects and resolving that
+was spec-agent's call, not mine — picking a side would have made the wrong one
+canon by being first.
+
+Ruled 2026-10-03 (spec-agent 20261003T050848): what Claude Code reads IS the
+standard, and the diverging party was ppsm's own example, which has been
+corrected to `name:` + flat list. No skill moved. So these assertions changed
+meaning without changing a line — they went from describing the status quo to
+enforcing the canon, which is the better outcome of the two and the reason for
+reporting the divergence instead of quietly conforming to the spec example.
 """
 
 from __future__ import annotations
@@ -29,8 +34,7 @@ import yaml
 
 SKILLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "skills"
 
-#: The key every shipped skill uses to name itself. ppsm's example says `id:`;
-#: Claude Code reads `name:`. Pinned to what ships, pending ppsm 2.4.
+#: Canon as of 2026-10-03: the SKILL.md format is what Claude Code reads.
 NAME_KEY = "name"
 
 #: Keys a skill may declare. An unknown key is usually a typo for one of
@@ -103,11 +107,13 @@ class TestEveryShippedSkill:
 
 
 def test_the_fleet_is_CONSISTENT_about_the_name_key():
-    """Whichever key is right, ten skills must not use two.
+    """Ten skills must not use two keys.
 
-    ppsm 2.4 decides between `name:` (what Claude Code reads, what all ten
-    ship) and `id:` (what ppsm's spec example writes). This asserts only that
-    the answer is uniform — a split fleet is wrong under either ruling.
+    Written when `name:` vs `id:` was still open, asserting only uniformity
+    because a split fleet is wrong under either ruling. `name:` is now canon,
+    so this guards against drift back rather than against an unresolved
+    question — the weaker assertion is kept deliberately: it is the one that
+    stays correct if the canon ever moves again.
     """
     keys = {p.parent.name: set(_frontmatter(p)) & {"name", "id"} for p in _skills()}
     distinct = {frozenset(v) for v in keys.values()}
@@ -143,18 +149,20 @@ class TestBaSkill:
         artifacts nothing will ever read."""
         assert "If a registry is not enabled" in text
 
-    def test_it_asserts_a_schema_THAT_IS_NOT_SPECIFIED_YET(self, text):
-        """NOT a failure — a pinned measurement, and a tripwire.
+    def test_it_carries_the_field_vocabulary_the_SCHEMAS_now_adopt(self, text):
+        """This set is no longer just the skill's — it is the schema's.
 
-        The skill names concrete flow/process fields and hands the BA YAML
-        templates to copy. ufbpr 1.1 and 1.2 — the tasks that actually SPECIFY
-        those schemas — are both still open, and the skill was written three
-        months before them. If 1.1/1.2 land different names, this skill
-        silently instructs the BA to author invalid YAML.
+        ufbpr 1.1/1.2 (still unwritten) now carry an adoption rule naming
+        these six fields, because the skill is the de-facto schema its BA
+        users already hold and divergence would silently invalidate every
+        template handed out (spec-agent 20261003T050848, ruling on plugin
+        20261003T035623). Any field those schemas REJECT from this set must
+        land with a same-change ba-skill update task.
 
-        This test exists so that lands as a red test rather than as a BA's
-        confusing afternoon. When the schemas are specified, reconcile this
-        list against them and update both together.
+        So this test is the enforcement side of that rule, named in the spec
+        as such. If it goes red, either the skill drifted from the vocabulary
+        the schemas committed to, or a schema rejected a field without the
+        paired skill update. Both want fixing in the same change, not here.
         """
         asserted = (
             "outcome-id",
