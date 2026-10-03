@@ -749,3 +749,81 @@ class TestCsp17TheConstantIsGone:
             PLATFORM, ("a",), proposer="a-agent", config=cfg, target_role="critic"
         )
         assert choice.critic == "c-agent"
+
+
+class TestShapeCompleteIsNotCoverageComplete:
+    """core guarantees SHAPE, the roster decides COVERAGE (core
+    20261003T072745, cli #277 + core #123).
+
+    core's parse refuses a hook that cannot select *in principle* — no roles
+    table, no target-role, no role-based arm. It cannot refuse a hook that
+    cannot select *for this roster*, because there is no roster at parse
+    time. So a config can be fully parse-accepted and still cover nobody.
+
+    This is the default state of a small fleet, not an edge case: one declared
+    reviewer, and that reviewer proposes something.
+    """
+
+    SOLE_REVIEWER = {"b-agent": ["reviewer"]}
+
+    def _cfg(self):
+        return parse_verification_gates(
+            {
+                "roles": self.SOLE_REVIEWER,
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "stakeholder-affected",
+                        "fallback": "role-based",
+                        "target-role": "reviewer",
+                    }
+                },
+            }
+        )
+
+    def test_the_config_parses_so_core_has_signed_it_off(self):
+        """If this ever raises, core gained roster awareness at parse and the
+        rest of this class is core's problem, not the dispatcher's."""
+        assert self._cfg().hooks["spec-proposal-critique"].target_role == "reviewer"
+
+    def test_the_sole_reviewer_proposing_gets_NO_CRITIC(self):
+        """Both arms exclude the same agent for the same reason.
+
+        primary stakeholder-affected picks b-agent (they own the affected
+        repo) -> D4 excludes the proposer -> fallback role-based picks the
+        sole reviewer, who is b-agent -> excluded again. Shape-complete,
+        coverage zero.
+        """
+        choice = select_critic(PLATFORM, ("b",), proposer="b-agent", config=self._cfg())
+        assert choice.critic is None
+        assert choice.reason == NO_ELIGIBLE, "evaluated, and the answer is genuinely nobody"
+        assert choice.missing_inputs == (), "not a could-not-evaluate — nothing was missing"
+        assert choice.fell_back is True, "the fallback ran and also came up empty"
+        assert choice.excluded_proposer is True
+
+    def test_the_SAME_config_covers_a_different_proposer(self):
+        """The asymmetry is the whole point. A config is not globally covered
+        or uncovered — it is covered per proposer, which is why no parse can
+        settle it."""
+        covered = select_critic(PLATFORM, ("a",), proposer="a-agent", config=self._cfg())
+        assert covered.critic == "b-agent"
+
+        uncovered = select_critic(PLATFORM, ("b",), proposer="b-agent", config=self._cfg())
+        assert uncovered.critic is None
+
+    def test_a_second_role_holder_closes_it(self):
+        """The remedy, asserted so the test says what to DO and not only what
+        is broken: declare more than one holder of the gate's target role."""
+        cfg = parse_verification_gates(
+            {
+                "roles": {"b-agent": ["reviewer"], "c-agent": ["reviewer"]},
+                "hooks": {
+                    "spec-proposal-critique": {
+                        "primary": "stakeholder-affected",
+                        "fallback": "role-based",
+                        "target-role": "reviewer",
+                    }
+                },
+            }
+        )
+        choice = select_critic(PLATFORM, ("b",), proposer="b-agent", config=cfg)
+        assert choice.critic == "c-agent"
