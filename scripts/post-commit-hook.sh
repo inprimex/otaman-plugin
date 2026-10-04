@@ -106,18 +106,63 @@ COMMIT_MSG="$(git log -1 --format='%s')"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)"
 MSG_TIMESTAMP="$(date -u +%Y%m%dT%H%M%S 2>/dev/null || date +%Y%m%dT%H%M%S)"
 
-# Get agent identity
+# Attribute the commit to the owner of the REPO it happened in.
+#
+# This used to read "$PROJECT_ROOT/.agents/current-agent", which is a single
+# tenant-wide file — so every repo's commits were labelled with whatever agent
+# last wrote it. Measured 2026-10-03: 43 review-requests in one day, about four
+# different repos, every one of them claiming `from: fswatch-agent`, who had
+# committed nothing. It is also step 5 of cli's 6-step identity chain and
+# DEPRECATED; cwd-ownership was made authoritative by team-mode B1 precisely so
+# a stale shared value cannot claim someone else's repo.
+#
+# `otaman whoami --resolve-only` is that chain, and is documented as cheap
+# enough for a hook. Exit 3 means "asked, found nothing"; anything else nonzero
+# means "could not ask". Both fall back to the repo name, which is still a
+# better answer than another repo's agent.
 AGENT_NAME=""
-if [[ -f "$PROJECT_ROOT/.agents/current-agent" ]]; then
-    AGENT_NAME="$(cat "$PROJECT_ROOT/.agents/current-agent" | tr -d '[:space:]')"
+if command -v otaman >/dev/null 2>&1; then
+    AGENT_NAME="$(otaman whoami --resolve-only 2>/dev/null)" || AGENT_NAME=""
 fi
+AGENT_NAME="$(printf '%s' "$AGENT_NAME" | tr -d '[:space:]')"
 AGENT_NAME="${AGENT_NAME:-$REPO_NAME}"
+
+# Resolve observers. THE DEFAULT IS TO SEND NOTHING.
+#
+# This hook's header has always claimed it "checks observer triggers from
+# platform.yaml". It never did: it hardcoded `to: human` and told the human
+# that "observers matching these triggers should review this commit". With no
+# observer concept declared anywhere in the platform schema, that produced 953
+# messages into one queue over four months — a notifier with no recipients
+# notifying a bystander.
+#
+# So: send to the agents declared under a top-level `observers:` list, and when
+# none are declared send NOTHING. An unresolved recipient is not a reason to
+# pick one. The note goes to stderr, which git shows to whoever ran the commit,
+# rather than to a queue nobody asked.
+#
+# The `observers:` shape is deliberately minimal (a flat list of agent names)
+# and is NOT a ratified schema — flagged to spec-agent. Honouring a key if
+# someone declares it is not the same as inventing a contract, and the
+# default-off behaviour is correct either way.
+OBSERVERS="$(awk '
+    /^observers:[[:space:]]*$/ { inlist=1; next }
+    inlist && /^[[:space:]]*-[[:space:]]*/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); gsub(/["'"'"']/, ""); print; next }
+    inlist && /^[^[:space:]-]/ { inlist=0 }
+' "$PLATFORM_YAML" 2>/dev/null)"
+
+if [[ -z "$OBSERVERS" ]]; then
+    echo "otaman: commit matched [$TRIGGERS] but no observers are declared in platform.yaml — no review-request sent" >&2
+    exit 0
+fi
 
 # Create message with timestamp-based ID
 mkdir -p "$BUS_ACTIVE/acks"
 
 MSG_ID="${MSG_TIMESTAMP}-${COMMIT_HASH}"
-MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-${AGENT_NAME}-to-human-post-commit-review.md"
+PRIMARY="$(printf '%s\n' "$OBSERVERS" | head -1)"
+CC_LIST="$(printf '%s\n' "$OBSERVERS" | tail -n +2 | paste -sd, -)"
+MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-${AGENT_NAME}-to-${PRIMARY}-post-commit-review.md"
 
 TRIGGER_LIST=""
 for t in $TRIGGERS; do
@@ -128,7 +173,8 @@ cat > "$MSG_FILE" << EOF
 ---
 id: ${MSG_ID}
 from: ${AGENT_NAME}
-to: human
+to: ${PRIMARY}${CC_LIST:+
+cc: [${CC_LIST}]}
 priority: normal
 type: review-request
 timestamp: ${TIMESTAMP}
@@ -144,7 +190,7 @@ ${TRIGGER_LIST}
 **Changed files**:
 $(echo "$CHANGED_FILES" | sed 's/^/- /')
 
-Observers matching these triggers should review this commit.
+You are a declared observer for these trigger categories.
 EOF
 
 exit 0
