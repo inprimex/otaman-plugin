@@ -211,6 +211,33 @@ class TestTheDefaultBranchIsASKEDNotASSUMED:
         assert f.evidence["branch"] == "dev"
         assert f.evidence["behind"] == 2
 
+    def test_a_DETACHED_HEAD_does_not_mask_it(self, tmp_path):
+        """Named explicitly by the amended 1.1 ("feature branch / detached
+        HEAD do not mask it"), and not hypothetical — otaman-core sits on a
+        detached HEAD on this tenant right now, which is the repo the check
+        was built to catch.
+
+        `HEAD..@{upstream}` cannot answer at all here; the default-branch
+        comparand is unaffected because it never consults HEAD.
+        """
+        root, checkout, work, origin, env = _tenant(tmp_path)
+        _advance_origin(work, origin, env, n=3)
+        _git(checkout, "fetch", "-q", "origin", env=env)
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        ).stdout.strip()
+        _git(checkout, "checkout", "-q", "--detach", sha, env=env)
+
+        f = _by_subject(check_checkout_vs_remote(root))["checkout acme-lib"]
+        assert f.verdict == "skewed", "a detached HEAD hid the drift"
+        assert f.evidence["behind"] == 3
+        assert f.evidence["branch"] == "main"
+
     def test_a_feature_branch_does_not_change_the_answer(self, tmp_path):
         """The reason 1.1's `HEAD..@{upstream}` was wrong: an agent mid-task
         is on an unpushed branch, and the question is about the checkout's
