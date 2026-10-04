@@ -89,6 +89,109 @@ _deny() {
 if (( _identity_rc == 3 )); then
     _deny "BLOCKED: the acting agent could not be identified, so repo ownership cannot be checked — refusing an unattributable write. Set \`agent:\` in this repo's .otaman marker, or run \`otaman whoami --resolve-only\` to see why the identity chain resolves to nothing."
 fi
+
+# --- Structural-key commit guard (otaman-meta-ownership 1.1) ---
+#
+# The otaman folder has an owner now, and the owner MERGES structure rather
+# than approving it: platform.yaml's structural keys re-point who owns what,
+# who hears what, and which repos exist. A commit touching one is refused
+# naming the key, even from the owner.
+#
+# WHY A COMMIT GUARD AND NOT A WRITE GUARD. A PreToolUse write hook sees only
+# `file_path` through this script's flat JSON reader; the proposed content
+# arrives as escaped multi-line text it cannot parse. A commit has
+# `git diff --cached`, so the before/after are both real files and the
+# comparison is exact rather than heuristic. Editing platform.yaml stays
+# free — it is landing the change that needs the human.
+#
+# WHY NO AUTHORIZATION LOOKUP. The delivery-envelope registry classes this
+# kind of action LIMITED: never pre-authorizable, asked every time. So there
+# is nothing to look up — the guard refuses and names the key, and the human
+# either makes the change or answers a decision-required. Inventing an
+# authorization store beside the envelope would be the second mechanism the
+# check-otaman-first rule exists to prevent.
+#
+# FAILS OPEN only where it genuinely cannot tell (no python, no git, no
+# staged platform.yaml). It is a structural-change speed bump, not a security
+# boundary — the human reviewing the PR is that — and a hook that refused
+# every commit it could not analyse would be routed around within a day.
+check_structural_commit() {
+    local command="$1"
+    case "$command" in
+        *"git commit"*|*"git"*" "*"commit"*) ;;
+        *) return 0 ;;
+    esac
+
+    local meta_root
+    meta_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+    [[ -f "$meta_root/platform.yaml" ]] || return 0
+
+    git -C "$meta_root" diff --cached --name-only 2>/dev/null \
+        | grep -qx "platform.yaml" || return 0
+
+    local py
+    py="$(resolve_otaman_python "$(dirname "$SCRIPT_DIR")" 2>/dev/null)" || return 0
+    [[ -n "$py" ]] || return 0
+
+    local changed
+    changed="$("$py" - "$meta_root" <<'PYEOF' 2>/dev/null
+import subprocess
+import sys
+
+try:
+    import yaml
+except Exception:
+    sys.exit(0)
+
+from otaman_plugin.generate_agent_config import STRUCTURAL_PLATFORM_KEYS
+
+root = sys.argv[1]
+
+
+def _load(text):
+    try:
+        return yaml.safe_load(text) or {}
+    except Exception:
+        return None
+
+
+staged = subprocess.run(
+    ["git", "-C", root, "show", ":platform.yaml"],
+    capture_output=True, text=True,
+)
+head = subprocess.run(
+    ["git", "-C", root, "show", "HEAD:platform.yaml"],
+    capture_output=True, text=True,
+)
+if staged.returncode != 0 or head.returncode != 0:
+    sys.exit(0)
+
+after, before = _load(staged.stdout), _load(head.stdout)
+# Unparseable on either side: say nothing rather than guess which keys moved.
+if after is None or before is None:
+    sys.exit(0)
+
+print(
+    " ".join(
+        k for k in STRUCTURAL_PLATFORM_KEYS if before.get(k) != after.get(k)
+    )
+)
+PYEOF
+)" || return 0
+
+    [[ -n "$changed" ]] || return 0
+    _deny "BLOCKED: this commit changes structural platform.yaml key(s): ${changed}. Structural keys re-point who owns what, who hears what, and which repos exist — the owner MERGES them, the human AUTHORIZES them, so this refuses even for the owner. Emit a decision-required to the human naming the key and what it changes, and land it once they answer. Non-structural keys commit normally; unstage platform.yaml to proceed with the rest."
+}
+
+# Runs BEFORE the identity gate, deliberately. Ownership checks are about WHO
+# is writing and fail open when nobody can be named; this one is about WHAT
+# the commit touches, and the requirement is explicit that it applies "even
+# when committed by the owner". An unidentifiable committer is if anything
+# more reason to ask about structure, not less.
+if [[ "$(json_get "$INPUT" "tool_name")" == "Bash" ]]; then
+    check_structural_commit "$(json_get "$INPUT" "command")"
+fi
+
 [[ -n "$CURRENT_AGENT" ]] || exit 0
 
 # --- knowledge-v2 3.1: partition write guard -------------------------------
@@ -277,10 +380,12 @@ check_path_ownership() {
     return 0  # Path is outside any repo — allow
 }
 
+
 # --- For Bash tool, scan for file-writing patterns targeting other repos ---
 if [[ "$TOOL_NAME" == "Bash" ]]; then
     COMMAND="$(json_get "$INPUT" "command")"
     [[ -n "$COMMAND" ]] || exit 0
+
 
     # Extract potential target paths from redirect operators and common write commands
     # This is best-effort — not all Bash writes can be detected statically

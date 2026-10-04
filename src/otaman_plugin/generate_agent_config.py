@@ -133,6 +133,30 @@ def create_directories(project_root: Path, config: dict[str, Any]) -> list[str]:
     return created
 
 
+#: platform.yaml top-level keys that define the fleet's STRUCTURE. Changing
+#: one re-points who owns what, who hears what, or which repos exist — so the
+#: owner merges it but the human authorizes it (otaman-meta-ownership). Every
+#: other key follows the normal owner flow.
+#:
+#: Enumerated in ONE place and rendered into the generated instructions from
+#: here, so the hook that enforces the list and the text that teaches it
+#: cannot drift. A guard enforcing a list the instructions do not name is a
+#: rule agents discover by tripping it.
+STRUCTURAL_PLATFORM_KEYS: tuple[str, ...] = (
+    "repos",
+    "ownership",
+    "bus",
+    "communication",
+    "program",
+)
+
+#: The otaman folder is the fleet's coordination home, not an entry in
+#: `repos:` — it is the root those paths are relative to. Its owner is read
+#: from a top-level `ownership:` mapping rather than derived, because guessing
+#: an owner for the most central repo is the kind of default nobody audits.
+OTAMAN_FOLDER_KEY = "otaman-folder"
+
+
 def generate_ownership_json(project_root: Path, config: dict[str, Any]) -> Path:
     """Generate .agents/ownership.json from config."""
     ownership = {
@@ -149,6 +173,19 @@ def generate_ownership_json(project_root: Path, config: dict[str, Any]) -> Path:
         if repo.get("disabled", False):
             entry["disabled"] = True
         ownership["repos"].append(entry)
+
+    # The otaman folder itself. Absent from `repos:` by construction — it is
+    # the root, not a sibling — which is exactly why it had no declared owner
+    # and why a prepared commit for it waited a day with nobody authorized to
+    # land it (sam 1.5 step 2, plugin 20261001T200217).
+    meta_owner = (config.get("ownership") or {}).get(OTAMAN_FOLDER_KEY)
+    if meta_owner:
+        ownership["otaman_folder"] = {
+            "path": ".",
+            "owner": str(meta_owner),
+            "authority": "merge",
+            "structural_keys": list(STRUCTURAL_PLATFORM_KEYS),
+        }
 
     out_path = project_root / ".agents" / "ownership.json"
     with open(out_path, "w", encoding="utf-8") as f:
@@ -705,6 +742,42 @@ def _build_maestro_block(
                 "Cross-path edits surface at PR review time."
             )
 
+    # The otaman folder's owner, rendered for EVERY agent — not only the
+    # owner. Two audiences, both load-bearing:
+    #   - the owner learns their authority is merge, and that structural keys
+    #     are not theirs to decide alone;
+    #   - everyone else learns who to hand a prepared commit to, which is the
+    #     question that stalled sam 1.5 for a day with the files already
+    #     written (plugin 20261001T200217).
+    #
+    # The structural key list is rendered from STRUCTURAL_PLATFORM_KEYS, the
+    # same constant the commit guard enforces, so the text cannot teach one
+    # list while the hook refuses another.
+    meta_owner = (config.get("ownership") or {}).get(OTAMAN_FOLDER_KEY)
+    meta_ownership_section = ""
+    if meta_owner:
+        keys = ", ".join(f"`{k}`" for k in STRUCTURAL_PLATFORM_KEYS)
+        if meta_owner == repo["owner"]:
+            meta_ownership_section = (
+                f"- **You own the otaman folder** (`{bus_path.split('/')[0] or '.agents'}`'s "
+                "repo — platform.yaml, the bus, knowledge, the hooks tree).\n"
+                "  Your authority there is **merge**, not monopoly: every agent keeps "
+                "writing the coordination surfaces (bus, status, blocked, knowledge "
+                "submissions) under the existing hook rules. What is yours is the "
+                "repo's committed state — including landing other agents' prepared "
+                "handoffs, which needs no exception process.\n"
+                f"  **Structural keys are NOT yours to decide alone**: {keys}. A commit "
+                "touching one is refused naming the key until the human authorizes it. "
+                "You merge structure; you do not approve it.\n"
+            )
+        else:
+            meta_ownership_section = (
+                f"- The otaman folder (platform.yaml, bus, knowledge, hooks tree) is "
+                f"owned by **{meta_owner}** — hand them prepared commits for it rather "
+                "than waiting for an exception. Your writes to the coordination "
+                "surfaces (bus, status, blocked, knowledge) are unchanged.\n"
+            )
+
     # Compute relative path from repo to maestro folder for .agents/ references.  # legacy: pre-rebrand reference
     # M = relative path from repo to maestro folder (e.g., "../lmachine-maestro")  # legacy: pre-rebrand reference
     #
@@ -1137,7 +1210,7 @@ Unsure whether a surface exists? That is a `question` message to the owning
 agent, and it is cheaper than either answer you would otherwise guess.
 
 ### Ownership
-- This repo (`{repo["path"]}`) is YOURS — you may read and write freely here
+{meta_ownership_section}- This repo (`{repo["path"]}`) is YOURS — you may read and write freely here
 - Other repos (READ-ONLY, do not write to them):
 {other_repos_list}
 - You may read other repos' source code, configs, and CLAUDE.md to understand their APIs
