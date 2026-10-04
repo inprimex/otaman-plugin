@@ -61,9 +61,7 @@ def meta(tmp_path):
     return {"root": root, "git": git, "env": env}
 
 
-def _commit_attempt(
-    meta, python_on_path: bool = True, otaman_bin: str | None = None
-) -> dict | None:
+def _commit_attempt(meta, otaman_bin: str | None = None) -> dict | None:
     """Run the hook as if `git commit` were about to execute.
 
     *otaman_bin* puts the stub CLI on PATH so the enforcement identity
@@ -71,15 +69,14 @@ def _commit_attempt(
     to prove something about the owner proves only that an anonymous
     committer is refused — which is a different statement.
     """
+    import sys
+
     payload = json.dumps({"tool_name": "Bash", "command": "git commit -m x"})
     env = dict(meta["env"])
     if otaman_bin:
         env["PATH"] = f"{otaman_bin}:{env['PATH']}"
-    if python_on_path:
-        import sys
-
-        env["PATH"] = f"{Path(sys.executable).parent}:{env['PATH']}"
-        env["PYTHONPATH"] = str(REPO / "src")
+    env["PATH"] = f"{Path(sys.executable).parent}:{env['PATH']}"
+    env["PYTHONPATH"] = str(REPO / "src")
     proc = subprocess.run(
         ["bash", str(HOOK)],
         input=payload,
@@ -202,12 +199,35 @@ class TestItFailsOpenWhenItCannotTell:
     is a speed bump on structure, and the human at PR review is the boundary.
     A hook that blocks whenever its analysis is unavailable gets disabled."""
 
-    def test_no_python_means_no_opinion(self, meta):
+    # The "no python interpreter" fail-open is NOT unit-tested, deliberately.
+    # I wrote a test for it that passed locally and failed in CI: omitting the
+    # venv python does not remove python, CI has a system one that imports the
+    # package fine, and `resolve_otaman_python` probes absolute paths besides.
+    # The test was asserting an environment I cannot create rather than a
+    # behaviour I control — a flaky test waiting to happen. The branch is one
+    # line (`[[ -n "$py" ]] || return 0`); the paths below are the fail-opens
+    # a sandbox can actually produce.
+
+    def test_a_non_git_directory_is_not_guessed_at(self, meta):
+        """`git rev-parse` fails, so there is no staged diff to analyse and
+        nothing to have an opinion about."""
+        import shutil as _shutil
+
         (meta["root"] / "platform.yaml").write_text(
             WITH_REPOS.format(owner="someone-else"), encoding="utf-8"
         )
         meta["git"]("add", "platform.yaml")
-        assert _commit_attempt(meta, python_on_path=False) is None
+        _shutil.rmtree(meta["root"] / ".git")
+        assert _commit_attempt(meta) is None
+
+    def test_platform_yaml_not_staged_is_not_analysed(self, meta):
+        """Structural keys differ in the WORKTREE but nothing is staged —
+        there is no commit to guard, and editing stays free by design."""
+        (meta["root"] / "platform.yaml").write_text(
+            WITH_REPOS.format(owner="someone-else"), encoding="utf-8"
+        )
+        # deliberately NOT staged
+        assert _commit_attempt(meta) is None
 
     def test_an_unparseable_platform_yaml_is_not_guessed_at(self, meta):
         """Refusing on unparseable YAML would block the commit that FIXES it."""
