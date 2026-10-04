@@ -40,6 +40,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1133,8 +1134,14 @@ def check_instructions_vs_generator(otaman_root: Path) -> list[Finding]:
 
 
 def assess(otaman_root: Path) -> list[Finding]:
-    """Checks 1-7 in a stable order. The single computation behind both the
-    doctor section and the console session view (1.3)."""
+    """Checks 1-8 in a stable order. The single computation behind both the
+    doctor section and the console session view (1.3).
+
+    A check added below but not extended into `out` here is ORPHANED — it
+    exists, its own tests pass, and doctor never runs it. Sabotage caught
+    exactly that for check 5, so there is now a test asserting each check's
+    findings survive this aggregation.
+    """
     if not (otaman_root / "platform.yaml").is_file():
         # Not a program root — there is nothing for a runtime to be fresh
         # RELATIVE TO. Every other plugin check treats this as [] rather than
@@ -1149,4 +1156,223 @@ def assess(otaman_root: Path) -> list[Finding]:
     out.extend(check_halted_sessions(otaman_root))
     out.extend(check_harness_vs_pin(otaman_root))
     out.extend(check_instructions_vs_generator(otaman_root))
+    out.extend(check_checkout_vs_remote(otaman_root))
     return out
+
+
+# ---------------------------------------------------------------------------
+# check 5 — a sibling CHECKOUT behind its own remote (rfsd 1.1, signal 2)
+#
+# The question this answers is not "is my bundle current" (check 4) but "is
+# the source I am READING the source that is live". Fleet rules direct agents
+# to read sibling repos as the contract; a checkout silently behind its remote
+# makes that contract wrong, and nothing on the tenant says so.
+#
+# Measured 2026-10-03: plugin-agent consumed otaman-core #122 against a core
+# checkout one commit behind origin/main. The first signal was 31 failing
+# tests in CI — which fetches fresh — on a branch that touched only
+# docstrings. This check is that signal, on the tenant, before the PR.
+#
+#   NOT IMPLEMENTED, deliberately: "commits on origin/main since
+#   release.yaml installed_at". rfsd 1.1 names it as signal 1, but it is the
+#   comparand spec-agent pinned as rejected on 20260925 and that I accepted in
+#   writing the same day (20260925T083522): sibling mains run ahead of the
+#   last cut BY DESIGN, so it renders SKEWED on every dev workspace between
+#   releases. Measured again on a healthy tenant while writing this: core 20,
+#   cli 34, plugin 19. Shipping it would make doctor permanently yellow, which
+#   is the cry-wolf failure D3 exists to prevent. Raised rather than built
+#   (20261004T095501).
+#
+# THE COMPARAND IS THE DEFAULT BRANCH, NOT HEAD. `HEAD..@{upstream}` is what
+# 1.1 specifies, and it renders not-checked for any agent on a feature branch
+# — 3 of 6 repos on this tenant, one of them on a detached HEAD. "Is this
+# checkout's source of truth stale" is a question about the default branch,
+# and asking it that way is both answerable and stable while an agent works.
+
+#: Tolerated on a hook-speed path: a hung remote must not hang doctor. A
+#: timeout renders not-checked, never fresh.
+_GIT_TIMEOUT_S = 10.0
+
+#: How old the last fetch may be before `origin/<branch>` stops being able to
+#: answer "is the fleet ahead of me". NOT arbitrary: this fleet merged 43
+#: commits across four repos in one measured day (2026-10-03), so refs older
+#: than a day cannot speak to the question. Beyond it the verdict is
+#: not-checked naming the age — never fresh.
+#:
+#: This check is deliberately OFFLINE. Fetching from doctor would make a
+#: read-only diagnostic do network writes to every sibling, and a hung remote
+#: would hang the run. So the honest move is to bound what the local refs can
+#: support rather than to go refresh them.
+_FETCH_STALE_AFTER_S = 24 * 3600
+
+
+def _git(repo: Path, *args: str) -> str | None:
+    """`git -C repo args...` stdout, or None if it could not be run."""
+    if not shutil.which("git"):
+        return None
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
+def _origin_refs_mtime(repo: Path, branch: str) -> float | None:
+    """When this checkout's view of `origin/<branch>` was last written.
+
+    Three sources, newest wins, because git uses different ones depending on
+    how the refs got there: `clone` packs them, `fetch` writes FETCH_HEAD and
+    a loose ref. Dating only one of them makes a fresh clone look ancient or
+    a fetched repo look unfetched.
+    """
+    git_dir = repo / ".git"
+    candidates = [
+        git_dir / "FETCH_HEAD",
+        git_dir / "refs" / "remotes" / "origin" / branch,
+        git_dir / "packed-refs",
+    ]
+    stamps = []
+    for path in candidates:
+        try:
+            stamps.append(path.stat().st_mtime)
+        except OSError:
+            continue
+    return max(stamps) if stamps else None
+
+
+def _default_branch(repo: Path) -> str | None:
+    """The repo's default branch, asked rather than assumed.
+
+    `origin/HEAD` is the remote's own answer. A repo whose default is not
+    `main` must not be silently measured against a branch it does not have —
+    that would render not-checked for a structural reason the operator cannot
+    act on, or worse, fresh.
+    """
+    head = _git(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    if head:
+        return head.split("/", 1)[1] if "/" in head else head
+    for candidate in ("main", "master"):
+        if _git(repo, "rev-parse", "--verify", f"refs/remotes/origin/{candidate}") is not None:
+            return candidate
+    return None
+
+
+def check_checkout_vs_remote(otaman_root: Path) -> list[Finding]:
+    """Is each sibling checkout's default branch behind its remote?
+
+    Read-only and offline: it compares against the refs already fetched, and
+    never fetches. A checkout nobody has fetched recently is NOT fresh — it is
+    not-checked, naming that, because "no new commits since a fetch that never
+    happened" is the silent-OK this module exists to refuse.
+    """
+    subject_check = "checkout-drift"
+    repos = _program_repo_dirs(otaman_root)
+    if not repos:
+        return [
+            _not_checked(
+                "sibling checkouts",
+                subject_check,
+                "platform.yaml declares no repo paths — nothing to compare",
+            )
+        ]
+
+    findings: list[Finding] = []
+    for repo in repos:
+        subject = f"checkout {repo.name}"
+        if not (repo / ".git").exists():
+            findings.append(_not_checked(subject, subject_check, f"{repo} is not a git checkout"))
+            continue
+
+        branch = _default_branch(repo)
+        if branch is None:
+            findings.append(
+                _not_checked(
+                    subject,
+                    subject_check,
+                    "no origin/HEAD and neither origin/main nor origin/master exists — "
+                    "cannot tell which branch is the source of truth",
+                )
+            )
+            continue
+
+        # A comparison against origin refs is only as current as those refs.
+        # Clone writes them into packed-refs; a fetch writes FETCH_HEAD and a
+        # loose ref. Taking the newest of the three dates the refs the same
+        # way whether the checkout was cloned an hour ago or fetched an hour
+        # ago — without which a never-fetched clone reports "level" purely
+        # because its refs are frozen at clone time, which is "checked clean"
+        # asserted from refs that cannot have seen the commits in question.
+        # DEFENSIVE AND PRACTICALLY UNREACHABLE: a resolved default branch
+        # implies its ref exists either loosely or in packed-refs, and both
+        # are datable. This survives a stat race or an unreadable .git. Kept
+        # because the alternative is None flowing into arithmetic; declared
+        # untested rather than given a test that cannot drive it.
+        fetched_at = _origin_refs_mtime(repo, branch)
+        if fetched_at is None:
+            findings.append(
+                _not_checked(
+                    subject,
+                    subject_check,
+                    f"cannot date this checkout's origin/{branch} refs, so there is "
+                    "no basis for saying whether they are current",
+                )
+            )
+            continue
+        age = time.time() - fetched_at
+        if age > _FETCH_STALE_AFTER_S:
+            findings.append(
+                _not_checked(
+                    subject,
+                    subject_check,
+                    f"origin/{branch} was last updated {age / 3600:.0f}h ago — too "
+                    "old to say whether the fleet has moved since",
+                )
+            )
+            continue
+
+        behind = _git(repo, "rev-list", "--count", f"{branch}..origin/{branch}")
+        if behind is None or not behind.isdigit():
+            findings.append(
+                _not_checked(
+                    subject,
+                    subject_check,
+                    f"could not count {branch}..origin/{branch} — no local {branch}, "
+                    "or the remote ref has never been fetched here",
+                )
+            )
+            continue
+
+        count = int(behind)
+        evidence = {"branch": branch, "behind": count, "fetched_at": _iso(fetched_at)}
+        if count == 0:
+            findings.append(
+                Finding(
+                    subject=subject,
+                    check=subject_check,
+                    verdict="fresh",
+                    reason=(f"{branch} is level with origin/{branch} (refs {age / 3600:.0f}h old)"),
+                    evidence=evidence,
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    subject=subject,
+                    check=subject_check,
+                    verdict="skewed",
+                    reason=(
+                        f"{branch} is {count} commit(s) behind origin/{branch} — code "
+                        "read from this checkout is not what the fleet has merged"
+                    ),
+                    remedy=f"git -C {repo} pull --ff-only",
+                    evidence=evidence,
+                )
+            )
+    return findings
