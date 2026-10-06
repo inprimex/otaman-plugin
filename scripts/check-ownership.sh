@@ -104,12 +104,22 @@ fi
 # comparison is exact rather than heuristic. Editing platform.yaml stays
 # free — it is landing the change that needs the human.
 #
-# WHY NO AUTHORIZATION LOOKUP. The delivery-envelope registry classes this
-# kind of action LIMITED: never pre-authorizable, asked every time. So there
-# is nothing to look up — the guard refuses and names the key, and the human
-# either makes the change or answers a decision-required. Inventing an
-# authorization store beside the envelope would be the second mechanism the
-# check-otaman-first rule exists to prevent.
+# WHY NO AUTHORIZATION LOOKUP, AND WHY THE REFUSAL IS FINAL. The
+# delivery-envelope registry classes this kind of action LIMITED: never
+# pre-authorizable. So there is nothing to look up — and nothing an approval
+# can flip either. THE HUMAN MAKES THE CHANGE; the agent hands it over.
+#
+# `permissionDecision: "ask"` would let an approval land it in-session, and is
+# the wrong trade here: `ask` can only be answered by a human present in that
+# turn, so for an agent working autonomously it is not a prompt but a halt
+# that cannot time out and cannot be reached by a bus message. That shape cost
+# ~11h of fleet delivery on 2026-09-25 and is why the destructive-op guard was
+# scoped. `deny` is final on purpose.
+#
+# The first version of this refusal said "land it once they answer", which
+# promised a path the code does not implement — an agent following it would
+# emit, get an answer, retry, and be refused again. Corrected: the message now
+# says who lands it.
 #
 # FAILS OPEN only where it genuinely cannot tell (no python, no git, no
 # staged platform.yaml). It is a structural-change speed bump, not a security
@@ -180,7 +190,7 @@ PYEOF
 )" || return 0
 
     [[ -n "$changed" ]] || return 0
-    _deny "BLOCKED: this commit changes structural platform.yaml key(s): ${changed}. Structural keys re-point who owns what, who hears what, and which repos exist — the owner MERGES them, the human AUTHORIZES them, so this refuses even for the owner. Emit a decision-required to the human naming the key and what it changes, and land it once they answer. Non-structural keys commit normally; unstage platform.yaml to proceed with the rest."
+    _deny "BLOCKED: this commit changes structural platform.yaml key(s): ${changed}. Structural keys re-point who owns what, who hears what, and which repos exist — the owner MERGES them, the human AUTHORIZES them, so this refuses even for the owner. THE HUMAN LANDS THIS, NOT YOU: there is no approval that lets this commit through, by design. Emit a decision-required naming the key and what it changes, and hand the edit over — do not retry after they answer, you will be refused again. Non-structural keys commit normally; unstage platform.yaml to proceed with the rest."
 }
 
 # Runs BEFORE the identity gate, deliberately. Ownership checks are about WHO
