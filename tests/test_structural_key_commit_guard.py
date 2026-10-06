@@ -130,6 +130,40 @@ class TestStructuralChangesAreRefused:
         assert "decision-required" in reason
         assert "unstage" in reason
 
+    def test_the_refusal_does_not_promise_a_path_THE_CODE_LACKS(self, meta):
+        """The correction. The first wording said "land it once they answer",
+        and nothing in the guard lets an answer change the outcome — every
+        exit is `return 0` (not applicable) or `_deny`. An agent following
+        that sentence would emit a decision-required, get an answer, retry,
+        and be refused again.
+
+        Asserts the PROPERTY, not the new sentence: whatever the wording, it
+        must not tell the agent that approval makes this commit land, because
+        no code path does.
+        """
+        (meta["root"] / "platform.yaml").write_text(WITH_REPOS.format(owner="x"), encoding="utf-8")
+        meta["git"]("add", "platform.yaml")
+        reason = _reason(_commit_attempt(meta)).lower()
+
+        for promise in ("land it once", "once they answer", "then commit"):
+            assert promise not in reason, (
+                f"the refusal promises {promise!r}, but no approval path exists"
+            )
+        assert "human lands this" in reason, "it must say who DOES land it"
+
+    def test_the_guard_has_no_approval_bypass_at_all(self):
+        """The property the message now describes, checked in the source: no
+        env override, no authorization file, no flag. If someone adds one the
+        message stops being true, and this fails."""
+        import re
+
+        body = HOOK.read_text(encoding="utf-8")
+        fn = re.search(r"^check_structural_commit\(\) \{(.*?)^\}", body, re.S | re.M)
+        assert fn, "guard function not found"
+        code = "\n".join(ln for ln in fn.group(1).splitlines() if not ln.lstrip().startswith("#"))
+        for bypass in ("OTAMAN_ALLOW", "FORCE", "--no-verify", "SKIP_", "authorized"):
+            assert bypass not in code, f"an approval bypass appeared: {bypass}"
+
     def test_it_refuses_the_OWNER_too(self, meta, otaman_stub_bin):
         """The whole point: ownership is merge authority, not approval
         authority. A guard the owner can walk through guards nothing, since
