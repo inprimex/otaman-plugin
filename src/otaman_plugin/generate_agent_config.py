@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -155,6 +156,38 @@ STRUCTURAL_PLATFORM_KEYS: tuple[str, ...] = (
 #: from a top-level `ownership:` mapping rather than derived, because guessing
 #: an owner for the most central repo is the kind of default nobody audits.
 OTAMAN_FOLDER_KEY = "otaman-folder"
+
+
+def structural_keys_changed(
+    before: Mapping[str, Any] | None, after: Mapping[str, Any] | None
+) -> tuple[str, ...]:
+    """Structural keys whose value differs between two parsed platform.yaml docs.
+
+    THE SINGLE HOME for that comparison (otaman-meta-merge-gate 1.1). Two
+    callers need it and must never disagree:
+
+      - the PreToolUse commit guard (`scripts/check-ownership.sh`), which
+        compares the staged file against HEAD on the agent's machine;
+      - the server-side meta-gate workflow, which re-checks the same thing on
+        a PR where no client hook ran at all.
+
+    The guard is a speed bump an agent could in principle route around — a PR
+    merge never reaches it, which is the hole omg exists to close. The server
+    check is the backstop. A backstop that computes "structural" differently
+    from the thing it backs up is worse than none: it would pass changes the
+    hook refuses, or refuse changes the hook allows, and either way the two
+    answers would be defended by different code.
+
+    Returns keys in STRUCTURAL_PLATFORM_KEYS order so output is stable and
+    diffable. An unparseable side yields () — "I could not compare" is the
+    CALLER's to render, because the hook fails open (a speed bump that blocks
+    on unreadable YAML blocks the commit that fixes it) while the gate must
+    fail closed (a server check that passes what it could not read certifies
+    nothing). Same comparison, opposite defaults, one implementation.
+    """
+    if before is None or after is None:
+        return ()
+    return tuple(k for k in STRUCTURAL_PLATFORM_KEYS if before.get(k) != after.get(k))
 
 
 def generate_ownership_json(project_root: Path, config: dict[str, Any]) -> Path:

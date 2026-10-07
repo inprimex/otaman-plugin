@@ -153,7 +153,7 @@ try:
 except Exception:
     sys.exit(0)
 
-from otaman_plugin.generate_agent_config import STRUCTURAL_PLATFORM_KEYS
+from otaman_plugin.generate_agent_config import structural_keys_changed
 
 root = sys.argv[1]
 
@@ -181,11 +181,10 @@ after, before = _load(staged.stdout), _load(head.stdout)
 if after is None or before is None:
     sys.exit(0)
 
-print(
-    " ".join(
-        k for k in STRUCTURAL_PLATFORM_KEYS if before.get(k) != after.get(k)
-    )
-)
+# The comparison is NOT done here: omg 1.1 requires the server-side gate
+# to re-check it with the SAME function, and two copies of "what counts as
+# structural" would defend two different answers.
+print(" ".join(structural_keys_changed(before, after)))
 PYEOF
 )" || return 0
 
