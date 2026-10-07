@@ -271,13 +271,38 @@ class TestItFailsOpenWhenItCannotTell:
 
 
 class TestTheListHasOneHome:
-    def test_the_guard_and_the_generator_share_the_constant(self):
-        """The hook enforces STRUCTURAL_PLATFORM_KEYS and the generated
-        instructions render it. Two lists would teach one rule and enforce
-        another."""
-        from otaman_plugin.generate_agent_config import STRUCTURAL_PLATFORM_KEYS
+    def test_the_hook_IMPORTS_the_comparison_rather_than_doing_it(self):
+        """omg 1.1 requires the server-side gate to re-check structural keys
+        with the SAME function as the hook. So the comparison moved into
+        `structural_keys_changed` and the hook calls it.
+
+        Two copies of "what counts as structural" would defend two different
+        answers — the gate would pass what the hook refuses, or refuse what it
+        allows, and each would be right according to its own code.
+        """
+        from otaman_plugin.generate_agent_config import (
+            STRUCTURAL_PLATFORM_KEYS,
+            structural_keys_changed,
+        )
 
         hook = HOOK.read_text(encoding="utf-8")
-        assert "STRUCTURAL_PLATFORM_KEYS" in hook
+        assert "structural_keys_changed" in hook, "the hook no longer shares the function"
+        code = "\n".join(ln for ln in hook.splitlines() if not ln.lstrip().startswith("#"))
+        assert "STRUCTURAL_PLATFORM_KEYS" not in code, (
+            "the hook re-derives from the raw list instead of calling the shared "
+            "comparison — that is the second home omg 1.1 forbids"
+        )
         assert "repos" in STRUCTURAL_PLATFORM_KEYS
         assert "ownership" in STRUCTURAL_PLATFORM_KEYS
+        assert structural_keys_changed({"repos": [1]}, {"repos": [2]}) == ("repos",)
+
+    def test_the_generated_instructions_still_render_the_same_list(self):
+        """The text that teaches the rule and the function that enforces it
+        read the same constant."""
+        import pathlib as _p
+
+        import otaman_plugin.generate_agent_config as g
+
+        src = _p.Path(g.__file__).read_text(encoding="utf-8")
+        assert "STRUCTURAL_PLATFORM_KEYS" in src
+        assert src.count("STRUCTURAL_PLATFORM_KEYS: tuple") == 1, "the list has two homes"
