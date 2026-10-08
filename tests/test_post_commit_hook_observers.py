@@ -181,3 +181,134 @@ class TestAttributionIsThisRepoNotTheTenantFile:
         assert "platform.yaml" in body
         # ...but it must NOT hand-roll ownership parsing to get there.
         assert "owner:" not in body.replace("# ", ""), "ownership is resolved, not parsed"
+
+
+MAP_SHAPED = """\
+project: acme
+observers:
+  - role: cto-reviewer
+    triggers:
+      - code-change
+      - ci-change
+  - role: security-observer
+    triggers:
+      - security-change
+repos:
+  - name: acme-widget
+    path: ../acme-widget
+    owner: widget-agent
+"""
+
+
+class TestAMapShapedObserversBlockIsRefusedNotGuessedAt:
+    """Relayed from the pmeets tenant (20261008T090540), reproduced here
+    against this hook's own awk before fixing.
+
+    THREE defects, only one of which was the reported symptom:
+
+      1. the end-of-list test only fired at column 0, so a nested `triggers:`
+         block never ended the list and its items became recipients — two
+         observers produced FIVE names, three of them trigger values;
+      2. `to: role: cto-reviewer` is INVALID YAML (ScannerError: mapping
+         values are not allowed here) — an unparseable message in every
+         reader's triage, and the half a filename fix does not touch;
+      3. `cc: [code-change,...,role: security-observer,...]` PARSES, into four
+         bogus recipients one of which is a dict. Valid YAML, garbage
+         semantics — the quieter and worse half, since CC fan-out would have
+         written per-recipient copies addressed to `code-change`.
+
+    The fix REFUSES rather than adding map support: this hook's own comment
+    says the `observers:` shape is deliberately minimal and unratified, and
+    honouring a key is not the same as inventing a contract. A malformed
+    message in the bus is strictly worse than no message.
+    """
+
+    def test_it_sends_NOTHING(self, tmp_path):
+        root, repo = _tenant(tmp_path, MAP_SHAPED)
+        result = _run(root, repo)
+        assert result.returncode == 0, result.stderr
+        assert _messages(root) == [], "a map-shaped observers block still produced a bus message"
+
+    def test_it_says_why_and_what_to_do(self, tmp_path):
+        root, repo = _tenant(tmp_path, MAP_SHAPED)
+        result = _run(root, repo)
+        assert "non-flat entry" in result.stderr
+        assert "flat list of agent names" in result.stderr
+        assert "ratify" in result.stderr, "it should name the alternative, not just refuse"
+
+    def test_no_unparseable_frontmatter_can_be_written(self, tmp_path):
+        """Defect 2 directly: nothing in the bus may carry `to: role: x`."""
+        root, repo = _tenant(tmp_path, MAP_SHAPED)
+        _run(root, repo)
+        for m in _messages(root):
+            assert "to: role:" not in m.read_text(encoding="utf-8")
+
+    def test_trigger_names_never_become_recipients(self, tmp_path):
+        """Defect 1 and 3: `code-change` is a trigger, not an agent."""
+        root, repo = _tenant(tmp_path, MAP_SHAPED)
+        _run(root, repo)
+        names = " ".join(m.name for m in _messages(root))
+        for trigger in ("code-change", "ci-change", "security-change"):
+            assert trigger not in names
+
+    def test_a_FLAT_block_still_works(self, tmp_path):
+        """The regression that matters: fixing the map case must not break the
+        shape the hook actually supports."""
+        root, repo = _tenant(tmp_path, WITH_OBSERVERS)
+        _run(root, repo)
+        msgs = _messages(root)
+        assert len(msgs) == 1
+        text = msgs[0].read_text(encoding="utf-8")
+        assert "to: security-agent" in text
+        assert "cc: [arch-agent]" in text
+
+    def test_the_awk_reads_only_TOP_LEVEL_items(self, tmp_path):
+        """Narrower than the refusal: even before the `:` check, the parser
+        must stop pulling nested list items. Asserted by count, since a
+        future map-support change would keep the parser and drop the refusal.
+        """
+        import re
+        import subprocess as sp
+
+        hook = (REPO / "scripts" / "post-commit-hook.sh").read_text(encoding="utf-8")
+        awk = re.search(r"OBSERVERS=\"\$\(awk '(.*?)' \"\$PLATFORM_YAML\"", hook, re.S)
+        assert awk, "could not locate the observers parser"
+        pf = tmp_path / "platform.yaml"
+        pf.write_text(MAP_SHAPED, encoding="utf-8")
+        out = (
+            sp.run(["awk", awk.group(1), str(pf)], capture_output=True, text=True)
+            .stdout.strip()
+            .splitlines()
+        )
+        assert len(out) == 2, f"parser emitted {len(out)} items from 2 observers: {out}"
+
+
+class TestTheDefenceInDepthIsActuallyREACHABLE:
+    """Sabotage caught these as untested: with a map-shaped block the refusal
+    fires first, so nothing downstream of it could be exercised that way.
+
+    But both guards are reachable by a flat entry that is still not a usable
+    agent name — which is the realistic case anyway, since the refusal only
+    screens for `:`."""
+
+    def test_a_name_with_a_SPACE_is_refused_before_frontmatter(self, tmp_path):
+        """Passes the `:` screen, would still break the `to:` line's meaning
+        and the filename. The guard, not the refusal, catches this."""
+        root, repo = _tenant(tmp_path, "observers:\n  - two words\n")
+        result = _run(root, repo)
+        assert _messages(root) == []
+        assert "not a usable agent name" in result.stderr
+
+    def test_a_name_needing_SLUGIFY_keeps_the_real_value_in_to(self, tmp_path):
+        """The reporter's design intent: sanitise the FILENAME, never the
+        recipient. `agent/foo` is a legal YAML scalar and a bad path
+        component."""
+        root, repo = _tenant(tmp_path, "observers:\n  - agent/foo\n")
+        result = _run(root, repo)
+        msgs = _messages(root)
+        assert len(msgs) == 1, result.stderr
+        assert "/" not in msgs[0].name, "an unslugified name reached the path"
+        assert "agent-foo" in msgs[0].name
+        assert "to: agent/foo" in msgs[0].read_text(encoding="utf-8"), (
+            "the recipient was mangled; only the filename should be slugified"
+        )
