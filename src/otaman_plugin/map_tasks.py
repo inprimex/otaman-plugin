@@ -235,19 +235,108 @@ except ImportError as exc:  # pragma: no cover — laggard-bundle path
     _CORE_READER_ERROR = str(exc)
 
 
+#: An assignment acked with this kind is one the recipient says is DONE.
+#: Anything else — unacked, or acked `read` — is work in flight.
+_ACK_TERMINAL = "resolved"
+
+
+def _live_assignment_task_ids(
+    project_root: Path, feature_name: str, config: dict[str, Any]
+) -> tuple[dict[str, set[str]], list[str]]:
+    """`{owner: {task-id, ...}}` already out on the bus and NOT yet resolved.
+
+    THE SECOND SUPPRESSION SIGNAL (relayed from the pmeets tenant via deploy,
+    20261008T091419). Until now a FILED COMPLETION was the only thing that
+    stopped a re-dispatch, so a task that had been dispatched but not yet
+    completed — the normal state of in-flight work — went out again on every
+    subsequent tasks.md commit. Measured on otaman-dev: 357 dispatches across
+    172 distinct (change, recipient) pairs, 185 re-emissions, 52% of all
+    dispatch traffic, worst cases 7x.
+
+    WHAT COUNTS AS LIVE. An assignment in the bus whose ack is absent or
+    `read`. An ack of `read` means "seen, queued, in flight" — exactly the
+    case that must not be duplicated. An assignment acked `resolved` is NOT
+    live: the recipient says it is done, and if no completion was filed then
+    the missing filing is the real defect and re-dispatch is how the fleet
+    notices. Papering over that here would hide it.
+
+    FAILS OPEN, loudly, like the filed-completion consult: an unreadable bus
+    returns no suppressions and a problem string. Silently suppressing
+    nothing is indistinguishable from a clean scan; silently suppressing
+    everything would drop real assignments.
+    """
+    bus_rel = config.get("communication", {}).get("bus_path", ".agents/bus")
+    active = project_root / bus_rel / "active"
+    if not active.is_dir():
+        # NOT a problem: an absent bus directory is a determinate answer —
+        # nothing has ever been dispatched here, so nothing can be live. Only
+        # an unreadable bus is indeterminate. Reporting this as a problem made
+        # the could-not-consult warning fire on every first dispatch, which
+        # test_available_reader_reports_no_problem correctly refused: "a
+        # warning that is always on is a warning nobody reads."
+        return {}, []
+
+    live: dict[str, set[str]] = {}
+    try:
+        candidates = sorted(active.glob(f"*-otaman-to-*-tasks-{feature_name}.md"))
+    except OSError as exc:
+        return {}, [f"live-assignment consult SKIPPED — {type(exc).__name__}: {exc}"]
+
+    for path in candidates:
+        stem = path.name[: -len(".md")]
+        # `...-otaman-to-<owner>-tasks-<feature>`
+        try:
+            owner = stem.split("-otaman-to-", 1)[1].rsplit(f"-tasks-{feature_name}", 1)[0]
+        except IndexError:
+            continue
+        if not owner:
+            continue
+        ack = active / "acks" / f"{stem}.{owner}.ack"
+        try:
+            kind = ack.read_text(encoding="utf-8").strip().lower() if ack.is_file() else ""
+        except OSError:
+            kind = ""
+        if _ACK_TERMINAL in kind:
+            continue  # recipient says done — a missing filing is a different defect
+        try:
+            body = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in body.splitlines():
+            stripped = line.lstrip()
+            if not stripped.startswith("- ["):
+                continue
+            # core's task_id_of matches from the START of the text, so the
+            # checkbox prefix has to go first — `_consult_filed` gets this for
+            # free by passing the already-parsed task["text"]. Found by the
+            # function returning {} against 20 live assignments.
+            text = re.sub(r"^-\s*\[[^\]]*\]\s*", "", stripped)
+            tid = task_id_of(text)
+            if tid:
+                live.setdefault(owner, set()).add(tid)
+    return live, []
+
+
 def _consult_filed(
     tasks: list[dict[str, Any]],
     tasks_path: Path,
     project_root: Path,
     feature_name: str,
     config: dict[str, Any],
-) -> tuple[list[str], list[str], list[str]]:
-    """Mark tasks whose completion is already filed on the bus as done.
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Mark tasks already filed complete, or already live on the bus, as done.
 
-    Returns ``(filed_complete, retracted, problems)`` — three OUTCOMES, never
-    one summary. A task skipped because its filing stands and a task
-    re-dispatched because that filing was retracted are different events, and
-    an operator reading only a count cannot tell them apart.
+    Returns ``(filed_complete, already_live, retracted, problems)`` — four
+    OUTCOMES, never one summary. A task skipped because its filing stands, a
+    task skipped because an unresolved assignment for it is already out, and a
+    task re-dispatched because its filing was retracted are different events,
+    and an operator reading only a count cannot tell them apart.
+
+    `already_live` is the second suppression signal (pmeets via deploy,
+    20261008T091419). A FILED completion used to be the only thing that
+    suppressed a re-dispatch, so in-flight work — dispatched, not yet
+    complete, which is the normal state — went out again on every tasks.md
+    commit: 52% of all dispatch traffic on this tenant, worst cases 7x.
 
     When core's reader is unavailable the consult cannot run at all. It then
     re-dispatches everything and SAYS SO: silently skipping the consult looks
@@ -255,10 +344,12 @@ def _consult_filed(
     this whole mechanism exists to end.
     """
     if _CORE_READER_ERROR is not None:
-        return [], [], [f"filed-completion consult SKIPPED — {_CORE_READER_ERROR}"]
+        return [], [], [], [f"filed-completion consult SKIPPED — {_CORE_READER_ERROR}"]
 
     filed = filed_complete_at(project_root, feature_name, config)
+    live, live_problems = _live_assignment_task_ids(project_root, feature_name, config)
     filed_complete: list[str] = []
+    already_live: list[str] = []
     retracted: list[str] = []
     for task in tasks:
         if task["done"]:
@@ -267,7 +358,15 @@ def _consult_filed(
         if not tid:
             continue
         if tid not in filed and COMPLETED_ALL not in filed:
-            continue  # nothing filed for it — ordinary dispatch
+            # Nothing filed. Before dispatching, is an unresolved assignment
+            # for this exact (owner, task) already out? Re-sending it adds a
+            # triage slot and no information.
+            owner = task.get("owner")
+            if owner and tid in live.get(owner, ()):
+                task["done"] = True
+                task["already_live"] = True
+                already_live.append(task["text"])
+            continue
         if not is_effectively_complete(tid, filed, tasks_path):
             # Filed, but the filing predates this task's most recent un-tick.
             # Un-ticking is how a retraction is expressed, so the evidence is
@@ -277,7 +376,7 @@ def _consult_filed(
         task["done"] = True
         task["filed_complete"] = True
         filed_complete.append(task["text"])
-    return filed_complete, retracted, []
+    return filed_complete, already_live, retracted, live_problems
 
 
 # ---------------------------------------------------------------------------
@@ -697,7 +796,7 @@ def main() -> int:
     # filed is done for dispatch purposes, even though tasks.md has not been
     # swept yet. Never silent — the skipped ones are counted and named below,
     # and a consult that could not run at all reports itself as a problem.
-    filed_complete, retracted, consult_problems = _consult_filed(
+    filed_complete, already_live, retracted, consult_problems = _consult_filed(
         tasks, tasks_path, project_root, feature_name, config
     )
 
@@ -738,6 +837,8 @@ def main() -> int:
     report["dropped"] = len(dropped)
     report["dropped_tasks"] = dropped
     report["filed_complete"] = len(filed_complete)
+    report["already_live"] = len(already_live)
+    report["already_live_tasks"] = already_live
     report["filed_complete_tasks"] = filed_complete
     report["retracted"] = len(retracted)
     report["retracted_tasks"] = retracted
@@ -753,6 +854,7 @@ def main() -> int:
         f"{len(created)} dispatched to {len(report['by_owner'])} agent(s); "
         f"{report['assigned']} task(s) assigned, {report['dropped']} dropped, "
         f"{len(filed_complete)} filed-complete, skipped, "
+        f"{len(already_live)} already live, skipped, "
         f"{len(retracted)} re-dispatched after retraction",
         file=sys.stderr,
     )
@@ -760,6 +862,11 @@ def main() -> int:
     # correct skip from a bug in the bus consult.
     for text in filed_complete:
         print(f"  filed-complete, not re-dispatched: {text[:90]}", file=sys.stderr)
+    for text in already_live:
+        print(
+            f"  unresolved assignment already out, not re-dispatched: {text[:90]}",
+            file=sys.stderr,
+        )
     for text in retracted:
         print(f"  retracted since filing, re-dispatched: {text[:90]}", file=sys.stderr)
     # A refused envelope must never be silent: the assignment then carries no
