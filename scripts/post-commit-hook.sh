@@ -145,11 +145,47 @@ AGENT_NAME="${AGENT_NAME:-$REPO_NAME}"
 # and is NOT a ratified schema — flagged to spec-agent. Honouring a key if
 # someone declares it is not the same as inventing a contract, and the
 # default-off behaviour is correct either way.
+# Only TOP-LEVEL items under `observers:` count. The first version tracked
+# the end of the list with /^[^[:space:]-]/, which only fires at column 0 —
+# so a nested `triggers:` block never ended the list and its `- ` items were
+# read as recipients. Measured on a map-shaped block from the pmeets tenant
+# (relayed 20261008T090540): two observers produced FIVE names, three of them
+# trigger values. Indent depth is now recorded from the first item and
+# anything shallower or deeper ends / is skipped.
 OBSERVERS="$(awk '
-    /^observers:[[:space:]]*$/ { inlist=1; next }
-    inlist && /^[[:space:]]*-[[:space:]]*/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); gsub(/["'"'"']/, ""); print; next }
-    inlist && /^[^[:space:]-]/ { inlist=0 }
+    /^observers:[[:space:]]*$/ { inlist=1; depth=-1; next }
+    !inlist { next }
+    /^[^[:space:]]/ { inlist=0; next }
+    {
+        match($0, /^[[:space:]]*/)
+        ind = RLENGTH
+        if ($0 !~ /^[[:space:]]*-[[:space:]]*[^[:space:]]/) next
+        if (depth < 0) depth = ind
+        if (ind != depth) next
+        line = $0
+        sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+        gsub(/["'"'"']/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        print line
+    }
 ' "$PLATFORM_YAML" 2>/dev/null)"
+
+# REFUSE a non-flat item rather than guessing at it. The `observers:` shape
+# this hook honours is a flat list of agent names, and its own comment above
+# says that shape is deliberately minimal and NOT ratified. A map-shaped item
+# arrives as `role: cto-reviewer`, which is not an agent name — and
+# interpolating it produced `to: role: cto-reviewer`, INVALID YAML, an
+# unparseable message in every reader's triage. The `cc:` form was quieter and
+# worse: it parses, yielding trigger names as recipients.
+#
+# So: send NOTHING and say why on stderr, exactly as the no-observers path
+# does. A malformed message in the bus is strictly worse than no message, and
+# adding map SUPPORT here would be inventing the contract the comment above
+# declines to invent.
+if printf '%s' "$OBSERVERS" | grep -q ':'; then
+    echo "otaman: platform.yaml 'observers:' contains a non-flat entry — this hook honours a flat list of agent names only, and will not guess at a mapping. No review-request sent. Declare observers as '- agent-name', or ratify the richer shape first." >&2
+    exit 0
+fi
 
 if [[ -z "$OBSERVERS" ]]; then
     echo "otaman: commit matched [$TRIGGERS] but no observers are declared in platform.yaml — no review-request sent" >&2
@@ -161,8 +197,19 @@ mkdir -p "$BUS_ACTIVE/acks"
 
 MSG_ID="${MSG_TIMESTAMP}-${COMMIT_HASH}"
 PRIMARY="$(printf '%s\n' "$OBSERVERS" | head -1)"
+# Belt and braces: even after the refusal above, a value that could break
+# frontmatter must never reach the heredoc. The filename gets the same
+# treatment (slugified) because a `: ` in a path is the symptom the pmeets
+# tenant actually reported.
+case "$PRIMARY" in
+    *:*|*" "*|"")
+        echo "otaman: refusing to write a bus message addressed to '${PRIMARY}' — not a usable agent name." >&2
+        exit 0
+        ;;
+esac
+PRIMARY_SLUG="$(printf '%s' "$PRIMARY" | tr -c '[:alnum:]._-' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
 CC_LIST="$(printf '%s\n' "$OBSERVERS" | tail -n +2 | paste -sd, -)"
-MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-${AGENT_NAME}-to-${PRIMARY}-post-commit-review.md"
+MSG_FILE="$BUS_ACTIVE/${MSG_TIMESTAMP}-${AGENT_NAME}-to-${PRIMARY_SLUG}-post-commit-review.md"
 
 TRIGGER_LIST=""
 for t in $TRIGGERS; do
