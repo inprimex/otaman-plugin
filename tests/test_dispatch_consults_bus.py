@@ -437,7 +437,7 @@ class TestLaggardBundleDegradesLoudly:
 
         monkeypatch.setattr(map_tasks, "_CORE_READER_ERROR", "no module named task_complete")
         tasks = [{"text": "1.3 @otaman-cli console view", "done": False}]
-        filed, retracted, problems = map_tasks._consult_filed(
+        filed, _already_live, retracted, problems = map_tasks._consult_filed(
             tasks, tmp_path / "tasks.md", tmp_path, "some-change", {}
         )
         assert problems, "a consult that could not run reported nothing"
@@ -450,7 +450,7 @@ class TestLaggardBundleDegradesLoudly:
         from otaman_plugin import map_tasks
 
         monkeypatch.setattr(map_tasks, "_CORE_READER_ERROR", "cannot import name 'x'")
-        _, _, problems = map_tasks._consult_filed([], tmp_path / "t.md", tmp_path, "c", {})
+        _, _, _, problems = map_tasks._consult_filed([], tmp_path / "t.md", tmp_path, "c", {})
         assert "cannot import name 'x'" in problems[0]
 
     def test_available_reader_reports_no_problem(self, tmp_path):
@@ -459,7 +459,7 @@ class TestLaggardBundleDegradesLoudly:
         from otaman_plugin import map_tasks
 
         assert map_tasks._CORE_READER_ERROR is None
-        _, _, problems = map_tasks._consult_filed([], tmp_path / "t.md", tmp_path, "c", {})
+        _, _, _, problems = map_tasks._consult_filed([], tmp_path / "t.md", tmp_path, "c", {})
         assert problems == []
 
 
